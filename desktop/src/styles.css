@@ -1,0 +1,739 @@
+/*
+ * Lunmi — folha de estilo estrutural (`desktop/src/styles.css`, F3).
+ *
+ * Estrutura, estados e responsividade. A paleta chega como
+ * variáveis CSS `--lunmi-*`, escritas em tempo de execução a partir de `shared/theme.ts`
+ * (`main.tsx`), que continua sendo a única fonte de verdade da paleta navy.
+ */
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("./assets/fonts/PlusJakartaSans-Variable.ttf") format("truetype");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--lunmi-bg-window);
+  color: var(--lunmi-text-primary);
+  font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Um único anel de foco, visível por teclado, nunca decorativo. */
+:focus-visible {
+  outline: 2px solid var(--lunmi-accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.lunmi-shell {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.lunmi-shell-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lunmi-shell-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------- sidebar */
+
+.lunmi-sidebar {
+  flex: 0 0 auto;
+  width: 218px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 10px 12px;
+  overflow-y: auto;
+  transition: width 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.lunmi-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 14px;
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-brand-word {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+}
+
+.lunmi-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lunmi-nav-label {
+  padding: 10px 12px 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lunmi-text-muted);
+}
+
+.lunmi-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background-color: transparent;
+  color: var(--lunmi-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.lunmi-nav-item:hover {
+  background-color: var(--lunmi-surface-hover);
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-nav-item[aria-current="page"] {
+  background-color: var(--lunmi-surface-hover);
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-nav-item[aria-current="page"] .lunmi-nav-icon {
+  color: var(--lunmi-accent);
+}
+
+/* Filho de um grupo (Brain pertence à configuração, não é rota primária própria). */
+.lunmi-nav-child {
+  padding-left: 24px;
+  font-size: 12.5px;
+}
+
+.lunmi-nav-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: inherit;
+}
+
+.lunmi-nav-text {
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 140ms ease, max-width 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.lunmi-nav-collapse {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--lunmi-text-muted);
+  cursor: pointer;
+}
+
+.lunmi-nav-collapse:hover {
+  background: var(--lunmi-surface-hover);
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-sidebar[data-collapsed="true"] { width: 64px; padding-inline: 8px; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-brand { flex-direction: column; align-items: center; padding: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-brand-word,
+.lunmi-sidebar[data-collapsed="true"] .lunmi-sidebar-foot { display: none; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-collapse { margin-left: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-text { max-width: 0; opacity: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-item,
+.lunmi-sidebar[data-collapsed="true"] .lunmi-brand { justify-content: center; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-item { padding-left: 0; padding-right: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-child { padding-left: 0; }
+
+.lunmi-sidebar-foot {
+  margin-top: auto;
+  padding: 14px 12px 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--lunmi-text-muted);
+}
+
+/* --------------------------------------------------------------- top bar */
+
+.lunmi-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--lunmi-border-hairline);
+}
+
+.lunmi-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  padding: 6px 10px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 10px;
+  background-color: var(--lunmi-bg-card-subtle);
+  color: var(--lunmi-text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.lunmi-chip:hover {
+  background-color: var(--lunmi-surface-hover);
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-chip-static {
+  cursor: default;
+}
+
+.lunmi-chip-static:hover {
+  background-color: var(--lunmi-bg-card-subtle);
+  color: var(--lunmi-text-secondary);
+}
+
+.lunmi-chip-value {
+  color: var(--lunmi-text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ main */
+
+.lunmi-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lunmi-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.lunmi-page-pad {
+  padding: 20px;
+}
+
+/* ------------------------------------------------------------------ rail */
+
+.lunmi-rail {
+  flex: 0 0 auto;
+  width: 316px;
+  padding: 16px;
+  overflow-y: auto;
+  border-left: 1px solid var(--lunmi-border-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.lunmi-rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lunmi-rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--lunmi-text-secondary);
+}
+
+.lunmi-rail-empty {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--lunmi-text-muted);
+}
+
+.lunmi-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background-color: transparent;
+  color: var(--lunmi-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.lunmi-row:hover {
+  background-color: var(--lunmi-surface-hover);
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lunmi-row-meta {
+  font-size: 11.5px;
+  color: var(--lunmi-text-muted);
+}
+
+.lunmi-memory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--lunmi-text-secondary);
+}
+
+/* ------------------------------------------------------------- task strip */
+
+.lunmi-taskstrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--lunmi-border-hairline);
+  background-color: var(--lunmi-bg-card-subtle);
+  font-size: 12.5px;
+}
+
+.lunmi-taskstrip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lunmi-text-secondary);
+}
+
+/* -------------------------------------------------------------- composer */
+
+.lunmi-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--lunmi-border-hairline);
+}
+
+.lunmi-composer-surface {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 14px 12px 18px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 24px;
+  background-color: var(--lunmi-bg-input);
+  transition: border-color 120ms ease;
+}
+
+.lunmi-composer-surface:focus-within {
+  border-color: var(--lunmi-accent);
+}
+
+.lunmi-composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  max-height: 176px;
+  padding: 8px 4px 8px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--lunmi-text-primary);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.lunmi-composer-input::placeholder {
+  color: var(--lunmi-text-muted);
+}
+
+.lunmi-send {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.lunmi-send:disabled {
+  cursor: not-allowed;
+}
+
+.lunmi-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 10px;
+  background-color: var(--lunmi-bg-card-subtle);
+}
+
+.lunmi-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lunmi-mode-option[data-checked="true"] {
+  background-color: var(--lunmi-surface-hover);
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-mode-hint {
+  font-size: 12px;
+  color: var(--lunmi-text-muted);
+}
+
+/* -------------------------------------------------------------- markdown */
+
+.lunmi-md-p {
+  margin: 0 0 8px;
+}
+
+.lunmi-md-p:last-child {
+  margin-bottom: 0;
+}
+
+.lunmi-md-list {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.lunmi-inline-code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background-color: var(--lunmi-bg-card-subtle);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.lunmi-code-block {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 12px;
+  background-color: var(--lunmi-bg-card-subtle);
+  overflow-x: auto;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.lunmi-safe-link {
+  color: var(--lunmi-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: default;
+}
+
+/* ------------------------------------------------------- scroll e motion */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lunmi-border-subtle) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--lunmi-border-subtle);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ------------------------------------------------------------ responsivo */
+
+/* O painel secundário recolhe ANTES de o chat apertar — a conversa é a região dominante. */
+@media (max-width: 1180px) {
+  .lunmi-rail {
+    display: none;
+  }
+}
+
+* { box-sizing: border-box; }
+button, input, textarea, select { font: inherit; }
+button { transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease, filter 120ms ease; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button:hover:not(:disabled) { filter: brightness(1.12); }
+button:active:not(:disabled) { filter: brightness(.94); }
+button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 3px; }
+::selection { background: var(--lunmi-accent); color: var(--lunmi-on-accent); }
+input, textarea { caret-color: var(--lunmi-accent); }
+.lunmi-sidebar { background: color-mix(in srgb, var(--lunmi-bg-sidebar) 88%, transparent); border-right: 1px solid var(--lunmi-border-hairline); padding-top: 24px; gap: 26px; }
+.lunmi-shell-main { background: transparent; }
+.lunmi-topbar { min-height: 64px; padding-right: 16px; }
+.lunmi-session-chip { margin-left: auto; flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--lunmi-border-hairline);
+  background: color-mix(in srgb, var(--lunmi-bg-card) 72%, transparent); color: var(--lunmi-text-muted); font-size: 11.5px; }
+.lunmi-session-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--lunmi-success); flex-shrink: 0; }
+.lunmi-session-chip[data-status="connecting"] i, .lunmi-session-chip[data-status="restarting"] i { background: var(--lunmi-warning); }
+.lunmi-failure-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px;
+  border-bottom: 1px solid var(--lunmi-border-hairline);
+  background: color-mix(in srgb, var(--lunmi-error) 10%, var(--lunmi-bg-card-subtle)); color: var(--lunmi-text-secondary); font-size: 12.5px; }
+.lunmi-failure-strip strong { color: var(--lunmi-error); }
+.lunmi-failure-strip code { color: var(--lunmi-text-muted); font-size: 12px; font-family: "Cascadia Mono", Consolas, monospace; }
+.lunmi-failure-note { margin: 0; color: var(--lunmi-text-muted); font-size: 11.5px; }
+.lunmi-failure-strip button { margin-left: auto; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--lunmi-accent);
+  background: transparent; color: var(--lunmi-accent); font-size: 13px; cursor: pointer; }
+.lunmi-toggle { display: flex; align-items: center; gap: 8px; position: relative; font-size: 12px; cursor: pointer; }
+.lunmi-toggle input { width: 36px; height: 22px; position: absolute; opacity: 0; margin: 0; }
+.lunmi-toggle-track { width: 36px; height: 22px; background: var(--lunmi-border-subtle); border-radius: 30px; position: relative; pointer-events: none; }
+.lunmi-toggle-track::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; left: 3px; top: 3px; background: var(--lunmi-text-primary); transition: transform 140ms ease; }
+.lunmi-toggle input:checked + span { background: var(--lunmi-accent); }
+.lunmi-toggle input:checked + span::after { transform: translateX(14px); background: var(--lunmi-on-accent); }
+.lunmi-toggle input:focus-visible + span { outline: 2px solid var(--lunmi-accent); outline-offset: 3px; }
+.lunmi-toggle input:disabled ~ span { opacity: .5; }
+.lunmi-chat-view { display: flex; flex: 1; min-height: 0; min-width: 0; }
+[hidden] { display: none !important; }
+.lunmi-conversation { min-width: 0; }
+.lunmi-welcome { margin: auto; text-align: center; padding: 36px 20px; max-width: 480px; }
+.lunmi-welcome h1 { font-size: 26px; font-weight: 500; letter-spacing: -.02em; margin: 20px 0 12px; }
+.lunmi-welcome p { font-size: 14px; line-height: 1.7; color: var(--lunmi-text-secondary); }
+.lunmi-composer { border-top: 0; padding-top: 16px; }
+.lunmi-composer-surface { border-radius: 24px; }
+.lunmi-mode-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lunmi-mode input { width: 12px; height: 12px; accent-color: var(--lunmi-accent); }
+.lunmi-send { background: var(--lunmi-accent); color: var(--lunmi-on-accent); }
+.lunmi-stop { background: var(--lunmi-bg-card); color: var(--lunmi-error); border: 1px solid var(--lunmi-error); }
+.lunmi-composer-note { color: var(--lunmi-text-muted); font-size: 10px; padding-left: 12px; }
+.lunmi-result-details { margin-top: 16px; color: var(--lunmi-text-secondary); }
+.lunmi-result-details summary { font-size: 12px; cursor: pointer; }
+.lunmi-session-details { color: var(--lunmi-text-muted); font-size: 11px; }
+.lunmi-session-details summary { cursor: pointer; }
+.lunmi-session-details[open] { padding: 8px; }
+.lunmi-rail { width: 292px; background: color-mix(in srgb, var(--lunmi-bg-sidebar) 88%, transparent); padding: 20px 16px; gap: 22px; }
+.lunmi-rail-section { border: 1px solid var(--lunmi-border-hairline); border-radius: 16px; padding: 14px 12px; gap: 12px; }
+.lunmi-rail h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--lunmi-text-primary); }
+.lunmi-rail-note { font-size: 10px; line-height: 1.5; color: var(--lunmi-text-muted); margin: 0; }
+.lunmi-recent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.lunmi-recent p { margin: 0 0 4px; line-height: 1.5; overflow-wrap: anywhere; }
+.lunmi-recent small { color: var(--lunmi-text-muted); font-size: 10px; }
+.lunmi-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lunmi-accent); flex: 0 0 auto; margin-top: 6px; }
+.lunmi-status-dot.finished { background: var(--lunmi-success); }
+.lunmi-status-dot.failed { background: var(--lunmi-error); }
+.lunmi-status-dot.cancelled { background: var(--lunmi-warning); }
+.lunmi-link { border: 0; padding: 0; background: transparent; text-align: left; color: var(--lunmi-accent); cursor: pointer; font-size: 12px; }
+.lunmi-taskstrip button { border: 1px solid var(--lunmi-border-subtle); border-radius: 10px; background: var(--lunmi-bg-card); color: var(--lunmi-text-primary); padding: 6px 10px; font-size: 12px; cursor: pointer; }
+.lunmi-shell-error { color: var(--lunmi-error); font-size: 12px; padding: 0 16px; }
+.lunmi-main > section:not(.lunmi-conversation) { overflow-y: auto; min-width: 0; width: 100%; }
+.lunmi-main > section button { border-radius: 10px !important; }
+.lunmi-main > section h2 { font-size: 20px !important; font-weight: 500; text-transform: none; letter-spacing: -.02em; }
+.lunmi-main > section input:not([type=checkbox]):not([type=radio]), .lunmi-main > section select, .lunmi-main > section textarea { min-width: 0; max-width: 100%; border-radius: 10px; }
+@media (max-width: 660px) { .lunmi-topbar { gap: 8px; padding: 8px 12px; } .lunmi-chip { max-width: 220px; } .lunmi-composer { padding: 10px 12px; } .lunmi-mode-hint { display: none; } }
+
+.lunmi-windowbar { height: 40px; flex: 0 0 40px; app-region: drag; -webkit-app-region: drag; padding: 12px 160px 0 18px; font-size: 11px; color: var(--lunmi-text-muted); user-select: none; }
+.lunmi-sidebar .lunmi-brand { app-region: drag; -webkit-app-region: drag; }
+.lunmi-sidebar .lunmi-brand button { app-region: no-drag; -webkit-app-region: no-drag; }
+.lunmi-sidebar-foot { user-select: none; }
+@media (max-height: 640px) { .lunmi-sidebar-foot { display: none; } }
+
+.lunmi-topbar { min-height: 72px; flex-shrink: 0; background: var(--lunmi-bg-window); padding-right: 154px; app-region: drag; -webkit-app-region: drag; }
+.lunmi-topbar button, .lunmi-topbar label, .lunmi-topbar input { app-region: no-drag; -webkit-app-region: no-drag; }
+
+.lunmi-md-heading { font-size: 16px; line-height: 1.5; font-weight: 600; margin: 16px 0 8px; }
+
+/* Controls follow logical pixels; Chromium supplies the monitor's native DPI scaling. */
+.lunmi-nav-item { min-height: 44px; padding: 10px 14px; font-size: 14px; }
+.lunmi-nav-child { padding-left: 26px; }
+.lunmi-chip { min-height: 36px; box-sizing: border-box; font-size: 13px; }
+.lunmi-row { min-height: 40px; font-size: 13px; }
+.lunmi-toggle { font-size: 13px; }
+.lunmi-main > section button { min-height: 40px; }
+.lunmi-main > section input:not([type=checkbox]):not([type=radio]), .lunmi-main > section select { min-height: 40px; box-sizing: border-box; }
+.lunmi-shell-enter { animation: lunmi-shell-appear 200ms ease-out both; }
+@keyframes lunmi-shell-appear { from { opacity: 0; } to { opacity: 1; } }
+.lunmi-composer { gap: 10px; padding-bottom: 18px; }
+.lunmi-composer-surface { box-shadow: 0 6px 24px #00000033; border-color: var(--lunmi-border-subtle); }
+.lunmi-composer-toolbar, .lunmi-composer-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lunmi-composer-toolbar { justify-content: space-between; }
+.lunmi-composer-actions { margin-left: auto; flex-shrink: 0; }
+.lunmi-mode { border: 0; padding: 3px; background: var(--lunmi-bg-card); border-radius: 12px; }
+.lunmi-mode-option input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
+.lunmi-mode-option:has(input:focus-visible) { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-mode-option:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.lunmi-composer-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 6px; }
+.lunmi-composer-note { font-size: 11px; padding-left: 0; }
+.lunmi-model-picker { position: relative; min-width: 0; }
+.lunmi-model-trigger { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 240px; min-height: 38px; padding: 8px 10px; border: 0; border-radius: 12px; background: transparent; color: var(--lunmi-text-secondary); font-size: 13px; cursor: pointer; }
+.lunmi-model-trigger > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lunmi-model-trigger > svg { flex-shrink: 0; }
+.lunmi-model-trigger > svg:last-child { transform: rotate(90deg); transition: transform 160ms cubic-bezier(.2, .8, .2, 1); }
+.lunmi-model-trigger[aria-expanded="true"] > svg:last-child { transform: rotate(-90deg); }
+.lunmi-model-menu { transform-origin: 16px bottom; }
+.lunmi-model-menu[data-state="open"] { animation: lunmi-model-enter 190ms cubic-bezier(.16, 1, .3, 1) both; }
+.lunmi-model-menu[data-state="closing"] { pointer-events: none; }
+@keyframes lunmi-model-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.lunmi-model-trigger:hover { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
+.lunmi-model-menu { position: absolute; z-index: 30; bottom: calc(100% + 16px); left: 0; width: min(340px, calc(100vw - 116px)); box-sizing: border-box; max-height: min(410px, 55vh); display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--lunmi-border-subtle); border-radius: 18px; background: var(--lunmi-bg-card); box-shadow: 0 12px 36px #00000066; color: var(--lunmi-text-primary); }
+.lunmi-model-heading { display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 600; }
+.lunmi-model-heading small { font-size: 11px; font-weight: 400; color: var(--lunmi-text-muted); }
+.lunmi-model-menu input { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle); background: var(--lunmi-bg-input); color: var(--lunmi-text-primary); font-size: 13px; }
+.lunmi-model-menu input::placeholder { color: var(--lunmi-text-muted); }
+.lunmi-model-options { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.lunmi-model-options button { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; border: 0; border-radius: 10px; padding: 10px; background: transparent; color: var(--lunmi-text-primary); text-align: left; cursor: pointer; font-size: 13px; }
+.lunmi-model-options button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lunmi-model-options button small { flex-shrink: 0; font-size: 11px; color: var(--lunmi-text-muted); }
+.lunmi-model-options button[aria-selected=true], .lunmi-model-options button:hover { background: var(--lunmi-surface-hover); }
+.lunmi-model-settings { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; min-height: 40px; padding: 10px 4px 0; border: 0; border-top: 1px solid var(--lunmi-border-hairline); background: transparent; color: var(--lunmi-text-secondary); cursor: pointer; font-size: 12px; text-align: left; }
+.lunmi-model-note, .lunmi-model-error { margin: 0; font-size: 12px; line-height: 1.5; color: var(--lunmi-text-muted); }
+.lunmi-model-error { color: var(--lunmi-error); }
+@media (max-width: 850px) { .lunmi-composer-toolbar { align-items: stretch; flex-wrap: wrap; } .lunmi-model-picker { flex: 1 1 100%; } .lunmi-model-trigger { max-width: 100%; } .lunmi-composer-caption { flex-wrap: wrap; gap: 4px; } }
+@media (prefers-reduced-motion: reduce) { .lunmi-shell-enter { animation: none; } }
+
+/* ---------------------------------------------------------------- memória */
+
+.lunmi-memory-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px 28px;
+  color: var(--lunmi-text-primary);
+  font-size: 13px;
+}
+
+.lunmi-memory-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; max-width: 1080px; }
+.lunmi-memory-head h2 { margin: 0; }
+.lunmi-memory-sub { margin: 6px 0 0; max-width: 56ch; font-size: 12.5px; line-height: 1.55; color: var(--lunmi-text-muted); }
+.lunmi-memory-state { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--lunmi-border-hairline); background: color-mix(in srgb, var(--lunmi-bg-card) 72%, transparent);
+  color: var(--lunmi-text-secondary); font-size: 11.5px; }
+.lunmi-memory-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--lunmi-success); flex-shrink: 0; }
+.lunmi-memory-state[data-on="false"] i { background: var(--lunmi-warning); }
+.lunmi-memory-muted { margin: 0; color: var(--lunmi-text-muted); font-size: 12.5px; line-height: 1.5; }
+.lunmi-memory-notice { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 12.5px; }
+.lunmi-memory-error { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--lunmi-error); color: var(--lunmi-error); font-size: 12.5px; }
+.lunmi-memory-warning { margin: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--lunmi-warning); color: var(--lunmi-warning); font-size: 12.5px; line-height: 1.5; }
+
+.lunmi-memory-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.55fr); gap: 18px; align-items: start; max-width: 1080px; }
+.lunmi-memory-main, .lunmi-memory-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.lunmi-memory-card { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--lunmi-border-hairline);
+  border-radius: 16px; background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-control); }
+.lunmi-memory-card h3, .lunmi-memory-section-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--lunmi-text-primary); }
+.lunmi-memory-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lunmi-memory-section-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px; }
+.lunmi-memory-count { font-size: 11.5px; color: var(--lunmi-text-muted); font-variant-numeric: tabular-nums; }
+
+.lunmi-memory-search-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.lunmi-memory-search { flex: 1 1 180px; min-width: 0; }
+.lunmi-memory-limit { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--lunmi-text-muted); }
+.lunmi-memory-limit-input { width: 72px; }
+.lunmi-memory-filters, .lunmi-memory-option-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.lunmi-memory-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 999px; font-size: 12px; color: var(--lunmi-text-secondary); cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease; }
+.lunmi-memory-chip:has(input:checked) { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); border-color: var(--lunmi-accent); }
+.lunmi-memory-chip input { accent-color: var(--lunmi-accent); width: 14px; height: 14px; margin: 0; }
+.lunmi-memory-chip:has(input:focus-visible) { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+
+.lunmi-memory-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.lunmi-memory-page input:not([type=checkbox]):not([type=radio]), .lunmi-memory-page select, .lunmi-memory-page textarea {
+  padding: 8px 10px; border: 1px solid var(--lunmi-border-subtle); border-radius: 10px;
+  background: var(--lunmi-bg-input); color: var(--lunmi-text-primary); font-size: 13px; font-family: inherit; }
+.lunmi-memory-go { padding: 7px 14px; border: 1px solid var(--lunmi-accent); border-radius: 10px; background: var(--lunmi-accent); color: var(--lunmi-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; }
+.lunmi-memory-quiet { padding: 7px 14px; border: 1px solid var(--lunmi-border-subtle); border-radius: 10px; background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 12px; cursor: pointer; }
+.lunmi-memory-danger-quiet { padding: 7px 14px; border: 1px solid var(--lunmi-error); border-radius: 10px; background: transparent; color: var(--lunmi-error); font-size: 12px; cursor: pointer; }
+.lunmi-memory-link { border: 0; background: transparent; color: var(--lunmi-accent); cursor: pointer; font-size: 12px; padding: 0; }
+.lunmi-memory-link-danger { border: 0; background: transparent; color: var(--lunmi-error); cursor: pointer; font-size: 12px; padding: 0; }
+.lunmi-memory-item { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--lunmi-border-hairline);
+  border-radius: 16px; background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-control); }
+.lunmi-memory-proposal { background: var(--lunmi-bg-card-subtle); }
+.lunmi-memory-item-meta { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--lunmi-text-muted); }
+.lunmi-memory-item-text { margin: 0; color: var(--lunmi-text-primary); line-height: 1.55; overflow-wrap: anywhere; }
+.lunmi-memory-item-actions, .lunmi-memory-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.lunmi-memory-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.lunmi-memory-edit-field { min-height: 64px; }
+.lunmi-memory-propose-field { min-height: 64px; resize: vertical; }
+.lunmi-memory-danger-zone { border-color: color-mix(in srgb, var(--lunmi-error) 40%, var(--lunmi-border-hairline)); }
+
+@media (max-width: 1000px) { .lunmi-memory-layout { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "T01", "instruction": "Abra o Bloco de Notas.", "milestone": 1,
+    "plan": {"supported": true, "application": "notepad", "operation": "open", "reason": ""}
+  },
+  {
+    "id": "T02_WRITE", "instruction": "Abra o Bloco de Notas e escreva Hello World.", "milestone": 2,
+    "plan": {"supported": true, "application": "notepad", "operation": "write", "reason": "", "text": "Hello World"}
+  },
+  {
+    "id": "T03_SAVE", "instruction": "Abra o Bloco de Notas, escreva Hello World e salve como hello-{run_id}-{iteration}.txt.", "milestone": 3,
+    "plan": {"supported": true, "application": "notepad", "operation": "save", "reason": "", "text": "Hello World", "save_path": "hello-{run_id}-{iteration}.txt"}
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "dist-electron",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  // O processo principal não tem DOM: só `protocol.ts` é compartilhado com o renderer. Os
+  // módulos do renderer que tocam `window` (ipc/client.ts, ipc/useSession.ts) ficam fora daqui,
+  // para que um `window` no main seja erro de compilação em vez de bug em produção.
+  "include": ["electron/**/*.ts", "src/shared/protocol.ts"]
+}
