@@ -1,6 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" fill="none">
-  <rect width="72" height="72" rx="20" fill="#0C111B"/>
-  <path d="M22 50 50 22" stroke="#7DAFFF" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="22" cy="50" r="7" fill="#7DAFFF"/>
-  <path d="m45 20 7-1-1 7" stroke="#95BFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+<defs>
+    <radialGradient id="cardBg" cx="50%" cy="50%" r="72%">
+      <stop offset="0%" stop-color="#111726"/>
+      <stop offset="55%" stop-color="#0B0F19"/>
+      <stop offset="100%" stop-color="#06080E"/>
+    </radialGradient>
+    <linearGradient id="mainMeteor" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7DAFFF" stop-opacity="0"/>
+      <stop offset="40%" stop-color="#7DAFFF" stop-opacity="0.5"/>
+      <stop offset="80%" stop-color="#95BFFF" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="secondaryMeteorTop" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7DAFFF" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#7DAFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#B8D7FF" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="secondaryMeteorBottom" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7DAFFF" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#7DAFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#B8D7FF" stop-opacity="0.95"/>
+    </linearGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="heroAura" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="blurWide"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blurSharp"/>
+      <feMerge><feMergeNode in="blurWide"/><feMergeNode in="blurSharp"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="squircle"><rect width="512" height="512" rx="128"/></clipPath>
+  </defs>
+<g clip-path="url(#squircle)"><rect width="512" height="512" fill="url(#cardBg)"/><rect x="2" y="2" width="508" height="508" rx="126" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/><g transform="translate(0, 0)"><path d="M 370 142 L 205 258" stroke="url(#secondaryMeteorTop)" stroke-width="10" stroke-linecap="round"/>
+      <circle cx="205" cy="258" r="16" fill="#7DAFFF" opacity="0.25" filter="url(#softGlow)"/>
+      <circle cx="205" cy="258" r="11" fill="#7DAFFF"/>
+      <circle cx="205" cy="258" r="6" fill="#FFFFFF"/>
+      <path d="M 405 285 L 290 366" stroke="url(#secondaryMeteorBottom)" stroke-width="10" stroke-linecap="round"/>
+      <circle cx="290" cy="366" r="16" fill="#7DAFFF" opacity="0.25" filter="url(#softGlow)"/>
+      <circle cx="290" cy="366" r="11" fill="#7DAFFF"/>
+      <circle cx="290" cy="366" r="6" fill="#FFFFFF"/>
+      <path d="M 425 155 L 155 345" stroke="#7DAFFF" stroke-width="24" stroke-linecap="round" opacity="0.15" filter="url(#softGlow)"/>
+      <path d="M 425 155 L 155 345" stroke="url(#mainMeteor)" stroke-width="16" stroke-linecap="round"/>
+      <path d="M 320 229 L 155 345" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+      <circle cx="155" cy="345" r="46" fill="#7DAFFF" opacity="0.22" filter="url(#heroAura)"/>
+      <circle cx="155" cy="345" r="28" fill="#7DAFFF" opacity="0.45" filter="url(#softGlow)"/>
+      <circle cx="155" cy="345" r="22" fill="#7DAFFF"/>
+      <circle cx="155" cy="345" r="14" fill="#FFFFFF"/></g></g></svg>

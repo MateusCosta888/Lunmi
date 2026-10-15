@@ -24,5 +24,9 @@ if not exist "desktop\dist-electron\electron\main.js" (
     echo Execute npm run build na pasta desktop antes de abrir.
     exit /b 1
 )
-"desktop\node_modules\electron\dist\electron.exe" "%~dp0desktop\dist-electron\electron\main.js" %*
+if not exist "desktop\.runtime\Lunmi.exe" (
+    echo Execute npm run build na pasta desktop para preparar Lunmi.exe.
+    exit /b 1
+)
+"desktop\.runtime\Lunmi.exe" "%~dp0desktop" %*
 exit /b %ERRORLEVEL%

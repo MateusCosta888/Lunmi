@@ -10,6 +10,7 @@
 import React from "react";
 import { MessageCircle, BrainCircuit, Database, Settings2, ChevronRight, ArrowUp, Square, Plus, CornerDownLeft, Monitor, MessageSquareText, Check, Palette, Keyboard, Sparkles, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { TOKENS } from "./theme";
+import brandSymbol from "../assets/branding/lunmi-symbol.svg";
 
 /** Escala de espaçamento — múltiplos de 4 px (F3). */
 export const SPACE = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
@@ -130,37 +131,7 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }): Re
   return <Glyph size={size} strokeWidth={1.65} aria-hidden="true" focusable="false" />;
 }
 
-/** Marca discreta da Lunmi: um traço curto, sem brilho nem neon. */
+/** Símbolo aprovado da Lunmi; a versão com lettering fica na apresentação pública. */
 export function BrandMark({ size = 22 }: { size?: number }): React.ReactElement {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M20.5 3.5 11 13"
-        stroke={TOKENS.accent}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-      />
-      <path
-        d="M19 3.5h1.5V5"
-        stroke={TOKENS.accent}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-      />
-      <circle cx="7.5" cy="16.5" r="3" fill={TOKENS.accent} opacity={0.9} />
-      <path
-        d="M11.6 12.4 9.6 14.4"
-        stroke={TOKENS.accent}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        opacity={0.7}
-      />
-    </svg>
-  );
+  return <img src={brandSymbol} width={size} height={size} alt="" aria-hidden="true" draggable={false} style={{ flexShrink: 0 }} />;
 }

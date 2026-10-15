@@ -187,6 +187,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: "hidden",
     titleBarOverlay: { color: CELESTIAL_COLORS.bgWindow, symbolColor: CELESTIAL_COLORS.textPrimary, height: 40 },
     title: "Lunmi",
+    icon: path.resolve(__dirname, "..", "..", "src", "assets", "branding", "lunmi.ico"),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -452,6 +453,8 @@ function isElectronMainRuntime(): boolean {
 }
 
 if (isElectronMainRuntime()) {
+  app.setName("Lunmi");
+  if (process.platform === "win32") app.setAppUserModelId("org.lunmi.desktop");
   void app.whenReady().then(() => {
     nativeTheme.themeSource = "dark";
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => {

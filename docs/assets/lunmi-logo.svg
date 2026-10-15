@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+<defs>
+    <radialGradient id="cardBg" cx="50%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#111726"/>
+      <stop offset="55%" stop-color="#0B0F19"/>
+      <stop offset="100%" stop-color="#06080E"/>
+    </radialGradient>
+    <linearGradient id="mainMeteor" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7DAFFF" stop-opacity="0"/>
+      <stop offset="40%" stop-color="#7DAFFF" stop-opacity="0.5"/>
+      <stop offset="80%" stop-color="#95BFFF" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="secondaryMeteorTop" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7DAFFF" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#7DAFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#B8D7FF" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="secondaryMeteorBottom" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7DAFFF" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#7DAFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#B8D7FF" stop-opacity="0.95"/>
+    </linearGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="heroAura" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="blurWide"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blurSharp"/>
+      <feMerge><feMergeNode in="blurWide"/><feMergeNode in="blurSharp"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="squircle"><rect width="512" height="512" rx="128"/></clipPath>
+  </defs>
+<g clip-path="url(#squircle)"><rect width="512" height="512" fill="url(#cardBg)"/><rect x="2" y="2" width="508" height="508" rx="126" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/><g transform="translate(-10, -42)"><path d="M 370 142 L 205 258" stroke="url(#secondaryMeteorTop)" stroke-width="10" stroke-linecap="round"/>
+      <circle cx="205" cy="258" r="16" fill="#7DAFFF" opacity="0.25" filter="url(#softGlow)"/>
+      <circle cx="205" cy="258" r="11" fill="#7DAFFF"/>
+      <circle cx="205" cy="258" r="6" fill="#FFFFFF"/>
+      <path d="M 405 285 L 290 366" stroke="url(#secondaryMeteorBottom)" stroke-width="10" stroke-linecap="round"/>
+      <circle cx="290" cy="366" r="16" fill="#7DAFFF" opacity="0.25" filter="url(#softGlow)"/>
+      <circle cx="290" cy="366" r="11" fill="#7DAFFF"/>
+      <circle cx="290" cy="366" r="6" fill="#FFFFFF"/>
+      <path d="M 425 155 L 155 345" stroke="#7DAFFF" stroke-width="24" stroke-linecap="round" opacity="0.15" filter="url(#softGlow)"/>
+      <path d="M 425 155 L 155 345" stroke="url(#mainMeteor)" stroke-width="16" stroke-linecap="round"/>
+      <path d="M 320 229 L 155 345" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+      <circle cx="155" cy="345" r="46" fill="#7DAFFF" opacity="0.22" filter="url(#heroAura)"/>
+      <circle cx="155" cy="345" r="28" fill="#7DAFFF" opacity="0.45" filter="url(#softGlow)"/>
+      <circle cx="155" cy="345" r="22" fill="#7DAFFF"/>
+      <circle cx="155" cy="345" r="14" fill="#FFFFFF"/></g><g fill="#FFFFFF" opacity="0.96" aria-label="LUNMI"><path transform="translate(192.402000 436) scale(0.028000000 -0.028000000)" d="M74.000732421875 0V710H225.998046875V40.5999755859375L141.5997314453125 127.7982177734375H553.399169921875V0Z"/><path transform="translate(217.894000 436) scale(0.028000000 -0.028000000)" d="M351.5997314453125 -16Q262.329091339863 -16 196.46477760352525 17.199951171875Q130.6004638671875 50.39990234375 94.80059814453125 111.68482971191406Q59.000732421875 172.96975708007812 59.000732421875 256.399658203125V710H210.998046875V256.399658203125Q210.998046875 187.3123033311632 247.39849853515625 149.55526055230035Q283.7989501953125 111.7982177734375 351.5997314453125 111.7982177734375Q419.6004638671875 111.7982177734375 456.00091552734375 149.55526055230035Q492.4013671875 187.3123033311632 492.4013671875 256.399658203125V710H644.398681640625V256.399658203125Q644.398681640625 172.96975708007812 608.5988159179688 111.68482971191406Q572.7989501953125 50.39990234375 507.09621195273826 17.199951171875Q441.39347371016396 -16 351.5997314453125 -16Z"/><path transform="translate(246.578000 436) scale(0.028000000 -0.028000000)" d="M74.000732421875 0V710H241.598876953125L524.20166015625 220.39453125V710H676.198974609375V0H506.20068359375L225.998046875 472.8056640625V0Z"/><path transform="translate(276.578000 436) scale(0.028000000 -0.028000000)" d="M74.000732421875 0V710H276.79736328125L457.5992431640625 192.9959716796875L638.0010986328125 710H840.7977294921875V0H688.8004150390625V460.003662109375L521.7989501953125 1.7999267578125H392.3995361328125L225.998046875 460.003662109375V0Z"/><path transform="translate(311.198000 436) scale(0.028000000 -0.028000000)" d="M74.000732421875 0V710H225.998046875V0Z"/></g></g></svg>

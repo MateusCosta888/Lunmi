@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/lunmi-mark.svg" width="72" height="72" alt="Marca Lunmi" />
+<img src="docs/assets/lunmi-logo.svg" width="180" height="180" alt="Logo Lunmi" />
 
 # Lunmi
 
@@ -65,6 +65,8 @@ cd ..
 
 .\run.bat
 ```
+
+No Windows, o build prepara um runtime local `desktop/.runtime/Lunmi.exe`, com nome e ícone da Lunmi. Ele é iniciado por `run.bat` e não modifica o Electron instalado. Esse runtime depende deste checkout; não é um instalador ou executável portátil independente.
 
 `install_ufo.py` baixa e confere a revisão registrada em [`ufo.lock.json`](ufo.lock.json). `vendor/` é local e não faz parte deste repositório. O launcher também verifica esse checkout antes de abrir o app.
 

@@ -250,7 +250,7 @@ describe("Chat e tarefa (F2a)", () => {
     await waitFor(() => expect(screen.getByTestId("chat-message-assistant")).toBeTruthy());
     // O HTML do modelo é texto escapado, nunca DOM executável.
     expect(document.querySelector("script")).toBeNull();
-    expect(document.querySelector("img")).toBeNull();
+    expect(screen.getByTestId("chat-message-assistant").querySelector("img")).toBeNull();
     expect(screen.getByTestId("chat-message-assistant").textContent).toContain("<script>");
     expect(screen.getByTestId("chat-message-assistant").querySelector("strong")?.textContent).toBe(
       "Resposta"

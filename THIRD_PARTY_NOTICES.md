@@ -9,6 +9,8 @@ As licenças originais continuam aplicáveis. Este documento não concede uma li
 | [React](https://react.dev/) | Interface | MIT. |
 | [Lucide](https://lucide.dev/) | Ícones selecionados | [ISC e avisos Feather MIT](desktop/licenses/Lucide-LICENSE.txt). |
 | [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans) | Fonte local | [SIL Open Font License 1.1](desktop/src/assets/fonts/OFL.txt). |
+| [Geist](https://github.com/vercel/geist-font) | Lettering da logo pública convertido em curvas | [SIL Open Font License 1.1](desktop/licenses/Geist-OFL.txt). |
+| [resedit](https://github.com/jet2jet/resedit-js) | Ferramenta de build para ícone e identidade do executável Windows | MIT; dependência de desenvolvimento, sem código no renderer. |
 | [React Bits](https://reactbits.dev/) | Adaptações ThoughtLine/RubberSegment integradas ao app | [MIT + Commons Clause](desktop/licenses/ReactBits-LICENSE.md); restrições dos componentes continuam válidas. |
 | [Aceternity UI](https://ui.aceternity.com/) | Referências/adaptação do fundo estrelado integrado | [Aceternity License](https://ui.aceternity.com/licence); não atribuir MIT nem redistribuir itens como biblioteca/template/pacote de componentes. |
 

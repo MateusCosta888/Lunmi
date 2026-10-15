@@ -1,5 +1,6 @@
 {
   "name": "lunmi-desktop",
+  "productName": "Lunmi",
   "version": "0.1.0",
   "private": true,
   "description": "Lunmi Desktop Shell (Electron + React + TypeScript) communicating with Python backend over stdio JSONL v1",
@@ -7,11 +8,11 @@
   "scripts": {
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
-    "build": "npm run build:renderer && npm run build:electron",
+    "build": "npm run build:renderer && npm run build:electron && node dist-electron/electron/brand-runtime.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run",
     "bench:f0": "npm run build && node dist-electron/electron/bench_f0.js",
-    "start": "electron ."
+    "start": "node dist-electron/electron/start.js"
   },
   "dependencies": {
     "lucide-react": "1.57.0",
@@ -26,6 +27,7 @@
     "@vitejs/plugin-react": "4.7.0",
     "electron": "44.7.2",
     "jsdom": "26.1.0",
+    "resedit": "3.1.0",
     "typescript": "5.8.3",
     "vite": "6.4.4",
     "vitest": "5.0.4"
