@@ -34,7 +34,7 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 | **Perfil local** | Nome de tratamento e foto, editáveis na própria janela. A foto não vai ao Brain. |
 | **Anexos de texto** | No modo Conversar: até 4 arquivos UTF-8, 32 KiB por arquivo e 64 KiB no total. |
 | **Controle do usuário** | Confirmações, perguntas, cancelamento e indicação de falhas fazem parte da execução. |
-| **Interface adaptável** | Temas Celestial e Claro suave, lateral recolhível e compositor multilinha com seleção de modelo. |
+| **Interface adaptável** | Temas Celestial, Claro suave e Red Velvet, laterais com vidro, navegação recolhível e compositor multilinha com seleção de modelo. |
 
 A execução combina caminhos determinísticos para tarefas reconhecidas e agentes UFO² para as demais. Um despacho de ação não prova sucesso: confira o resultado e a evidência apresentados.
 

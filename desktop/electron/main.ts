@@ -23,6 +23,12 @@ import {
 } from "../src/shared/protocol";
 import { PythonBackendSupervisor, resolvePythonExecutable } from "./backend";
 import {
+  applyWindowControl,
+  isWindowControlAction,
+  readWindowState,
+  WINDOW_CONTROL_ACTIONS,
+} from "./window-controls";
+import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   readPreferencesFile,
@@ -159,7 +165,16 @@ function applyNativeTheme(): void {
   const theme = getTheme(appliedPrefs.theme);
   nativeTheme.themeSource = theme.mode;
   mainWindow.setBackgroundColor(theme.colors.bgWindow);
-  mainWindow.setTitleBarOverlay({ color: theme.colors.bgWindow, symbolColor: theme.colors.textPrimary, height: 40 });
+}
+
+/** Estados nativos da janela (maximizar/restaurar/minimizar) sincronizam a UI por evento. */
+function broadcastWindowState(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  const state = readWindowState(mainWindow);
+  const id = `win-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  mainWindow.webContents.send("lunmi:event", { v: 1, id, type: "window.state", payload: state });
 }
 
 function persistWindowBounds(): void {
@@ -193,7 +208,6 @@ function createWindow(): BrowserWindow {
     show: !isHeadlessBench,
     backgroundColor: CELESTIAL_COLORS.bgWindow,
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: CELESTIAL_COLORS.bgWindow, symbolColor: CELESTIAL_COLORS.textPrimary, height: 40 },
     title: "Lunmi",
     icon: path.resolve(__dirname, "..", "..", "src", "assets", "branding", "lunmi.ico"),
     webPreferences: {
@@ -224,6 +238,10 @@ function createWindow(): BrowserWindow {
   win.on("close", () => {
     persistWindowBounds();
   });
+  win.on("maximize", broadcastWindowState);
+  win.on("unmaximize", broadcastWindowState);
+  win.on("minimize", broadcastWindowState);
+  win.on("restore", broadcastWindowState);
   if (!isHeadlessBench && win.isVisible()) {
     windowShownMs = elapsedMs();
   }
@@ -483,6 +501,21 @@ function setupIpc(): void {
     }
 
     return { cancelled: false, attachments, errors };
+  });
+
+  ipcMain.handle("lunmi:window-control", async (event, args: { action?: unknown }) => {
+    if (!isTrustedSenderFrame(event, mainWindow, expectedIndexFileUrl)) {
+      throw new Error("Sender não autorizado.");
+    }
+    const action = args?.action;
+    if (!isWindowControlAction(action)) {
+      throw new Error(`Ação de janela inválida: use apenas ${WINDOW_CONTROL_ACTIONS.join(", ")}.`);
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { minimized: false, maximized: false, closed: true };
+    }
+    const result = applyWindowControl(mainWindow, action);
+    return { ...(result ?? { minimized: false, maximized: false }), closed: result === null };
   });
 
   ipcMain.handle("lunmi:restart-backend", async (event) => {

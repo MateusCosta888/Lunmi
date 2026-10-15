@@ -28,6 +28,7 @@ export const CELESTIAL_COLORS = {
   success: "#76CFA9",
   warning: "#E7BB75",
   error: "#E58D99",
+  onError: "#2A0B10",
   disabled: "#647A96",
   surfaceHover: "#162A45",
 } as const;
@@ -62,7 +63,7 @@ export const THEMES = {
       borderSubtle: "#C1C5D1", borderHairline: "#CDD0DB", borderOnUser: "#BEC2DE",
       textPrimary: "#2E3040", textSecondary: "#505261", textMuted: "#606371", textMutedOnUser: "#56596C",
       accent: "#5145CD", accentHover: "#4338B8", accentPressed: "#392E9C", onAccent: "#FFFFFF",
-      success: "#16654D", warning: "#85500D", error: "#B42342", disabled: "#727787", surfaceHover: "#D6DAED",
+      success: "#16654D", warning: "#85500D", error: "#B42342", onError: "#FFFFFF", disabled: "#727787", surfaceHover: "#D6DAED",
     },
     depth: {
       raised: "8px 8px 18px #a6afc373, -8px -8px 18px #fffffff2",
@@ -70,6 +71,24 @@ export const THEMES = {
       control: "4px 4px 10px #a6afc366, -4px -4px 10px #fffffff2",
       pressed: "inset 2px 2px 5px #a6afc359, inset -2px -2px 5px #ffffffd9",
       rim: "#ffffffbf", spotlight: "#6366f112", skyOpacity: "0.12",
+    },
+  },
+  "red-velvet": {
+    id: "red-velvet", label: "Red Velvet", description: "Creme quente, maroon e rosa", mode: "light",
+    colors: {
+      bgWindow: "#FFF8F6", bgSidebar: "#FFF0EE", bgChat: "#FFF8F6", bgCard: "#FFF8F6",
+      bgCardSubtle: "#FFE9E6", bgUser: "#F7DDD8", bgInput: "#FFF8F6",
+      borderSubtle: "#E2BFB9", borderHairline: "#FDE2DE", borderOnUser: "#E8C6C0",
+      textPrimary: "#261816", textSecondary: "#746561", textMuted: "#746662", textMutedOnUser: "#6E5F5C",
+      accent: "#800000", accentHover: "#961B1B", accentPressed: "#6B0000", onAccent: "#FFFFFF",
+      success: "#16654D", warning: "#85500D", error: "#BA1A1A", onError: "#FFFFFF", disabled: "#8A7A76", surfaceHover: "#F6DAD4",
+    },
+    depth: {
+      raised: "8px 8px 18px rgba(130, 80, 75, 0.28), -8px -8px 18px rgba(255, 255, 255, 0.95)",
+      inset: "inset 3px 3px 7px rgba(130, 80, 75, 0.22), inset -3px -3px 7px rgba(255, 255, 255, 0.90)",
+      control: "4px 4px 10px rgba(130, 80, 75, 0.25), -4px -4px 10px rgba(255, 255, 255, 0.95)",
+      pressed: "inset 2px 2px 5px rgba(130, 80, 75, 0.22), inset -2px -2px 5px rgba(255, 255, 255, 0.85)",
+      rim: "rgba(255, 255, 255, 0.75)", spotlight: "rgba(128, 0, 0, 0.07)", skyOpacity: "0.10",
     },
   },
 } satisfies Record<string, ThemeDefinition>;
@@ -134,6 +153,7 @@ export function contrastPairs(colors: Palette): readonly ContrastCheckPair[] {
   { fgLabel: "sucesso", bgLabel: "cartão", fg: colors.success, bg: colors.bgCard, floor: TEXT_FLOOR },
   { fgLabel: "atenção", bgLabel: "cartão", fg: colors.warning, bg: colors.bgCard, floor: TEXT_FLOOR },
   { fgLabel: "falha", bgLabel: "cartão", fg: colors.error, bg: colors.bgCard, floor: TEXT_FLOOR },
+  { fgLabel: "ícone de fechar (hover)", bgLabel: "material de perigo", fg: colors.onError, bg: colors.error, floor: GRAPHIC_FLOOR },
 ];
 }
 

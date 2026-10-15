@@ -21,6 +21,14 @@ export interface PickAttachmentsResultDto {
   errors: string[];
 }
 
+export interface WindowStateDto {
+  minimized: boolean;
+  maximized: boolean;
+  closed?: boolean;
+}
+
+export type WindowControlAction = "minimize" | "toggle-maximize" | "close" | "state";
+
 export interface LunmiBridgeApi {
   hello(): Promise<SessionReadyPayload>;
   notifyRendererReady?(): Promise<{
@@ -35,6 +43,7 @@ export interface LunmiBridgeApi {
   ): Promise<TResult>;
   pickLocation?(kind: "folder" | "file", query: string): Promise<{ path: string }>;
   pickAttachments?(): Promise<PickAttachmentsResultDto>;
+  windowControl?(action: WindowControlAction): Promise<WindowStateDto>;
   restartBackend?(): Promise<SessionReadyPayload>;
   shutdown(): Promise<{ status: string; session_id: string }>;
   onEvent(callback: (event: Envelope) => void): () => void;

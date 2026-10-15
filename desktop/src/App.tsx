@@ -16,6 +16,8 @@ import { ProfileModal } from "./features/profile/ProfileModal";
 import { EMPTY_PROFILE } from "./features/profile/useProfile";
 import type { ProfileDto } from "./shared/types";
 import { Starfield } from "./shared/Starfield";
+import { GlassSurface } from "./shared/GlassSurface";
+import { WindowControls } from "./features/shell/WindowControls";
 import { RubberNavigation } from "./shared/RubberNavigation";
 import { getTheme } from "./shared/theme";
 import { applyTheme } from "./shared/themeDom";
@@ -190,7 +192,9 @@ export function App(): React.ReactElement {
     finally { setPolicyBusy(false); }
   };
 
-  if (!opened) return <StartupScreen
+  if (!opened) return <>
+    <WindowControls />
+    <StartupScreen
     leaving={leaving}
     error={session.status === "failed" || Boolean(startupError)}
     message={session.status === "failed" ? "Não foi possível iniciar o backend Python."
@@ -201,12 +205,16 @@ export function App(): React.ReactElement {
       setStartupError("");
       if (session.status === "failed") void session.restart();
       else setRevision(r => r + 1);
-    }} />;
+    }} />
+  </>;
 
   return (
     <div className="lunmi-shell lunmi-shell-enter">
       <Starfield themeId={themeId} />
+      <WindowControls />
       <aside className="lunmi-sidebar" aria-label="Navegação principal" data-collapsed={navCollapsed}>
+        <GlassSurface radius={18} className="lunmi-sidebar-glass">
+          <div className="lunmi-sidebar-inner">
         <div className="lunmi-brand">
           <BrandMark size={30} /><span className="lunmi-brand-word">LUNMI</span>
           <button type="button" className="lunmi-nav-collapse" data-testid="nav-collapse-toggle"
@@ -227,6 +235,8 @@ export function App(): React.ReactElement {
             <span className="lunmi-nav-text lunmi-profile-name">{profileName || "Seu perfil"}</span>
           </button>
         </div>
+          </div>
+        </GlassSurface>
       </aside>
       <div className="lunmi-shell-main">
         <header className="lunmi-topbar">
@@ -283,6 +293,8 @@ export function App(): React.ReactElement {
             </aside>
           ) : (
           <aside className="lunmi-rail" aria-label="Contexto da conversa">
+            <GlassSurface radius={18} className="lunmi-rail-glass">
+            <div className="lunmi-rail-inner">
             <div className="lunmi-rail-bar">
               <span className="lunmi-rail-title">Contexto</span>
               <button type="button" className="lunmi-rail-collapse" data-testid="rail-collapse-toggle"
@@ -311,6 +323,8 @@ export function App(): React.ReactElement {
                 : <p className="lunmi-rail-empty">Você controla o que a Lunmi lembra.</p>}
               <button className="lunmi-link" type="button" onClick={() => setView("memory")}>Gerenciar memória</button>
             </section>
+            </div>
+            </GlassSurface>
           </aside>
           ))}
         </div>

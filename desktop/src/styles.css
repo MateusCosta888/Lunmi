@@ -170,7 +170,7 @@ body {
   color: var(--lunmi-text-primary);
 }
 
-.lunmi-sidebar[data-collapsed="true"] { width: 64px; padding-inline: 8px; }
+.lunmi-sidebar[data-collapsed="true"] { width: 54px; margin-inline: 10px 0; }
 .lunmi-sidebar[data-collapsed="true"] .lunmi-brand { flex-direction: column; align-items: center; padding: 0; }
 .lunmi-sidebar[data-collapsed="true"] .lunmi-brand-word { display: none; }
 .lunmi-sidebar[data-collapsed="true"] .lunmi-nav-collapse { margin-left: 0; }
@@ -546,7 +546,8 @@ button:active:not(:disabled) { filter: brightness(.94); }
 button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 3px; }
 ::selection { background: var(--lunmi-accent); color: var(--lunmi-on-accent); }
 input, textarea { caret-color: var(--lunmi-accent); }
-.lunmi-sidebar { background: color-mix(in srgb, var(--lunmi-bg-sidebar) 88%, transparent); border-right: 1px solid var(--lunmi-border-hairline); padding-top: 24px; gap: 26px; }
+.lunmi-sidebar { background: transparent; border-right: 0; padding: 0; margin: 10px 0 10px 10px; width: 208px; gap: 0; position: relative; overflow: visible; }
+.lunmi-sidebar-inner { display: flex; flex-direction: column; gap: 26px; padding: 14px 10px 12px; height: 100%; min-height: 0; overflow-y: auto; }
 .lunmi-shell-main { background: transparent; }
 .lunmi-topbar { min-height: 64px; padding-right: 16px; }
 .lunmi-session-chip { margin-left: auto; flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
@@ -588,7 +589,8 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-session-details { color: var(--lunmi-text-muted); font-size: 11px; }
 .lunmi-session-details summary { cursor: pointer; }
 .lunmi-session-details[open] { padding: 8px; }
-.lunmi-rail { width: 292px; background: color-mix(in srgb, var(--lunmi-bg-sidebar) 88%, transparent); padding: 20px 16px; gap: 22px; }
+.lunmi-rail { width: 302px; background: transparent; border-left: 0; padding: 0; margin: 10px 10px 10px 0; gap: 0; position: relative; overflow: visible; }
+.lunmi-rail-inner { display: flex; flex-direction: column; gap: 22px; padding: 20px 16px; height: 100%; min-height: 0; overflow-y: auto; }
 .lunmi-rail-section { border: 1px solid var(--lunmi-border-hairline); border-radius: 16px; padding: 14px 12px; gap: 12px; }
 .lunmi-rail h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--lunmi-text-primary); }
 .lunmi-rail-note { font-size: 10px; line-height: 1.5; color: var(--lunmi-text-muted); margin: 0; }
@@ -614,7 +616,7 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-sidebar-foot { user-select: none; }
 @media (max-height: 640px) { .lunmi-sidebar-foot { padding: 6px 8px 4px; } }
 
-.lunmi-topbar { min-height: 72px; flex-shrink: 0; background: var(--lunmi-bg-window); padding-right: 154px; app-region: drag; -webkit-app-region: drag; }
+.lunmi-topbar { min-height: 72px; flex-shrink: 0; background: transparent; border-bottom: 0; padding-right: 154px; app-region: drag; -webkit-app-region: drag; }
 .lunmi-topbar button, .lunmi-topbar label, .lunmi-topbar input { app-region: no-drag; -webkit-app-region: no-drag; }
 
 .lunmi-md-heading { font-size: 16px; line-height: 1.5; font-weight: 600; margin: 16px 0 8px; }
@@ -801,8 +803,10 @@ input, textarea { caret-color: var(--lunmi-accent); }
   border: 1px solid var(--lunmi-border-subtle); color: var(--lunmi-text-muted); }
 .lunmi-profile-thumb { object-fit: cover; }
 .lunmi-profile-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-profile-mini { justify-content: center; padding-inline: 0; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-profile-mini .lunmi-nav-text { max-width: 0; opacity: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-sidebar-foot { padding: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-sidebar-inner { padding-inline: 5px; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-profile-mini { width: 44px; height: 44px; margin: 0 auto; padding: 0; gap: 0; border-radius: 50%; justify-content: center; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-profile-mini .lunmi-nav-text { display: none; }
 
 .lunmi-modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
   background: rgba(0, 0, 0, .55); animation: lunmi-modal-in 160ms ease-out both; }
@@ -849,3 +853,32 @@ input, textarea { caret-color: var(--lunmi-accent); }
   .lunmi-composer-toolbar > .lunmi-model-picker { min-width: 0; }
   .lunmi-composer-actions { grid-column: 1 / -1; }
 }
+
+/* ------------------------------------------------ liquid glass (decorativo) */
+
+/* O pacote (liquid-glass-react) renderiza um Fragment: container + quatro irmãos utilitários com
+   top/left 50% e translate(-50%) inline. Nada disso pode participar do fluxo do painel: a camada
+   `.lunmi-glass-layer` é absoluta (0,0 preenche o painel), os utilitários recebem position/top/left
+   via props (strings "0px" verdadeiras) e o transform residual é neutralizado aqui — sem simular
+   Tailwind. O conteúdo é irmão da camada, com altura/rolagem próprias e hit-test livre. */
+.lunmi-glass { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; overflow: hidden; }
+.lunmi-glass-layer { position: absolute; inset: 0; pointer-events: none; z-index: 0; border-radius: inherit; overflow: hidden; }
+.lunmi-glass-layer > * { transform: none !important; width: 100% !important; height: 100% !important; }
+/* Override the package's inline-flex baseline: even empty content shifted the glass down 17px. */
+.lunmi-glass-layer .glass { position: absolute !important; inset: 0; display: flex !important; flex-direction: column; width: 100%; height: 100%; min-height: 0;
+  box-shadow: none !important; background: color-mix(in srgb, var(--lunmi-bg-sidebar) 46%, transparent); }
+.lunmi-glass-layer .glass > div { font: inherit !important; text-shadow: none !important; }
+.lunmi-glass-layer .glass__warp { opacity: var(--lunmi-glass-refraction-opacity, 1); }
+.lunmi-glass-content { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.lunmi-rail-edge { background: color-mix(in srgb, var(--lunmi-bg-sidebar) 55%, transparent); border-left: 0; border-radius: 14px 0 0 14px; margin: 10px 0; }
+
+/* ------------------------------------------------- controles de janela próprios */
+
+.lunmi-wincontrols { position: fixed; top: 0; right: 8px; height: 72px; display: flex; align-items: center; gap: 4px;
+  z-index: 70; app-region: no-drag; -webkit-app-region: no-drag; }
+.lunmi-wincontrol { width: 44px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px;
+  background: transparent; color: var(--lunmi-text-secondary); cursor: pointer; }
+.lunmi-wincontrol:hover:not(:disabled) { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); filter: none; }
+.lunmi-wincontrol:active:not(:disabled) { background: color-mix(in srgb, var(--lunmi-surface-hover) 70%, var(--lunmi-bg-window)); filter: none; }
+.lunmi-wincontrol-close:hover:not(:disabled) { background: var(--lunmi-error); color: var(--lunmi-on-error); filter: none; }
+.lunmi-wincontrol-close:active:not(:disabled) { background: color-mix(in srgb, var(--lunmi-error) 85%, var(--lunmi-on-error)); color: var(--lunmi-on-error); filter: none; }

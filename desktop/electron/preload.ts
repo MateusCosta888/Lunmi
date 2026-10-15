@@ -22,6 +22,14 @@ export interface PickAttachmentsResultDto {
   errors: string[];
 }
 
+export interface WindowControlDto {
+  minimized: boolean;
+  maximized: boolean;
+  closed?: boolean;
+}
+
+export type WindowControlActionDto = "minimize" | "toggle-maximize" | "close" | "state";
+
 export interface LunmiBridgeApi {
   hello(): Promise<SessionReadyPayload>;
   notifyRendererReady(): Promise<{
@@ -36,6 +44,7 @@ export interface LunmiBridgeApi {
   ): Promise<TResult>;
   pickLocation(kind: "folder" | "file", query: string): Promise<{ path: string }>;
   pickAttachments(): Promise<PickAttachmentsResultDto>;
+  windowControl(action: WindowControlActionDto): Promise<WindowControlDto>;
   restartBackend(): Promise<SessionReadyPayload>;
   shutdown(): Promise<{ status: string; session_id: string }>;
   onEvent(callback: (event: Envelope) => void): () => void;
@@ -72,6 +81,9 @@ const lunmiApi: LunmiBridgeApi = Object.freeze({
   },
   pickAttachments(): Promise<PickAttachmentsResultDto> {
     return ipcRenderer.invoke("lunmi:pick-attachments");
+  },
+  windowControl(action: WindowControlActionDto): Promise<WindowControlDto> {
+    return ipcRenderer.invoke("lunmi:window-control", { action });
   },
   restartBackend(): Promise<SessionReadyPayload> {
     return ipcRenderer.invoke("lunmi:restart-backend");
