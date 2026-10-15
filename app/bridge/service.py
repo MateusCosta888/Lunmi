@@ -531,6 +531,14 @@ class BridgeService:
                 "Escreva uma instrução com 1 a 4000 caracteres.",
             )
 
+        attachments = protocol.validate_chat_attachments(payload.get("attachments"))
+        if attachments and mode != "converse":
+            raise protocol.ProtocolError(
+                "invalid_payload",
+                "Arquivos anexados são suportados no modo Conversar. "
+                "Troque para Conversar ou remova o anexo para executar ações no Windows.",
+            )
+
         with self._lock:
             if self._reconfiguring:
                 raise protocol.ProtocolError(
@@ -546,7 +554,18 @@ class BridgeService:
             self._active_task_id = task_id
 
             conversation = mode == "converse"
-            self._emit("chat.message", {"role": "user", "text": stripped, "mode": mode, "task_id": task_id})
+            user_msg: dict[str, Any] = {
+                "role": "user",
+                "text": stripped,
+                "mode": mode,
+                "task_id": task_id,
+            }
+            if attachments:
+                user_msg["attachments"] = [
+                    {"name": item["name"], "size_bytes": item["size_bytes"]}
+                    for item in attachments
+                ]
+            self._emit("chat.message", user_msg)
             if conversation:
                 self._emit(
                     "chat.message",
@@ -558,19 +577,39 @@ class BridgeService:
                 )
             self._emit("task.started", {"task_id": task_id, "mode": mode, "instruction": stripped})
 
+            user_name = self.prefs.profile.name
             fut = asyncio.run_coroutine_threadsafe(
-                self._execute_task(task_id, stripped, conversation=conversation),
+                self._execute_task(
+                    task_id,
+                    stripped,
+                    conversation=conversation,
+                    user_name=user_name,
+                    attachments=attachments,
+                ),
                 self._loop,
             )
             self._active_task_future = fut
 
         return {"task_id": task_id, "mode": mode, "status": "started"}
 
-    async def _execute_task(self, task_id: str, instruction: str, *, conversation: bool) -> TaskResult:
+    async def _execute_task(
+        self,
+        task_id: str,
+        instruction: str,
+        *,
+        conversation: bool,
+        user_name: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> TaskResult:
         res: TaskResult | None = None
         err: Exception | None = None
         try:
-            res = await self.controller.run(instruction, conversation=conversation)
+            run_kwargs: dict[str, Any] = {"conversation": conversation}
+            if user_name:
+                run_kwargs["user_name"] = user_name
+            if attachments:
+                run_kwargs["attachments"] = attachments
+            res = await self.controller.run(instruction, **run_kwargs)
             res = replace(res, task_id=task_id)
         except Exception as exc:
             err = exc
@@ -1227,6 +1266,10 @@ class BridgeService:
             "window": list(self.prefs.window) if self.prefs.window else None,
             "scale_pct": self.prefs.scale_pct,
             "actions": [{"label": a.label, "draft": a.draft} for a in self.prefs.actions],
+            "profile": {
+                "name": self.prefs.profile.name,
+                "avatar_data_url": self.prefs.profile.avatar_data_url,
+            },
         }
 
     def _handle_ui_preferences_get(self) -> dict[str, Any]:
@@ -1239,6 +1282,43 @@ class BridgeService:
                 "invalid_payload",
                 "Renderer não pode definir caminho de arquivo em ui.preferences.set.",
             )
+
+        current_profile = self.prefs.profile
+        if "profile" in payload:
+            raw_profile = payload.get("profile")
+            if raw_profile is None or not isinstance(raw_profile, dict):
+                raise protocol.ProtocolError(
+                    "invalid_payload",
+                    "Campo 'profile' deve ser um objeto com 'name' e/ou 'avatar_data_url'.",
+                )
+            if "path" in raw_profile or "file" in raw_profile:
+                raise protocol.ProtocolError(
+                    "invalid_payload",
+                    "Perfil não pode informar caminho de arquivo ('path'/'file').",
+                )
+            unknown_keys = set(raw_profile) - {"name", "avatar_data_url"}
+            if unknown_keys:
+                raise protocol.ProtocolError(
+                    "invalid_payload",
+                    f"Campos desconhecidos em 'profile': {', '.join(sorted(unknown_keys))}.",
+                )
+            try:
+                next_name = (
+                    ui_preferences.validate_profile_name(raw_profile.get("name"), strict=True)
+                    if "name" in raw_profile
+                    else current_profile.name
+                )
+                next_avatar = (
+                    ui_preferences.validate_avatar_data_url(raw_profile.get("avatar_data_url"), strict=True)
+                    if "avatar_data_url" in raw_profile
+                    else current_profile.avatar_data_url
+                )
+            except ValueError as exc:
+                raise protocol.ProtocolError("invalid_payload", str(exc)) from exc
+            next_profile = ui_preferences.UserProfile(name=next_name, avatar_data_url=next_avatar)
+        else:
+            next_profile = current_profile
+
         merged = {
             "theme": payload.get("theme", self.prefs.theme),
             "window": payload.get("window", list(self.prefs.window) if self.prefs.window else None),
@@ -1247,8 +1327,13 @@ class BridgeService:
                 "actions",
                 [{"label": a.label, "draft": a.draft} for a in self.prefs.actions],
             ),
+            "profile": {
+                "name": next_profile.name,
+                "avatar_data_url": next_profile.avatar_data_url,
+            },
         }
         parsed = ui_preferences.parse(merged)
+        parsed = replace(parsed, profile=next_profile)
         saved = ui_preferences.save(self.prefs_path, parsed)
         if not saved:
             raise protocol.ProtocolError("io_error", "Não foi possível gravar as preferências de tela.")

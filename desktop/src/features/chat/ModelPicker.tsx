@@ -108,7 +108,7 @@ export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChan
       aria-haspopup="dialog" aria-expanded={open && !closing} aria-controls={id}
       disabled={!provider || disabled || changing} title={disabled ? "Disponível com a conexão pronta e sem tarefa em andamento" : current || "Padrão do provedor"}
       onClick={() => { if (open && !closing) requestClose(); else reopen(); }}>
-      <Icon name="brain" size={17} /><span>{changing ? "Trocando modelo…" : current || "Padrão do provedor"}</span><Icon name="chevron" size={13} />
+      <i className="lunmi-model-dot" aria-hidden="true" /><span>{changing ? "Trocando modelo…" : current || "Padrão do provedor"}</span><Icon name="chevron" size={13} />
     </button>
     {open && <div ref={menu} className="lunmi-model-menu" id={id} role="dialog" data-state={closing ? "closing" : "open"}
       aria-label="Selecionar modelo" data-testid="model-menu">

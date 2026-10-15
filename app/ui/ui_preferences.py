@@ -16,13 +16,18 @@ Três decisões que não são gosto:
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import io
 import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 MAX_ACTIONS = 8
 LABEL_MAX = 40
@@ -33,6 +38,154 @@ MIN_WINDOW_EDGE = 400
 # Pixels da janela que precisam estar na tela para a restauração valer a pena. Abaixo disto a
 # janela está esquecida num monitor que não existe mais, e o lugar padrão é a resposta honesta.
 MIN_VISIBLE = 40
+
+# Limites do perfil local do usuário (armazenado no mesmo `.local/lunmi-ui.json` dentro de 64 KiB).
+MAX_PROFILE_NAME_CHARS = 40
+MAX_PROFILE_AVATAR_CHARS = 40 * 1024      # 40960 caracteres em data URL base64
+MAX_PROFILE_AVATAR_BYTES = 30 * 1024      # 30720 bytes binários
+MAX_PROFILE_AVATAR_DIMENSION = 512        # largura/altura máximas permitidas
+MAX_PROFILE_AVATAR_PIXELS = 512 * 512     # proteção contra decompression bomb antes do decode
+
+_AVATAR_PREFIX_RE = re.compile(r"^data:image/(png|jpeg);base64,([A-Za-z0-9+/=\s]+)$", re.ASCII)
+
+
+@dataclass(frozen=True)
+class UserProfile:
+    """Identidade local escolhida pelo usuário (nome de tratamento + avatar local PNG/JPEG)."""
+
+    name: str = ""
+    avatar_data_url: str = ""
+
+
+DEFAULT_PROFILE = UserProfile()
+
+
+def validate_profile_name(raw: Any, *, strict: bool = False) -> str:
+    """Valida e normaliza o nome do perfil do usuário.
+
+    Em modo `strict=True` (usado por `ui.preferences.set`), levanta `ValueError` se o tipo for
+    inválido, contiver caracteres de controle/quebra de linha ou ultrapassar 40 caracteres.
+    Em modo `strict=False` (leitura tolerante do disco), descarta valores inválidos para `""`.
+    """
+    if raw is None or raw == "":
+        return ""
+    if not isinstance(raw, str):
+        if strict:
+            raise ValueError("O nome do perfil deve ser texto.")
+        return ""
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        if strict:
+            raise ValueError("O nome do perfil não pode conter quebras de linha ou caracteres de controle.")
+        raw = " ".join(raw.split())
+    normalized = " ".join(raw.split()).strip()
+    if len(normalized) > MAX_PROFILE_NAME_CHARS:
+        if strict:
+            raise ValueError(f"O nome do perfil deve ter no máximo {MAX_PROFILE_NAME_CHARS} caracteres.")
+        normalized = normalized[:MAX_PROFILE_NAME_CHARS].rstrip()
+    return normalized
+
+
+def validate_avatar_data_url(raw: Any, *, strict: bool = False) -> str:
+    """Valida Data URL de avatar local (`data:image/png;base64,...` ou `data:image/jpeg;base64,...`).
+
+    Garantias:
+    - Rejeita URLs remotas (`http:`, `https:`, `file:`), SVG, GIF, WebP ou caminhos de arquivo.
+    - Verifica limites de caracteres (`MAX_PROFILE_AVATAR_CHARS`) e de bytes (`MAX_PROFILE_AVATAR_BYTES`)
+      antes de decodificar a imagem.
+    - Usa Pillow (`Image.open` + checagem de formato real PNG/JPEG + dimensões `<= 512x512` antes do
+      decode + `verify()` + decode completo `load()`) para recusar imagens corrompidas ou bombas de
+      descompressão.
+    """
+    if raw is None or raw == "":
+        return ""
+    if not isinstance(raw, str):
+        if strict:
+            raise ValueError("A foto do perfil deve ser uma Data URL PNG ou JPEG válida.")
+        return ""
+    cleaned = raw.strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > MAX_PROFILE_AVATAR_CHARS:
+        if strict:
+            raise ValueError(
+                f"A foto do perfil excede o limite de {MAX_PROFILE_AVATAR_CHARS} caracteres."
+            )
+        return ""
+    match = _AVATAR_PREFIX_RE.fullmatch(cleaned)
+    if not match:
+        if strict:
+            raise ValueError(
+                "Formato de foto não suportado: use apenas Data URL PNG ou JPEG local (sem SVG, WebP, GIF ou URL remota)."
+            )
+        return ""
+    declared_subtype, b64_body = match.group(1), re.sub(r"\s+", "", match.group(2))
+    if not b64_body:
+        if strict:
+            raise ValueError("A foto do perfil está vazia.")
+        return ""
+    try:
+        binary = base64.b64decode(b64_body, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        if strict:
+            raise ValueError("Codificação base64 da foto do perfil é inválida.") from exc
+        return ""
+    if not binary or len(binary) > MAX_PROFILE_AVATAR_BYTES:
+        if strict:
+            raise ValueError(
+                f"A foto do perfil excede o limite de {MAX_PROFILE_AVATAR_BYTES} bytes."
+            )
+        return ""
+
+    expected_format = "PNG" if declared_subtype == "png" else "JPEG"
+    if expected_format == "PNG" and not binary.startswith(b"\x89PNG\r\n\x1a\n"):
+        if strict:
+            raise ValueError("Conteúdo da foto não corresponde a um arquivo PNG válido.")
+        return ""
+    if expected_format == "JPEG" and not binary.startswith(b"\xff\xd8\xff"):
+        if strict:
+            raise ValueError("Conteúdo da foto não corresponde a um arquivo JPEG válido.")
+        return ""
+
+    # Validação real com Pillow sem mutar variáveis globais do módulo (seguro para leituras concorrentes):
+    # `Image.open` lê apenas o cabeçalho; checamos formato e dimensões (<= 512x512, <= 262144 pixels)
+    # antes de `verify()` e antes do decode completo em `load()`.
+    try:
+        with Image.open(io.BytesIO(binary), formats=["PNG", "JPEG"]) as img:
+            actual_format = (img.format or "").upper()
+            width, height = img.size
+            if actual_format != expected_format:
+                raise ValueError("Formato interno da imagem difere do tipo declarado.")
+            if (
+                width <= 0
+                or height <= 0
+                or width > MAX_PROFILE_AVATAR_DIMENSION
+                or height > MAX_PROFILE_AVATAR_DIMENSION
+                or (width * height) > MAX_PROFILE_AVATAR_PIXELS
+            ):
+                raise ValueError(
+                    f"Dimensões da foto ({width}x{height}) excedem o limite de "
+                    f"{MAX_PROFILE_AVATAR_DIMENSION}x{MAX_PROFILE_AVATAR_DIMENSION} pixels."
+                )
+            img.verify()
+
+        with Image.open(io.BytesIO(binary), formats=["PNG", "JPEG"]) as img2:
+            img2.load()
+    except Exception as exc:
+        if strict:
+            if isinstance(exc, ValueError) and ("Dimensões" in str(exc) or "Formato" in str(exc)):
+                raise
+            raise ValueError("Imagem do perfil inválida, truncada ou corrompida.") from exc
+        return ""
+
+    canonical_b64 = base64.b64encode(binary).decode("ascii")
+    canonical_url = f"data:image/{declared_subtype};base64,{canonical_b64}"
+    if len(canonical_url) > MAX_PROFILE_AVATAR_CHARS:
+        if strict:
+            raise ValueError(
+                f"A foto do perfil excede o limite de {MAX_PROFILE_AVATAR_CHARS} caracteres."
+            )
+        return ""
+    return canonical_url
 
 
 @dataclass(frozen=True)
@@ -49,6 +202,7 @@ class Preferences:
     scale_pct: int = 100
     actions: tuple[QuickAction, ...] = ()
     theme: str = "celestial"
+    profile: UserProfile = field(default_factory=UserProfile)
 
 
 DEFAULT_ACTIONS: tuple[QuickAction, ...] = (
@@ -103,8 +257,15 @@ def parse(payload: Any) -> Preferences:
     raw_theme = payload.get("theme", "celestial")
     # IDs are inert metadata. The frontend registry chooses a safe fallback for unknown themes.
     theme = raw_theme if isinstance(raw_theme, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,47}", raw_theme) else "celestial"
+    raw_profile = payload.get("profile")
+    profile = DEFAULT_PROFILE
+    if isinstance(raw_profile, dict):
+        profile = UserProfile(
+            name=validate_profile_name(raw_profile.get("name"), strict=False),
+            avatar_data_url=validate_avatar_data_url(raw_profile.get("avatar_data_url"), strict=False),
+        )
     return Preferences(window=rect, scale_pct=scale_pct,
-                       actions=tuple(actions) or DEFAULT_ACTIONS, theme=theme)
+                       actions=tuple(actions) or DEFAULT_ACTIONS, theme=theme, profile=profile)
 
 
 def load(path: Path) -> Preferences:
@@ -126,7 +287,9 @@ def dump(prefs: Preferences) -> str:
     return json.dumps({"window": list(prefs.window) if prefs.window else None,
                        "scale_pct": prefs.scale_pct,
                        "theme": prefs.theme,
-                       "actions": [{"label": a.label, "draft": a.draft} for a in prefs.actions]},
+                       "actions": [{"label": a.label, "draft": a.draft} for a in prefs.actions],
+                       "profile": {"name": prefs.profile.name,
+                                   "avatar_data_url": prefs.profile.avatar_data_url}},
                       ensure_ascii=False, indent=2)
 
 

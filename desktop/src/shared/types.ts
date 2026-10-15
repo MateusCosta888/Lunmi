@@ -190,11 +190,28 @@ export interface QuickActionDto {
   draft: string;
 }
 
+/** Perfil local do usuário — nome de tratamento e foto. Não depende da memória nem do Brain. */
+export interface ProfileDto {
+  name: string;
+  /** Data URL PNG/JPEG redimensionada (campo canônico `avatar_data_url`); nunca URL remota nem caminho. */
+  avatar_data_url: string;
+}
+
+/** Anexo escolhido no compositor. Conteúdo é dado não confiável, nunca instrução de sistema. */
+export interface AttachmentDto {
+  id: string;
+  name: string;
+  size: number;
+  status: "ready" | "error";
+  error?: string;
+}
+
 export interface UiPreferencesDto {
   theme?: string;
   window: number[] | null;
   scale_pct: number;
   actions: QuickActionDto[];
+  profile?: { name: string; avatar_data_url: string };
 }
 
 /** Estado público de falha de sessão emitido pelo supervisor do processo principal. */

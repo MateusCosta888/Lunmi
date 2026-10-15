@@ -161,6 +161,8 @@ it("bloqueia a seleção durante a saída visível e só desmonta o menu no fim 
   const fake = setup();
   await screen.findByTestId("composer");
   await act(async () => { reduced = false; for (const cb of [...handlers]) cb({ matches: false }); });
+  // Prova de que o fim do movimento reduzido chegou ao renderer antes do fechamento.
+  await waitFor(() => expect(screen.getByTestId("starfield").dataset.paused).toBe("false"));
 
   let finishExit!: () => void;
   const prototype = Element.prototype as unknown as { animate?: unknown };
@@ -200,6 +202,8 @@ it("reabrir durante a saída cancela o exit sem menu órfão", async () => {
   const fake = setup();
   await screen.findByTestId("composer");
   await act(async () => { reduced = false; for (const cb of [...handlers]) cb({ matches: false }); });
+  // Prova de que o fim do movimento reduzido chegou ao renderer antes do fechamento.
+  await waitFor(() => expect(screen.getByTestId("starfield").dataset.paused).toBe("false"));
 
   let finishExit!: () => void;
   const cancel = vi.fn(() => finishExit());

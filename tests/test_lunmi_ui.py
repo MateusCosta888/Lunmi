@@ -163,3 +163,72 @@ def test_preferencias_limitam_a_leitura_antes_de_carregar_arquivo_grande(tmp_pat
 
     monkeypatch.setattr(Path, 'open', lambda *a, **k: Bounded(b'x' * (prefs.MAX_BYTES + 2)))
     assert prefs.load(tmp_path / 'large.json') == prefs.DEFAULT
+
+
+def test_perfil_valida_nome_e_avatar_png_jpeg_com_pillow_sem_mutar_globais(tmp_path: Path) -> None:
+    import base64
+    import io
+    from PIL import Image, ImageFile
+    import pytest
+    from app.ui import ui_preferences as prefs
+
+    orig_max_pixels = Image.MAX_IMAGE_PIXELS
+    orig_truncated = ImageFile.LOAD_TRUNCATED_IMAGES
+
+    # Nome: normaliza espaços, aceita até 40 chars, recusa controle/quebras e >40 em strict
+    assert prefs.validate_profile_name("  Ana   Maria  ", strict=True) == "Ana Maria"
+    assert prefs.validate_profile_name("", strict=True) == ""
+    with pytest.raises(ValueError, match="controle"):
+        prefs.validate_profile_name("Ana\nIgnorar", strict=True)
+    with pytest.raises(ValueError, match="40"):
+        prefs.validate_profile_name("A" * 41, strict=True)
+
+    # Gera PNG e JPEG reais válidos via Pillow
+    png_buf = io.BytesIO()
+    Image.new("RGBA", (64, 64), (90, 140, 255, 255)).save(png_buf, format="PNG")
+    png_url = "data:image/png;base64," + base64.b64encode(png_buf.getvalue()).decode("ascii")
+
+    jpg_buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (40, 80, 160)).save(jpg_buf, format="JPEG", quality=80)
+    jpg_url = "data:image/jpeg;base64," + base64.b64encode(jpg_buf.getvalue()).decode("ascii")
+
+    assert prefs.validate_avatar_data_url(png_url, strict=True) == png_url
+    assert prefs.validate_avatar_data_url(jpg_url, strict=True) == jpg_url
+
+    # Magic bytes de PNG com corpo truncado/corrompido devem ser recusados pelo Pillow verify/load
+    corrupted_png = b"\x89PNG\r\n\x1a\n" + b"corrompido-sem-ihdr-valido"
+    corrupted_url = "data:image/png;base64," + base64.b64encode(corrupted_png).decode("ascii")
+    with pytest.raises(ValueError, match="inválida|corrompida"):
+        prefs.validate_avatar_data_url(corrupted_url, strict=True)
+    assert prefs.validate_avatar_data_url(corrupted_url, strict=False) == ""
+
+    # Imagem com dimensão acima de 512x512 é recusada antes do decode completo
+    oversized_buf = io.BytesIO()
+    Image.new("RGB", (600, 64), (10, 20, 30)).save(oversized_buf, format="PNG")
+    oversized_url = "data:image/png;base64," + base64.b64encode(oversized_buf.getvalue()).decode("ascii")
+    with pytest.raises(ValueError, match="Dimensões"):
+        prefs.validate_avatar_data_url(oversized_url, strict=True)
+
+    # SVG, URL remota e path de arquivo são recusados
+    for forbidden in (
+        "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+        "https://example.com/avatar.png",
+        "file:///C:/Users/avatar.png",
+        "C:\\Users\\avatar.png",
+    ):
+        with pytest.raises(ValueError):
+            prefs.validate_avatar_data_url(forbidden, strict=True)
+
+    # Globais do Pillow permanecem intactos
+    assert Image.MAX_IMAGE_PIXELS == orig_max_pixels
+    assert ImageFile.LOAD_TRUNCATED_IMAGES == orig_truncated
+
+    # Persistência round-trip em lunmi-ui.json
+    path = prefs.path_for(tmp_path)
+    saved_prefs = prefs.Preferences(
+        profile=prefs.UserProfile(name="Bia", avatar_data_url=png_url)
+    )
+    assert prefs.save(path, saved_prefs) is True
+    loaded = prefs.load(path)
+    assert loaded.profile.name == "Bia"
+    assert loaded.profile.avatar_data_url == png_url

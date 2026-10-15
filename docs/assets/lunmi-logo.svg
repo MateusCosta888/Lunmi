@@ -32,7 +32,7 @@
     </filter>
     <clipPath id="squircle"><rect width="512" height="512" rx="128"/></clipPath>
   </defs>
-<g clip-path="url(#squircle)"><rect width="512" height="512" fill="url(#cardBg)"/><rect x="2" y="2" width="508" height="508" rx="126" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/><g transform="translate(-10, -42)"><path d="M 370 142 L 205 258" stroke="url(#secondaryMeteorTop)" stroke-width="10" stroke-linecap="round"/>
+<g clip-path="url(#squircle)"><rect width="512" height="512" fill="url(#cardBg)"/><rect x="2" y="2" width="508" height="508" rx="126" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/><g transform="translate(-14, -42)"><path d="M 370 142 L 205 258" stroke="url(#secondaryMeteorTop)" stroke-width="10" stroke-linecap="round"/>
       <circle cx="205" cy="258" r="16" fill="#7DAFFF" opacity="0.25" filter="url(#softGlow)"/>
       <circle cx="205" cy="258" r="11" fill="#7DAFFF"/>
       <circle cx="205" cy="258" r="6" fill="#FFFFFF"/>

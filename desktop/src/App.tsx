@@ -11,6 +11,10 @@ import { BrainPanel } from "./features/brain/BrainPanel";
 import { MemoryPanel } from "./features/memory/MemoryPanel";
 import { PreferencesPanel } from "./features/preferences/PreferencesPanel";
 import { ModelPicker } from "./features/chat/ModelPicker";
+import { useAttachments } from "./features/chat/useAttachments";
+import { ProfileModal } from "./features/profile/ProfileModal";
+import { EMPTY_PROFILE } from "./features/profile/useProfile";
+import type { ProfileDto } from "./shared/types";
 import { Starfield } from "./shared/Starfield";
 import { RubberNavigation } from "./shared/RubberNavigation";
 import { getTheme } from "./shared/theme";
@@ -45,6 +49,11 @@ export function App(): React.ReactElement {
   const [modelBusy, setModelBusy] = useState(false);
   // Estado local da janela (sem preferência nova): abaixo de 900px começa em rail, e o usuário pode inverter em qualquer tamanho.
   const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia?.("(max-width: 900px)").matches ?? false);
+  // Rail de contexto: estado local da janela; Parar e rascunho vivem fora daqui.
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const attachments = useAttachments();
   const [introFinished, setIntroFinished] = useState(false);
   const openedRef = useRef(false);
   const [controlsSession, setControlsSession] = useState("");
@@ -142,10 +151,38 @@ export function App(): React.ReactElement {
     return () => cancelAnimationFrame(frame);
   }, [opened, initialized, sessionId]);
 
-  const provider = brain?.providers?.find(p => p.id === brain.current.provider);
-  const brainLabel = brain?.current.provider
-    ? provider?.label ?? brain.current.provider
-    : "Escolher cérebro";
+  const profileName = preferences?.profile?.name?.trim() ?? "";
+  const profile: ProfileDto = preferences?.profile
+    ? { name: preferences.profile.name ?? "", avatar_data_url: preferences.profile.avatar_data_url ?? "" }
+    : EMPTY_PROFILE;
+  // O modelo exibido é sempre o real. Vazio significa padrão/não identificado — nunca um nome inventado.
+  const modelLabel = brain?.current.model?.trim() || "Modelo padrão";
+  const modelTitle = brain?.current.model?.trim()
+    ? `Modelo em uso: ${brain.current.model}`
+    : "Nenhum modelo identificado; o provedor usará o padrão dele.";
+  const saveProfile = async (next: ProfileDto): Promise<string | null> => {
+    setProfileBusy(true);
+    try {
+      const saved = await sendCommand<{ profile?: { name?: unknown; avatar_data_url?: unknown } }>(
+        "ui.preferences.set", { profile: { name: next.name, avatar_data_url: next.avatar_data_url } });
+      // Só mostro o perfil como salvo se o backend devolveu o DTO canônico — sem fingir persistência.
+      const canonicalName = saved?.profile?.name;
+      const canonicalAvatar = saved?.profile?.avatar_data_url;
+      if (typeof canonicalName !== "string" || typeof canonicalAvatar !== "string") {
+        return "O backend não confirmou o salvamento do perfil.";
+      }
+      setPreferences(current => ({
+        ...(current ?? { window: null, scale_pct: 100, actions: [] }),
+        profile: { name: canonicalName, avatar_data_url: canonicalAvatar },
+      }));
+      setProfileOpen(false);
+      return null;
+    } catch {
+      return "Não foi possível confirmar o salvamento do perfil.";
+    } finally {
+      setProfileBusy(false);
+    }
+  };
   const changePolicy = async (enabled: boolean) => {
     setPolicyBusy(true);
     try { setApproval(await sendCommand<ApprovalDto>("approval.set", { auto_approve: enabled })); }
@@ -180,21 +217,31 @@ export function App(): React.ReactElement {
           </button>
         </div>
         <RubberNavigation items={NAV} value={view} disabled={modelBusy} onChange={next => setView(next as View)} />
-        <div className="lunmi-sidebar-foot"><BrandMark size={40} /><p>Seu assistente para<br />um dia mais fluido.</p>
-          <span>Histórico desta sessão</span>
+        <div className="lunmi-sidebar-foot">
+          <button type="button" className="lunmi-profile-mini" data-testid="profile-button"
+            aria-label={profileName ? `Perfil de ${profileName}` : "Seu perfil"}
+            title={profileName || "Seu perfil"} onClick={() => setProfileOpen(true)}>
+            {profile.avatar_data_url
+              ? <img className="lunmi-profile-thumb" src={profile.avatar_data_url} alt="" />
+              : <span className="lunmi-profile-fallback" aria-hidden="true"><Icon name="user" size={16} /></span>}
+            <span className="lunmi-nav-text lunmi-profile-name">{profileName || "Seu perfil"}</span>
+          </button>
         </div>
       </aside>
       <div className="lunmi-shell-main">
         <header className="lunmi-topbar">
-          <span className="lunmi-chip lunmi-chip-static" data-testid="brain-pill" title={brainLabel}>
-            <Icon name="brain" /><span className="lunmi-chip-value">{brainLabel}</span>
-          </span>
-          <label className="lunmi-toggle" title="Vale para a próxima tarefa. Ações sensíveis continuam exigindo confirmação.">
+          <label className="lunmi-toggle lunmi-topbar-left" title="Vale para a próxima tarefa. Ações sensíveis continuam exigindo confirmação.">
             <input type="checkbox" aria-label="Autoaprovação" data-testid="header-auto-approve" checked={approval?.auto_approve ?? false}
               disabled={!approval || policyBusy || modelBusy} onChange={e => void changePolicy(e.target.checked)} />
             <span className="lunmi-toggle-track" aria-hidden="true" /><span>Autoaprovação</span>
           </label>
-          <SessionStatusChip status={session.status} />
+          <span className="lunmi-model-capsule" data-testid="brain-pill" title={modelTitle}>
+            <i className="lunmi-capsule-dot" aria-hidden="true" />
+            <span className="lunmi-capsule-brand">LUNMI</span>
+            <span className="lunmi-capsule-sep" aria-hidden="true">•</span>
+            <span className="lunmi-capsule-model" data-testid="topbar-model">{modelLabel}</span>
+          </span>
+          <span className="lunmi-topbar-right"><SessionStatusChip status={session.status} /></span>
         </header>
         {session.status === "failed" && (
           <SessionFailureStrip failure={session.failure} errorMessage={session.errorMessage}
@@ -210,6 +257,12 @@ export function App(): React.ReactElement {
           <main className="lunmi-main">
             <div className="lunmi-chat-view" hidden={view !== "chat"}>
               <ChatPanel chat={chat} session={session.session} draft={draft} setDraft={setDraft} modelChanging={modelBusy}
+                attachments={attachments.items}
+                attachmentPayload={() => attachments.items.map(item => ({ name: item.name, text: attachments.contents.get(item.id) ?? "", size_bytes: item.size }))}
+                onPickAttachment={() => void attachments.pick()} onRemoveAttachment={attachments.remove}
+                attachSupported={attachments.supported} attachPicking={attachments.picking}
+                attachNotice={attachments.notice} onDismissAttachNotice={attachments.dismissNotice}
+                onAttachmentsAccepted={attachments.clear}
                 modelPicker={<ModelPicker key={brain?.current.provider ?? ""} brain={brain} sendCommand={sendCommand} changing={modelBusy}
                   disabled={chat.busy || chat.submitting || session.status !== "ready" || controlsSession !== sessionId || session.session?.capabilities.brain !== true}
                   onBusyChange={setModelBusy} onChanged={current => { setBrain(previous => previous ? { ...previous, current } : previous); setRevision(r => r + 1); }}
@@ -220,7 +273,24 @@ export function App(): React.ReactElement {
             {view === "preferences" && <PreferencesPanel sendCommand={sendCommand} session={session.session}
               onThemeChanged={theme => { setPreferences(current => current ? { ...current, theme } : current); setRevision(r => r + 1); }} />}
           </main>
-          {view === "chat" && <aside className="lunmi-rail" aria-label="Contexto da conversa">
+          {view === "chat" && (railCollapsed ? (
+            <aside className="lunmi-rail-edge" aria-label="Painel de contexto">
+              <button type="button" className="lunmi-rail-expand" data-testid="rail-collapse-toggle"
+                aria-expanded={false} aria-label="Mostrar painel de contexto" title="Mostrar painel de contexto"
+                onClick={() => setRailCollapsed(false)}>
+                <Icon name="chevron" size={15} />
+              </button>
+            </aside>
+          ) : (
+          <aside className="lunmi-rail" aria-label="Contexto da conversa">
+            <div className="lunmi-rail-bar">
+              <span className="lunmi-rail-title">Contexto</span>
+              <button type="button" className="lunmi-rail-collapse" data-testid="rail-collapse-toggle"
+                aria-expanded aria-label="Recolher painel de contexto" title="Recolher painel de contexto"
+                onClick={() => setRailCollapsed(true)}>
+                <Icon name="collapse" size={16} />
+              </button>
+            </div>
             <section className="lunmi-rail-section"><h2>Ações rápidas</h2><p className="lunmi-rail-empty">Preenchem a mensagem. Você decide quando enviar.</p>
               {(preferences?.actions ?? []).map((action, index) => <button className="lunmi-row" type="button" key={index}
                 disabled={Boolean(draft.trim())} title={draft.trim() ? "Termine ou limpe o rascunho antes de usar um atalho" : "Preencher mensagem"}
@@ -241,9 +311,15 @@ export function App(): React.ReactElement {
                 : <p className="lunmi-rail-empty">Você controla o que a Lunmi lembra.</p>}
               <button className="lunmi-link" type="button" onClick={() => setView("memory")}>Gerenciar memória</button>
             </section>
-          </aside>}
+          </aside>
+          ))}
         </div>
       </div>
+      {profileOpen && (
+        <ProfileModal profile={profile} busy={profileBusy}
+          onClose={() => setProfileOpen(false)}
+          onSave={async next => await saveProfile(next)} />
+      )}
     </div>
   );
 }

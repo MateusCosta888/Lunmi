@@ -31,6 +31,8 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 | **Executar** | Encaminha tarefas ao fluxo de automação e apresenta o resultado com seu estado de verificação. |
 | **Brain configurável** | Usa APIs, endpoints compatíveis e CLIs locais suportados. O catálogo depende do provedor conectado. |
 | **Memória local** | Permite consultar, editar, propor, aceitar, excluir, importar e exportar registros. |
+| **Perfil local** | Nome de tratamento e foto, editáveis na própria janela. A foto não vai ao Brain. |
+| **Anexos de texto** | No modo Conversar: até 4 arquivos UTF-8, 32 KiB por arquivo e 64 KiB no total. |
 | **Controle do usuário** | Confirmações, perguntas, cancelamento e indicação de falhas fazem parte da execução. |
 | **Interface adaptável** | Temas Celestial e Claro suave, lateral recolhível e compositor multilinha com seleção de modelo. |
 
@@ -148,7 +150,8 @@ Os testes usam fixtures e sandboxes; não certificam qualquer aplicativo externo
 ## Limites atuais
 
 - Automação depende do que os aplicativos expõem por UIA/Win32 e da verificação disponível.
-- Voz, anexos, streaming e navegação web completa não são anunciados como recursos prontos.
+- Anexos funcionam somente em Conversar com texto/código UTF-8. Imagens, PDF e binários são recusados; anexos e respostas desse turno não viram memória automática.
+- Voz, streaming e navegação web completa não são anunciados como recursos prontos.
 - Não há distribuição empacotada, suporte a macOS/Linux ou certificação geral de múltiplos monitores e DPIs.
 - Há dependências upstream legadas; avisos conhecidos e triagem estão em [Segurança](SECURITY.md#dependências-upstream).
 

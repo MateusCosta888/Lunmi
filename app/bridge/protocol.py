@@ -27,6 +27,45 @@ MAX_ID_CHARS = 128                          # Teto para identificadores de corre
 MAX_TYPE_CHARS = 64                         # Teto para o nome do comando/evento
 MAX_HOST_PIDS = 64                          # Teto de PIDs da árvore do host enviados pelo processo pai confiável
 
+# Limites formais de perfil local e anexos de texto no compositor (v1 aditivo)
+MAX_PROFILE_NAME_CHARS = 40                 # Teto do nome de tratamento no perfil local
+MAX_PROFILE_AVATAR_CHARS = 40 * 1024        # Teto da Data URL PNG/JPEG em caracteres (40 KiB)
+MAX_PROFILE_AVATAR_BYTES = 30 * 1024        # Teto binário da imagem de avatar (30 KiB)
+MAX_CHAT_ATTACHMENTS = 4                    # Teto de anexos de texto por envio
+MAX_ATTACHMENT_NAME_CHARS = 120             # Teto do basename do arquivo anexado
+MAX_ATTACHMENT_BYTES = 32 * 1024            # Teto de 32 KiB UTF-8 por anexo
+MAX_TOTAL_ATTACHMENTS_BYTES = 64 * 1024     # Teto de 64 KiB UTF-8 somados por envio
+
+UNSUPPORTED_ATTACHMENT_EXTENSIONS: frozenset[str] = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tiff", ".tif", ".avif", ".heic",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
+    ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz",
+    ".exe", ".dll", ".msi", ".bat", ".cmd", ".com", ".scr", ".bin", ".iso",
+    ".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac",
+    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv",
+    ".ttf", ".otf", ".woff", ".woff2", ".sqlite", ".sqlite3", ".db",
+})
+
+UNSUPPORTED_ATTACHMENT_MIME_PREFIXES: tuple[str, ...] = (
+    "image/",
+    "audio/",
+    "video/",
+)
+
+UNSUPPORTED_ATTACHMENT_MIMES: frozenset[str] = frozenset({
+    "application/pdf",
+    "application/zip",
+    "application/x-rar-compressed",
+    "application/x-7z-compressed",
+    "application/octet-stream",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+})
+
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_.]*$")
 
@@ -191,6 +230,115 @@ def validate_host_pids(raw_pids: Any) -> list[int]:
                 "Cada item de 'host_pids' deve ser um inteiro positivo válido.",
             )
         validated.append(item)
+    return validated
+
+
+def validate_chat_attachments(raw_attachments: Any) -> list[dict[str, Any]]:
+    """Valida `attachments` opcionais em `chat.send`.
+
+    Regras:
+    - Lista de até `MAX_CHAT_ATTACHMENTS` (4) objetos.
+    - Proíbe `path` ou `file` vindos do renderer (nenhum caminho arbitrário).
+    - `name` deve ser basename puro (1..120 chars, sem `/`, `\\`, `..` ou caracteres de controle).
+    - Rejeita extensões/MIMEs sem extração real (imagens, PDF, áudio, vídeo, binários/compactados)
+      com motivo explícito em português.
+    - `text` deve ser string UTF-8 válida, sem surrogates e sem byte NUL (`\\x00`), limitada a
+      `MAX_ATTACHMENT_BYTES` (32 KiB) por arquivo e `MAX_TOTAL_ATTACHMENTS_BYTES` (64 KiB) somados.
+    """
+    if raw_attachments is None:
+        return []
+    if not isinstance(raw_attachments, list):
+        raise ProtocolError("invalid_payload", "Campo 'attachments' deve ser uma lista.")
+    if len(raw_attachments) > MAX_CHAT_ATTACHMENTS:
+        raise ProtocolError(
+            "invalid_payload",
+            f"Limite de {MAX_CHAT_ATTACHMENTS} anexos por mensagem excedido.",
+        )
+
+    validated: list[dict[str, Any]] = []
+    total_bytes = 0
+
+    for idx, item in enumerate(raw_attachments):
+        if not isinstance(item, dict):
+            raise ProtocolError("invalid_payload", f"Anexo #{idx + 1} deve ser um objeto.")
+        if "path" in item or "file" in item:
+            raise ProtocolError(
+                "invalid_payload",
+                "Anexos não podem informar caminho de arquivo ('path'/'file') pelo renderer.",
+            )
+
+        raw_name = item.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ProtocolError("invalid_payload", f"Anexo #{idx + 1} precisa de um nome de arquivo válido.")
+        name = raw_name.strip()
+        if (
+            len(name) > MAX_ATTACHMENT_NAME_CHARS
+            or "/" in name
+            or "\\" in name
+            or ":" in name
+            or name in {".", ".."}
+            or ".." in name
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in name)
+        ):
+            raise ProtocolError(
+                "invalid_payload",
+                f"Nome de arquivo inválido no anexo '{name[:40]}': use apenas o nome simples do arquivo.",
+            )
+
+        dot_idx = name.rfind(".")
+        ext = name[dot_idx:].lower() if dot_idx >= 0 else ""
+        if ext in UNSUPPORTED_ATTACHMENT_EXTENSIONS:
+            raise ProtocolError(
+                "invalid_payload",
+                f"Formato não suportado em '{name}': apenas arquivos de texto/código UTF-8 têm leitura real nesta versão (imagens, PDF e binários são recusados).",
+            )
+
+        raw_mime = item.get("mime")
+        if raw_mime is not None:
+            if not isinstance(raw_mime, str):
+                raise ProtocolError("invalid_payload", f"Campo 'mime' inválido em '{name}'.")
+            mime = raw_mime.strip().lower().split(";")[0].strip()
+            if mime and (
+                mime in UNSUPPORTED_ATTACHMENT_MIMES
+                or any(mime.startswith(prefix) for prefix in UNSUPPORTED_ATTACHMENT_MIME_PREFIXES)
+            ):
+                raise ProtocolError(
+                    "invalid_payload",
+                    f"Tipo de arquivo não suportado ({mime}) em '{name}': envie apenas texto/código UTF-8.",
+                )
+
+        raw_text = item.get("text")
+        if not isinstance(raw_text, str):
+            raise ProtocolError("invalid_payload", f"Conteúdo de '{name}' deve ser texto UTF-8.")
+        if "\x00" in raw_text or _contains_surrogate(raw_text):
+            raise ProtocolError(
+                "invalid_payload",
+                f"Conteúdo binário ou codificação inválida em '{name}': apenas texto UTF-8 é aceito.",
+            )
+
+        encoded_bytes = len(raw_text.encode("utf-8", errors="strict"))
+        if encoded_bytes == 0:
+            raise ProtocolError("invalid_payload", f"O arquivo anexado '{name}' está vazio.")
+        if encoded_bytes > MAX_ATTACHMENT_BYTES:
+            raise ProtocolError(
+                "invalid_payload",
+                f"O arquivo '{name}' ({encoded_bytes} bytes) excede o limite de {MAX_ATTACHMENT_BYTES} bytes por anexo.",
+            )
+        total_bytes += encoded_bytes
+        if total_bytes > MAX_TOTAL_ATTACHMENTS_BYTES:
+            raise ProtocolError(
+                "invalid_payload",
+                f"O tamanho total dos anexos ({total_bytes} bytes) excede o limite de {MAX_TOTAL_ATTACHMENTS_BYTES} bytes.",
+            )
+
+        validated.append(
+            {
+                "name": name,
+                "size_bytes": encoded_bytes,
+                "text": raw_text,
+            }
+        )
+
     return validated
 
 

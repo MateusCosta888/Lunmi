@@ -8,7 +8,7 @@
  * Nenhuma cor literal: tudo vem de `shared/theme.ts`, a fonte de verdade da paleta navy sem neon.
  */
 import React from "react";
-import { MessageCircle, BrainCircuit, Database, Settings2, ChevronRight, ArrowUp, Square, Plus, CornerDownLeft, Monitor, MessageSquareText, Check, Palette, Keyboard, Sparkles, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { MessageCircle, BrainCircuit, Database, Settings2, ChevronRight, ArrowUp, Square, Plus, CornerDownLeft, Monitor, MessageSquareText, Check, Palette, Keyboard, Sparkles, PanelLeftClose, PanelLeftOpen, Paperclip, UserRound } from "lucide-react";
 import { TOKENS } from "./theme";
 import brandSymbol from "../assets/branding/lunmi-symbol.svg";
 
@@ -122,6 +122,7 @@ const ICONS = {
   chevron: ChevronRight, "arrow-up": ArrowUp, stop: Square, plus: Plus,
   enter: CornerDownLeft, monitor: Monitor, conversation: MessageSquareText, check: Check,
   palette: Palette, keyboard: Keyboard, sparkle: Sparkles, collapse: PanelLeftClose, expand: PanelLeftOpen,
+  attach: Paperclip, user: UserRound,
 } as const;
 export type IconName = keyof typeof ICONS;
 

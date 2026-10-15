@@ -12,11 +12,12 @@ import { TOKENS } from "../../shared/theme";
 import { SafeMarkdown } from "../../shared/markdown";
 import { getBridgeApi } from "../../shared/ipc/client";
 import type { SessionReadyPayload } from "../../shared/protocol";
-import type { ChatMode } from "../../shared/types";
-import type { ChatTaskState } from "./useChatTask";
+import type { AttachmentDto, ChatMode } from "../../shared/types";
+import type { ChatAttachmentPayload, ChatTaskState } from "./useChatTask";
 import { MAX_COMPOSER_CHARS } from "./useChatTask";
 import { TaskPanel } from "../task/TaskPanel";
 import { BrandMark, Icon } from "../../shared/ui";
+import { AttachmentsBar } from "./Attachments";
 import { ThoughtLine } from "./ThoughtLine";
 import { useVisualActivity } from "../../shared/useVisualActivity";
 
@@ -27,6 +28,15 @@ export interface ChatPanelProps {
   setDraft?: React.Dispatch<React.SetStateAction<string>>;
   modelPicker?: React.ReactNode;
   modelChanging?: boolean;
+  attachments?: AttachmentDto[];
+  attachmentPayload?: () => ChatAttachmentPayload[];
+  onPickAttachment?: () => void;
+  onRemoveAttachment?: (id: string) => void;
+  attachSupported?: boolean;
+  attachPicking?: boolean;
+  attachNotice?: string | null;
+  onDismissAttachNotice?: () => void;
+  onAttachmentsAccepted?: () => void;
 }
 
 function bubbleStyle(role: string): React.CSSProperties {
@@ -67,7 +77,12 @@ function bubbleStyle(role: string): React.CSSProperties {
   };
 }
 
-export function ChatPanel({ chat, session, draft, setDraft, modelPicker, modelChanging = false }: ChatPanelProps): React.ReactElement {
+export function ChatPanel({
+  chat, session, draft, setDraft, modelPicker, modelChanging = false,
+  attachments, attachmentPayload, onPickAttachment, onRemoveAttachment,
+  attachSupported = false, attachPicking = false, attachNotice = null,
+  onDismissAttachNotice, onAttachmentsAccepted,
+}: ChatPanelProps): React.ReactElement {
   const [localText, setLocalText] = useState("");
   const text = draft ?? localText;
   const setText = setDraft ?? setLocalText;
@@ -101,26 +116,32 @@ export function ChatPanel({ chat, session, draft, setDraft, modelPicker, modelCh
 
   const converseEnabled = session ? session.capabilities.converse !== false : false;
   const executeEnabled = session ? session.capabilities.execute !== false : false;
+  const readyAttachments = (attachments ?? []).filter((item) => item.status === "ready");
+  // Anexos de texto só existem no modo Conversar (contrato do lote). Em Executar, o envio fica
+  // bloqueado com motivo visível — nada some, nada troca de modo nem envia sozinho.
+  const attachBlocked = mode === "execute" && readyAttachments.length > 0;
   const canSend =
-    Boolean(session) && !chat.busy && !chat.submitting && !modelChanging && text.trim().length > 0;
+    Boolean(session) && !chat.busy && !chat.submitting && !modelChanging && !attachBlocked && text.trim().length > 0;
   const composerStatus = modelChanging ? "Aplicando modelo" : chat.confirmRequest ? "Confirmação pendente" : chat.inputRequest ? "Resposta pendente"
     : chat.busy ? "Tarefa em andamento" : session ? "Conectado" : "Sem conexão";
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!canSend) {
+    if (attachBlocked || !canSend) {
       return;
     }
     const outgoing = text;
+    const outgoingAttachments = readyAttachments.length && attachmentPayload ? attachmentPayload() : undefined;
     // O rascunho NÃO é apagado antes da resposta do backend: se o envio for recusado
     // (`task_busy`, `reconfiguring`, capacidade ausente), a instrução digitada continua na tela.
-    const outcome = await chat.send(mode, outgoing);
+    const outcome = await chat.send(mode, outgoing, outgoingAttachments);
     if (!outcome.accepted) {
       return;
     }
     // Aceito: limpa apenas se o campo ainda contiver exatamente o texto enviado. Um rascunho novo
     // digitado durante a espera pertence ao usuário e não pode ser sobrescrito.
     setText((current) => (current === outgoing ? "" : current));
+    onAttachmentsAccepted?.();
   };
 
   const pickLocation = async (kind: "folder" | "file", requestId: string) => {
@@ -341,6 +362,17 @@ export function ChatPanel({ chat, session, draft, setDraft, modelPicker, modelCh
             <span className="lunmi-input-hint"><Icon name="enter" size={13} />Shift + Enter para nova linha</span>
           </div>
           <div className="lunmi-composer-toolbar">
+            {onPickAttachment && (
+              <AttachmentsBar
+                items={readyAttachments}
+                disabled={chat.busy || chat.submitting || attachPicking}
+                supported={attachSupported}
+                notice={attachNotice}
+                onPick={onPickAttachment}
+                onRemove={(id) => onRemoveAttachment?.(id)}
+                onDismissNotice={() => onDismissAttachNotice?.()}
+              />
+            )}
             {modelPicker}
             <div className="lunmi-composer-actions">
           <div role="radiogroup" aria-label="Modo" className="lunmi-mode">
@@ -359,7 +391,9 @@ export function ChatPanel({ chat, session, draft, setDraft, modelPicker, modelCh
             </div>
           </div>
         </div>
-        <div className="lunmi-composer-caption"><span className="lunmi-mode-hint">{modelChanging ? "Aplicando modelo…" : mode === "converse" ? "Sem ações no Windows" : "Ações respeitam sua aprovação"}</span>
+        <div className="lunmi-composer-caption"><span className="lunmi-mode-hint">{attachBlocked
+          ? <span data-testid="attach-mode-notice">Anexos de texto estão disponíveis no modo Conversar. Nada foi enviado; rascunho e anexos continuam aqui.</span>
+          : modelChanging ? "Aplicando modelo…" : mode === "converse" ? "Sem ações no Windows" : "Ações respeitam sua aprovação"}</span>
           <span className="lunmi-composer-note">Enter para enviar</span></div>
       </form>
     </section>

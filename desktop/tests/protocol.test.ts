@@ -11,18 +11,26 @@ import {
   EVENT_TYPES,
   ID_PATTERN,
   JsonlLineFramer,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_NAME_CHARS,
+  MAX_CHAT_ATTACHMENTS,
   MAX_CHAT_TEXT_CHARS,
   MAX_HOST_PIDS,
   MAX_ID_CHARS,
   MAX_IMPORT_BYTES,
   MAX_LINE_BYTES,
   MAX_MEMORY_TEXT_CHARS,
+  MAX_PROFILE_AVATAR_BYTES,
+  MAX_PROFILE_AVATAR_CHARS,
+  MAX_PROFILE_NAME_CHARS,
+  MAX_TOTAL_ATTACHMENTS_BYTES,
   MAX_TYPE_CHARS,
   parseEnvelope,
   PROTOCOL_VERSION,
   ProtocolValidationError,
   RESPONSE_TYPES,
   TYPE_PATTERN,
+  UNSUPPORTED_ATTACHMENT_EXTENSIONS,
   validateHostPids,
 } from "../src/shared/protocol";
 import { PythonBackendSupervisor } from "../electron/backend";
@@ -38,6 +46,15 @@ describe("Contrato IPC v1 (TypeScript <-> Golden <-> Python)", () => {
     expect(MAX_ID_CHARS).toBe(golden.limits.max_id_chars);
     expect(MAX_TYPE_CHARS).toBe(golden.limits.max_type_chars);
     expect(MAX_HOST_PIDS).toBe(golden.limits.max_host_pids);
+    expect(MAX_PROFILE_NAME_CHARS).toBe(40);
+    expect(MAX_PROFILE_AVATAR_CHARS).toBe(40960);
+    expect(MAX_PROFILE_AVATAR_BYTES).toBe(30720);
+    expect(MAX_CHAT_ATTACHMENTS).toBe(4);
+    expect(MAX_ATTACHMENT_NAME_CHARS).toBe(120);
+    expect(MAX_ATTACHMENT_BYTES).toBe(32768);
+    expect(MAX_TOTAL_ATTACHMENTS_BYTES).toBe(65536);
+    expect(UNSUPPORTED_ATTACHMENT_EXTENSIONS).toContain(".pdf");
+    expect(UNSUPPORTED_ATTACHMENT_EXTENSIONS).toContain(".png");
     expect(ID_PATTERN.source).toBe(golden.patterns.id);
     expect(TYPE_PATTERN.source).toBe(golden.patterns.type);
     expect([...COMMAND_TYPES].sort()).toEqual([...golden.commands].sort());

@@ -70,7 +70,14 @@ class _LifecycleFakeController:
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
 
-    async def run(self, instruction: str, *, conversation: bool = False) -> TaskResult:
+    async def run(
+        self,
+        instruction: str,
+        *,
+        conversation: bool = False,
+        user_name: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> TaskResult:
         self.active = True
         self.runs += 1
         self._current_task = asyncio.current_task()

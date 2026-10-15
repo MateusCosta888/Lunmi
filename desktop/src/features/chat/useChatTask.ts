@@ -38,6 +38,14 @@ export interface SendOutcome {
   error?: string;
 }
 
+/** Anexo conforme contrato da ponte: conteúdo textual já lido no backend; nunca um caminho. */
+export interface ChatAttachmentPayload {
+  name: string;
+  text: string;
+  size_bytes?: number;
+  mime?: string;
+}
+
 export interface ChatTaskState {
   messages: ChatMessageDto[];
   recentTasks: TaskStateDto[];
@@ -48,7 +56,7 @@ export interface ChatTaskState {
   submitting: boolean;
   lastError: string | null;
   memoryVersion: number;
-  send: (mode: ChatMode, text: string) => Promise<SendOutcome>;
+  send: (mode: ChatMode, text: string, attachments?: ChatAttachmentPayload[]) => Promise<SendOutcome>;
   stop: () => Promise<void>;
   approve: (requestId: string, approved: boolean) => Promise<void>;
   answerChoice: (requestId: string, index: number | null) => Promise<void>;
@@ -205,7 +213,7 @@ export function useChatTask(
   }, [task]);
 
   const send = useCallback(
-    async (mode: ChatMode, text: string): Promise<SendOutcome> => {
+    async (mode: ChatMode, text: string, attachments?: ChatAttachmentPayload[]): Promise<SendOutcome> => {
       const instruction = text.trim();
       if (!instruction) {
         const message = "Escreva uma instrução antes de enviar.";
@@ -230,7 +238,12 @@ export function useChatTask(
       setSubmitting(true);
       setLastError(null);
       try {
-        await sendCommand("chat.send", { mode, text: instruction });
+        // Sem anexos, o payload continua exatamente { mode, text } — o fluxo normal não muda.
+        const payload: Record<string, unknown> = { mode, text: instruction };
+        if (attachments && attachments.length > 0) {
+          payload.attachments = attachments;
+        }
+        await sendCommand("chat.send", payload);
         return { accepted: true };
       } catch (err) {
         // Recusa antes de qualquer aceite: o texto continua na tela e nada é reexecutado.

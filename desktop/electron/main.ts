@@ -12,7 +12,15 @@ import { CELESTIAL_COLORS, getTheme } from "../src/shared/theme";
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
-import { isPlainObject, SessionReadyPayload } from "../src/shared/protocol";
+import {
+  isPlainObject,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_NAME_CHARS,
+  MAX_CHAT_ATTACHMENTS,
+  MAX_TOTAL_ATTACHMENTS_BYTES,
+  SessionReadyPayload,
+  UNSUPPORTED_ATTACHMENT_EXTENSIONS,
+} from "../src/shared/protocol";
 import { PythonBackendSupervisor, resolvePythonExecutable } from "./backend";
 import {
   DEFAULT_WINDOW_HEIGHT,
@@ -378,6 +386,104 @@ function setupIpc(): void {
       return { path: res.canceled || res.filePaths.length === 0 ? "" : res.filePaths[0] };
     }
   );
+
+  ipcMain.handle("lunmi:pick-attachments", async (event) => {
+    if (!isTrustedSenderFrame(event, mainWindow, expectedIndexFileUrl)) {
+      throw new Error("Sender não autorizado.");
+    }
+    if (!mainWindow || mainWindow.isDestroyed() || !backendSupervisor) {
+      return { cancelled: true, attachments: [], errors: [] };
+    }
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: "Anexar arquivo de texto ou código (UTF-8)",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        {
+          name: "Texto e Código (UTF-8)",
+          extensions: [
+            "txt", "md", "json", "yaml", "yml", "toml", "ini", "cfg", "csv", "tsv", "log",
+            "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "html", "css", "sql", "xml",
+            "sh", "ps1", "c", "cpp", "h", "hpp", "rs", "go", "java", "cs", "rb", "php",
+          ],
+        },
+        { name: "Todos os arquivos", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || res.filePaths.length === 0) {
+      return { cancelled: true, attachments: [], errors: [] };
+    }
+
+    const unsupportedSet = new Set<string>(UNSUPPORTED_ATTACHMENT_EXTENSIONS);
+    const attachments: Array<{
+      id: string;
+      name: string;
+      size_bytes: number;
+      sha256: string;
+      text: string;
+    }> = [];
+    const errors: string[] = [];
+    let totalBytes = 0;
+
+    const selectedPaths = res.filePaths.slice(0, MAX_CHAT_ATTACHMENTS);
+    if (res.filePaths.length > MAX_CHAT_ATTACHMENTS) {
+      errors.push(`Máximo de ${MAX_CHAT_ATTACHMENTS} arquivos por envio; os excedentes foram ignorados.`);
+    }
+
+    for (let i = 0; i < selectedPaths.length; i++) {
+      const filePath = selectedPaths[i];
+      const baseName = path.basename(filePath).trim();
+      const ext = path.extname(baseName).toLowerCase();
+
+      if (!baseName || baseName.length > MAX_ATTACHMENT_NAME_CHARS) {
+        errors.push(`Nome de arquivo muito longo ou inválido: '${baseName.slice(0, 40)}'.`);
+        continue;
+      }
+      if (unsupportedSet.has(ext)) {
+        errors.push(
+          `'${baseName}': formato (${ext || "binário"}) sem leitura real nesta versão; anexe apenas texto ou código UTF-8.`
+        );
+        continue;
+      }
+
+      try {
+        const readRes = (await backendSupervisor._sendInternalCommand("fs.read", {
+          path: filePath,
+          max_bytes: MAX_ATTACHMENT_BYTES,
+        })) as {
+          bytes?: number;
+          sha256?: string;
+          text?: string;
+        };
+        const text = typeof readRes.text === "string" ? readRes.text : "";
+        const sizeBytes =
+          typeof readRes.bytes === "number" ? readRes.bytes : Buffer.byteLength(text, "utf8");
+        if (sizeBytes <= 0) {
+          errors.push(`'${baseName}': o arquivo está vazio.`);
+          continue;
+        }
+        if (totalBytes + sizeBytes > MAX_TOTAL_ATTACHMENTS_BYTES) {
+          errors.push(
+            `'${baseName}': excede o limite total de ${MAX_TOTAL_ATTACHMENTS_BYTES} bytes somados nos anexos.`
+          );
+          continue;
+        }
+        totalBytes += sizeBytes;
+        attachments.push({
+          id: `att-${Date.now()}-${i}-${(readRes.sha256 || "").slice(0, 8)}`,
+          name: baseName,
+          size_bytes: sizeBytes,
+          sha256: String(readRes.sha256 || ""),
+          text,
+        });
+      } catch (err) {
+        const rawMsg = err instanceof Error ? err.message : String(err);
+        const cleanMsg = rawMsg.replace(/^[a-z0-9_]+:\s*/i, "");
+        errors.push(`'${baseName}': ${cleanMsg}`);
+      }
+    }
+
+    return { cancelled: false, attachments, errors };
+  });
 
   ipcMain.handle("lunmi:restart-backend", async (event) => {
     if (!isTrustedSenderFrame(event, mainWindow, expectedIndexFileUrl)) {

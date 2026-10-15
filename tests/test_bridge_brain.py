@@ -64,7 +64,14 @@ class _BrainTestController:
         if self._task and not self._task.done():
             self._task.cancel()
 
-    async def run(self, instruction: str, *, conversation: bool = False) -> TaskResult:
+    async def run(
+        self,
+        instruction: str,
+        *,
+        conversation: bool = False,
+        user_name: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> TaskResult:
         self.active = True
         self._task = asyncio.current_task()
         try:

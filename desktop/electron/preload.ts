@@ -8,6 +8,20 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import type { Envelope, SessionReadyPayload } from "../src/shared/protocol";
 
+export interface PickedAttachmentDto {
+  id: string;
+  name: string;
+  size_bytes: number;
+  sha256: string;
+  text: string;
+}
+
+export interface PickAttachmentsResultDto {
+  cancelled: boolean;
+  attachments: PickedAttachmentDto[];
+  errors: string[];
+}
+
 export interface LunmiBridgeApi {
   hello(): Promise<SessionReadyPayload>;
   notifyRendererReady(): Promise<{
@@ -21,6 +35,7 @@ export interface LunmiBridgeApi {
     payload?: Record<string, unknown>
   ): Promise<TResult>;
   pickLocation(kind: "folder" | "file", query: string): Promise<{ path: string }>;
+  pickAttachments(): Promise<PickAttachmentsResultDto>;
   restartBackend(): Promise<SessionReadyPayload>;
   shutdown(): Promise<{ status: string; session_id: string }>;
   onEvent(callback: (event: Envelope) => void): () => void;
@@ -54,6 +69,9 @@ const lunmiApi: LunmiBridgeApi = Object.freeze({
   },
   pickLocation(kind: "folder" | "file", query: string): Promise<{ path: string }> {
     return ipcRenderer.invoke("lunmi:pick-location", { kind, query });
+  },
+  pickAttachments(): Promise<PickAttachmentsResultDto> {
+    return ipcRenderer.invoke("lunmi:pick-attachments");
   },
   restartBackend(): Promise<SessionReadyPayload> {
     return ipcRenderer.invoke("lunmi:restart-backend");

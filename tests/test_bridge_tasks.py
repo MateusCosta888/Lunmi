@@ -78,9 +78,18 @@ class _TaskFakeController:
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
 
-    async def run(self, instruction: str, *, conversation: bool = False) -> TaskResult:
+    async def run(
+        self,
+        instruction: str,
+        *,
+        conversation: bool = False,
+        user_name: str = "",
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> TaskResult:
         self.active = True
         self._current_task = asyncio.current_task()
+        self.last_user_name = user_name
+        self.last_attachments = attachments
         try:
             self.on_state("Thinking")
             if conversation:
@@ -389,3 +398,270 @@ def test_task_answer_choice_and_location_timeout(tmp_path: Path, monkeypatch: py
         assert fin_loc["message"] == "Localização recebida: ''"
     finally:
         svc.close()
+
+
+def test_internal_type_error_in_controller_is_never_retried(tmp_path: Path) -> None:
+    """Regressão de segurança: `TypeError` lançado dentro de `controller.run` não pode causar retry."""
+    events: list[tuple[str, dict[str, Any]]] = []
+    finished_evt = threading.Event()
+    calls = 0
+
+    class _TypeErrorController(_TaskFakeController):
+        async def run(
+            self,
+            instruction: str,
+            *,
+            conversation: bool = False,
+            user_name: str = "",
+            attachments: list[dict[str, Any]] | None = None,
+        ) -> TaskResult:
+            nonlocal calls
+            calls += 1
+            raise TypeError("erro interno depois de despachar efeito")
+
+    def on_emit(t: str, p: dict[str, Any]) -> None:
+        events.append((t, p))
+        if t == "task.finished":
+            finished_evt.set()
+
+    svc = BridgeService(emit=on_emit, sandbox_dir=tmp_path, controller_factory=_TypeErrorController)
+    try:
+        svc.dispatch(
+            protocol.Envelope(v=1, id="te-1", type="chat.send", payload={"text": "oi", "mode": "converse"})
+        )
+        assert finished_evt.wait(timeout=3.0)
+        assert calls == 1, "controller.run deve ser chamado exatamente uma vez"
+        errors = [p for t, p in events if t == "task.error"]
+        finished = [p for t, p in events if t == "task.finished"]
+        assert len(errors) == 1
+        assert len(finished) == 1
+        assert finished[0]["status"] == "FAILED"
+    finally:
+        svc.close()
+
+
+def test_ui_preferences_profile_and_chat_attachments_contract(tmp_path: Path) -> None:
+    import base64
+    import io
+    from PIL import Image
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    finished_evt = threading.Event()
+
+    def on_emit(t: str, p: dict[str, Any]) -> None:
+        events.append((t, p))
+        if t == "task.finished":
+            finished_evt.set()
+
+    svc = BridgeService(emit=on_emit, sandbox_dir=tmp_path, controller_factory=_TaskFakeController)
+    try:
+        # 1) Perfil inicial vazio
+        initial = svc.dispatch(protocol.Envelope(v=1, id="p0", type="ui.preferences.get", payload={}))
+        assert initial["profile"] == {"name": "", "avatar_data_url": ""}
+
+        # 2) Salva nome e avatar PNG real; merge parcial preserva o outro campo
+        buf = io.BytesIO()
+        Image.new("RGB", (32, 32), (10, 120, 220)).save(buf, format="PNG")
+        png_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+        updated = svc.dispatch(
+            protocol.Envelope(
+                v=1,
+                id="p1",
+                type="ui.preferences.set",
+                payload={"profile": {"name": "  Lucas  ", "avatar_data_url": png_url}},
+            )
+        )
+        assert updated["profile"]["name"] == "Lucas"
+        assert updated["profile"]["avatar_data_url"] == png_url
+
+        # Merge parcial: atualizar só o tema ou só o nome preserva o avatar
+        merged = svc.dispatch(
+            protocol.Envelope(
+                v=1,
+                id="p2",
+                type="ui.preferences.set",
+                payload={"profile": {"name": "Marina"}},
+            )
+        )
+        assert merged["profile"]["name"] == "Marina"
+        assert merged["profile"]["avatar_data_url"] == png_url
+
+        # Avatar inválido/corrompido ou path são recusados com invalid_payload
+        with pytest.raises(protocol.ProtocolError) as exc_info:
+            svc.dispatch(
+                protocol.Envelope(
+                    v=1,
+                    id="p-bad",
+                    type="ui.preferences.set",
+                    payload={"profile": {"avatar_data_url": "data:image/png;base64,aW52YWxpZG8="}},
+                )
+            )
+        assert exc_info.value.code == "invalid_payload"
+
+        # 3) Anexos em modo Execute são recusados claramente
+        with pytest.raises(protocol.ProtocolError) as exc_info:
+            svc.dispatch(
+                protocol.Envelope(
+                    v=1,
+                    id="att-exec",
+                    type="chat.send",
+                    payload={
+                        "mode": "execute",
+                        "text": "Analise este arquivo",
+                        "attachments": [{"name": "notas.txt", "text": "conteúdo"}],
+                    },
+                )
+            )
+        assert exc_info.value.code == "invalid_payload"
+        assert "Conversar" in exc_info.value.public_message
+
+        # 4) Anexos com path, extensão de imagem/PDF ou NUL são recusados
+        for bad_att in (
+            [{"name": "notas.txt", "text": "oi", "path": "C:/secreto.txt"}],
+            [{"name": "../notas.txt", "text": "oi"}],
+            [{"name": "notas..txt", "text": "oi"}],
+            [{"name": "foto.png", "text": "oi"}],
+            [{"name": "relatorio.pdf", "text": "oi"}],
+            [{"name": "binario.txt", "text": "a\x00b"}],
+        ):
+            with pytest.raises(protocol.ProtocolError) as exc_info:
+                svc.dispatch(
+                    protocol.Envelope(
+                        v=1,
+                        id="att-bad",
+                        type="chat.send",
+                        payload={"mode": "converse", "text": "Veja", "attachments": bad_att},
+                    )
+                )
+            assert exc_info.value.code == "invalid_payload"
+
+        # 5) Anexo válido em modo Conversar repassa user_name (sem avatar) e attachments separados
+        events.clear()
+        finished_evt.clear()
+        svc.dispatch(
+            protocol.Envelope(
+                v=1,
+                id="att-ok",
+                type="chat.send",
+                payload={
+                    "mode": "converse",
+                    "text": "Resuma o arquivo",
+                    "attachments": [{"name": "resumo.md", "text": "# Título\nLinha 1"}],
+                },
+            )
+        )
+        assert finished_evt.wait(timeout=3.0)
+        assert svc.controller.last_user_name == "Marina"
+        assert svc.controller.last_attachments == [
+            {
+                "name": "resumo.md",
+                "size_bytes": len("# Título\nLinha 1".encode("utf-8")),
+                "text": "# Título\nLinha 1",
+            }
+        ]
+        user_evt = next(p for t, p in events if t == "chat.message" and p.get("role") == "user")
+        assert user_evt["text"] == "Resuma o arquivo"
+        assert user_evt["attachments"] == [
+            {"name": "resumo.md", "size_bytes": len("# Título\nLinha 1".encode("utf-8"))}
+        ]
+    finally:
+        svc.close()
+
+
+def test_controller_converse_with_profile_and_attachments_never_persists_attachment_to_memory(
+    tmp_path: Path,
+) -> None:
+    """Verifica no TaskController real (com brain stub local, sem rede) que:
+    - `user_name` entra como contexto JSON isolado mesmo com `memory.enabled=False`;
+    - `attachments` entram em mensagem separada marcada como dado não confiável;
+    - quando há anexo, nem o texto do anexo nem uma resposta que o cite geram propostas ou
+      histórico automático de memória, e `logs/tasks.jsonl` não contém o anexo;
+    - `size_bytes` malformado não envenena `controller.active`.
+    """
+    import json
+    from app.core.controller import TaskController
+    from app.llm import Completion
+    from app.memory import MemoryManager
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    class _LocalStubBrain:
+        async def complete(self, messages: list[dict[str, str]]) -> Completion:
+            captured_messages.append(list(messages))
+            # Tenta propor memória citando texto do anexo e da instrução
+            reply = json.dumps(
+                {
+                    "observation": "",
+                    "thought": "",
+                    "status": "FINISH",
+                    "message": ["Olá Marina! O arquivo diz SEGREDO_DO_ANEXO_123."],
+                    "action": None,
+                    "memory_proposals": [
+                        {"kind": "fact", "text": "Eu gosto de café"},
+                        {"kind": "fact", "text": "SEGREDO_DO_ANEXO_123"},
+                    ],
+                }
+            )
+            return Completion(text=reply, input_tokens=10, output_tokens=10)
+
+        async def close(self) -> None:
+            pass
+
+    mem = MemoryManager(path=tmp_path / "memory.sqlite3")
+    mem.set_options(enabled=True, proposals=True, history=True, episodes=True)
+    settings = Settings(
+        provider="openai",
+        model="gpt-4.1-mini",
+        api_key="sk-test-local-only",
+        logs_path=tmp_path / "logs",
+        output_path=tmp_path / "output",
+        collect_metrics=False,
+    )
+    ctrl = TaskController(settings, memory=mem)
+    ctrl.brain = _LocalStubBrain()  # type: ignore[assignment]
+
+    try:
+        # 1) Mesmo com memória desligada, user_name vai ao prompt como JSON
+        mem.set_options(enabled=False)
+        res1 = asyncio.run(
+            ctrl.run(
+                "Oi, tudo bem?",
+                conversation=True,
+                user_name='Marina "Admin"',
+            )
+        )
+        assert res1.status == "SUCCESS"
+        assert ctrl.active is False
+        sent1 = captured_messages[-1]
+        assert any('"user_name": "Marina \\"Admin\\""' in m["content"] for m in sent1 if m["role"] == "system")
+
+        # 2) Com memória ligada e anexo presente (incluindo size_bytes malformado), nenhuma proposta
+        # ou histórico de conversa é gravado, e tasks.jsonl não contém o texto do anexo.
+        mem.set_options(enabled=True, proposals=True, history=True, episodes=True)
+        res2 = asyncio.run(
+            ctrl.run(
+                "Eu gosto de café. Analise o anexo.",
+                conversation=True,
+                user_name="Marina",
+                attachments=[
+                    {
+                        "name": "dados.txt",
+                        "size_bytes": "nao-inteiro",  # não pode envenenar controller.active
+                        "text": "SEGREDO_DO_ANEXO_123",
+                    }
+                ],
+            )
+        )
+        assert res2.status == "SUCCESS"
+        assert ctrl.active is False
+        assert mem.proposals() == []
+        assert mem.list() == []
+        exported = mem.export()
+        assert exported["messages"] == []
+        assert "SEGREDO_DO_ANEXO_123" not in json.dumps(exported)
+
+        tasks_log = (tmp_path / "logs" / "tasks.jsonl").read_text(encoding="utf-8")
+        assert "SEGREDO_DO_ANEXO_123" not in tasks_log
+    finally:
+        asyncio.run(ctrl.close())

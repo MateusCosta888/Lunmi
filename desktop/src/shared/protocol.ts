@@ -12,6 +12,24 @@ export const MAX_ID_CHARS = 128;
 export const MAX_TYPE_CHARS = 64;
 export const MAX_HOST_PIDS = 64;
 
+export const MAX_PROFILE_NAME_CHARS = 40;
+export const MAX_PROFILE_AVATAR_CHARS = 40 * 1024;
+export const MAX_PROFILE_AVATAR_BYTES = 30 * 1024;
+export const MAX_CHAT_ATTACHMENTS = 4;
+export const MAX_ATTACHMENT_NAME_CHARS = 120;
+export const MAX_ATTACHMENT_BYTES = 32 * 1024;
+export const MAX_TOTAL_ATTACHMENTS_BYTES = 64 * 1024;
+
+export const UNSUPPORTED_ATTACHMENT_EXTENSIONS = [
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tiff", ".tif", ".avif", ".heic",
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
+  ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz",
+  ".exe", ".dll", ".msi", ".bat", ".cmd", ".com", ".scr", ".bin", ".iso",
+  ".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac",
+  ".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv",
+  ".ttf", ".otf", ".woff", ".woff2", ".sqlite", ".sqlite3", ".db",
+] as const;
+
 export const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 export const TYPE_PATTERN = /^[a-z][a-z0-9_.]*$/;
 
@@ -94,6 +112,13 @@ export interface ProtocolLimits {
   max_id_chars?: number;
   max_type_chars?: number;
   max_host_pids?: number;
+  max_profile_name_chars?: number;
+  max_profile_avatar_chars?: number;
+  max_profile_avatar_bytes?: number;
+  max_chat_attachments?: number;
+  max_attachment_name_chars?: number;
+  max_attachment_bytes?: number;
+  max_total_attachments_bytes?: number;
 }
 
 export interface SessionReadyPayload {
