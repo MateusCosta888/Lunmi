@@ -1,0 +1,25 @@
+name: Relatar um problema
+description: Um defeito reproduzível na Lunmi, sem dados pessoais.
+body:
+  - type: markdown
+    attributes:
+      value: Não envie chaves, bancos, arquivos .env ou logs brutos. Para segurança, consulte SECURITY.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: O que aconteceu?
+      description: Descreva o resultado esperado e o observado.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Como reproduzir?
+      description: Use uma tarefa pequena e dados fictícios.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Ambiente
+      placeholder: Windows, versão Python/Node, commit, provedor sem credenciais

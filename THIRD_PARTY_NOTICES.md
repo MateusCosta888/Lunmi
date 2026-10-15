@@ -1,0 +1,17 @@
+# Componentes e avisos de terceiros
+
+As licenças originais continuam aplicáveis. Este documento não concede uma licença geral ao código próprio da Lunmi.
+
+| Projeto | Uso | Licença / aviso |
+| --- | --- | --- |
+| [Microsoft UFO²](https://github.com/microsoft/UFO) | HostAgent/AppAgent e infraestrutura obtidos na revisão fixada | MIT; checkout conserva o LICENSE upstream. Vendor não versionado. |
+| [Electron](https://www.electronjs.org/) | Shell desktop | MIT e avisos dos componentes Electron/Chromium. |
+| [React](https://react.dev/) | Interface | MIT. |
+| [Lucide](https://lucide.dev/) | Ícones selecionados | [ISC e avisos Feather MIT](desktop/licenses/Lucide-LICENSE.txt). |
+| [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans) | Fonte local | [SIL Open Font License 1.1](desktop/src/assets/fonts/OFL.txt). |
+| [React Bits](https://reactbits.dev/) | Adaptações ThoughtLine/RubberSegment integradas ao app | [MIT + Commons Clause](desktop/licenses/ReactBits-LICENSE.md); restrições dos componentes continuam válidas. |
+| [Aceternity UI](https://ui.aceternity.com/) | Referências/adaptação do fundo estrelado integrado | [Aceternity License](https://ui.aceternity.com/licence); não atribuir MIT nem redistribuir itens como biblioteca/template/pacote de componentes. |
+
+Fontes e detalhes visuais: [desktop/THIRD-PARTY-MOTION.md](desktop/THIRD-PARTY-MOTION.md). O produto é a aplicação Lunmi, não um catálogo de componentes extraídos. Um aviso não autoriza usos proibidos pela licença original.
+
+Demais dependências e versões estão nos lockfiles. Instalações mantêm seus avisos. Antes de distribuir binários, revise os avisos completos do Electron/Chromium e de todos os pacotes incluídos.
