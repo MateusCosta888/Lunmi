@@ -22,9 +22,26 @@ import uuid
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterable
 
-from app.bridge import protocol
-from app.bridge.service import BridgeService, filter_trusted_host_pids
-from app.settings import ConfigurationError, Settings
+# Primeiro de tudo: wrappers COM gerados em memória. Precisa vir **antes** de importar
+# `app.bridge.service` (cuja cadeia pode puxar pywinauto/UIA) para que o `comtypes` não grave
+# nada dentro de `resources/` no pacote. Ver `app/computer/com_cache.py`.
+from app.computer.com_cache import use_in_memory_com_modules
+
+use_in_memory_com_modules()
+
+from app.bridge import protocol  # noqa: E402
+from app.bridge.service import BridgeService, filter_trusted_host_pids  # noqa: E402
+from app.settings import ConfigurationError, Settings  # noqa: E402
+
+# Commands that wait on a provider: a catalogue listing, a free verification, a real model
+# probe and a brain switch hold their reply for up to 30/45/95/30 s inside the service.
+# Answered on the stdin reader thread, they used to freeze every command behind them —
+# Parar, the answer to a pending confirmation, a location — until the provider replied.
+# They run on their own threads instead; the reply still carries the request id.
+SLOW_COMMANDS: frozenset[str] = frozenset({"brain.list", "brain.verify", "brain.probe", "brain.set"})
+# At most this many provider waits at once; further ones queue on the semaphore, never on
+# the reader thread.
+MAX_SLOW_COMMANDS = 4
 
 
 class BridgeServer:
@@ -65,6 +82,9 @@ class BridgeServer:
         else:
             self._supported_commands = frozenset()
         self._framer = protocol.JsonlFramer(max_line_bytes=protocol.MAX_LINE_BYTES)
+        self._slow_slots = threading.BoundedSemaphore(MAX_SLOW_COMMANDS)
+        self._slow_threads: set[threading.Thread] = set()
+        self._slow_lock = threading.Lock()
 
     def _ensure_service(self) -> BridgeService:
         if self._service is None:
@@ -73,6 +93,7 @@ class BridgeServer:
                 sandbox_dir=self.sandbox_dir,
                 trusted_root_pid=self.trusted_root_pid,
                 settings=self._settings,
+                session_id=self.session_id,
             )
             self._service.update_host_pids(sorted(self.host_pids))
         return self._service
@@ -93,25 +114,96 @@ class BridgeServer:
     def emit_event(self, event_type: str, payload: dict[str, Any]) -> None:
         self.send_message(protocol.make_event(event_type, payload))
 
+    def _reply(self, env: protocol.Envelope,
+               handler: Callable[[protocol.Envelope, Callable[[dict[str, Any]], None]], dict[str, Any]]) -> None:
+        """Run one domain command and answer it with a result or a typed public error."""
+        try:
+            result_payload = handler(env, self.send_message)
+            self.send_message(protocol.make_result(env.id, result_payload))
+        except protocol.ProtocolError as exc:
+            self.send_message(protocol.make_error(env.id, exc.code, exc.public_message,
+                                                  details=exc.details))
+        except Exception as exc:
+            self._log(f"Erro interno em {env.type}: {type(exc).__name__}")
+            self.send_message(
+                protocol.make_error(
+                    env.id,
+                    "internal_error",
+                    f"Falha ao processar {env.type}.",
+                )
+            )
+
+    def _route(self, env: protocol.Envelope,
+               handler: Callable[[protocol.Envelope, Callable[[dict[str, Any]], None]], dict[str, Any]]) -> None:
+        """Answer inline, or on a thread of its own when the command waits on a provider."""
+        if env.type not in SLOW_COMMANDS:
+            self._reply(env, handler)
+            return
+
+        if not self._slow_slots.acquire(blocking=False):
+            self.send_message(
+                protocol.make_error(
+                    env.id,
+                    "slow_commands_busy",
+                    "Há muitas consultas de provider em andamento; aguarde concluir antes de tentar novamente.",
+                )
+            )
+            return
+
+        def work() -> None:
+            try:
+                if not self.shutting_down:
+                    self._reply(env, handler)
+            except (OSError, ValueError):
+                # stdout already closed by a shutdown: nobody is left to read this reply.
+                pass
+            finally:
+                self._slow_slots.release()
+                with self._slow_lock:
+                    self._slow_threads.discard(threading.current_thread())
+
+        # Daemon: a provider still answering must never keep a closing bridge alive.
+        thread = threading.Thread(target=work, name=f"bridge-{env.type}", daemon=True)
+        with self._slow_lock:
+            self._slow_threads.add(thread)
+        try:
+            thread.start()
+        except BaseException:
+            with self._slow_lock:
+                self._slow_threads.discard(thread)
+            self._slow_slots.release()
+            raise
+
+    def wait_for_slow_commands(self, timeout: float) -> bool:
+        """Test/diagnostic helper: True when every provider-bound command has answered."""
+        with self._slow_lock:
+            threads = list(self._slow_threads)
+        for thread in threads:
+            thread.join(timeout)
+        with self._slow_lock:
+            return not self._slow_threads
+
     def handle_raw_line(self, raw_line: bytes) -> None:
         try:
             env = protocol.parse_envelope(raw_line)
         except protocol.ProtocolError as exc:
-            self.send_message(protocol.make_error(exc.request_id, exc.code, exc.public_message))
+            self.send_message(protocol.make_error(exc.request_id, exc.code, exc.public_message,
+                                                  details=exc.details))
             return
 
         if env.type == "session.hello":
             try:
                 self._handle_hello(env)
             except protocol.ProtocolError as exc:
-                self.send_message(protocol.make_error(env.id, exc.code, exc.public_message))
+                self.send_message(protocol.make_error(env.id, exc.code, exc.public_message,
+                                                      details=exc.details))
             return
 
         if env.type == "app.shutdown":
             self._handle_shutdown(env)
             return
 
-        if env.type not in protocol.COMMAND_TYPES:
+        if env.type not in protocol.COMMAND_TYPES | protocol.PRIVATE_COMMAND_TYPES:
             self.send_message(
                 protocol.make_error(
                     env.id,
@@ -132,7 +224,7 @@ class BridgeServer:
             return
 
         if self._dispatcher is not None:
-            if self._supported_commands and env.type not in self._supported_commands:
+            if self._supported_commands and env.type not in self._supported_commands | protocol.PRIVATE_COMMAND_TYPES:
                 self.send_message(
                     protocol.make_error(
                         env.id,
@@ -141,38 +233,20 @@ class BridgeServer:
                     )
                 )
                 return
-            try:
-                result_payload = self._dispatcher(env, self.send_message)
-                self.send_message(protocol.make_result(env.id, result_payload))
-            except protocol.ProtocolError as exc:
-                self.send_message(protocol.make_error(env.id, exc.code, exc.public_message))
-            except Exception as exc:
-                self._log(f"Erro interno em {env.type}: {type(exc).__name__}")
-                self.send_message(
-                    protocol.make_error(
-                        env.id,
-                        "internal_error",
-                        f"Falha ao processar {env.type}.",
-                    )
-                )
+            self._route(env, self._dispatcher)
             return
 
         if self._enable_service:
             try:
+                # Built on the reader thread, never by two slow commands racing.
                 svc = self._ensure_service()
-                result_payload = svc.dispatch(env, self.send_message)
-                self.send_message(protocol.make_result(env.id, result_payload))
-            except protocol.ProtocolError as exc:
-                self.send_message(protocol.make_error(env.id, exc.code, exc.public_message))
             except Exception as exc:
                 self._log(f"Erro interno em {env.type}: {type(exc).__name__}")
                 self.send_message(
-                    protocol.make_error(
-                        env.id,
-                        "internal_error",
-                        f"Falha ao processar {env.type}.",
-                    )
+                    protocol.make_error(env.id, "internal_error", f"Falha ao processar {env.type}.")
                 )
+                return
+            self._route(env, svc.dispatch)
             return
 
         self.send_message(
@@ -209,6 +283,7 @@ class BridgeServer:
                 "max_import_bytes": protocol.MAX_IMPORT_BYTES,
                 "max_chat_text_chars": protocol.MAX_CHAT_TEXT_CHARS,
                 "max_memory_text_chars": protocol.MAX_MEMORY_TEXT_CHARS,
+                "max_profile_chars": protocol.MAX_PROFILE_CHARS,
                 "max_id_chars": protocol.MAX_ID_CHARS,
                 "max_type_chars": protocol.MAX_TYPE_CHARS,
                 "max_host_pids": protocol.MAX_HOST_PIDS,
@@ -317,6 +392,7 @@ def _sandbox_ram_settings(sandbox_dir: Path | None) -> Settings | None:
     if sandbox_dir is not None:
         overrides["logs_path"] = sandbox_dir / "logs"
         overrides["output_path"] = sandbox_dir / "output"
+        overrides["state_root"] = sandbox_dir
     return dataclasses.replace(base, **overrides)
 
 

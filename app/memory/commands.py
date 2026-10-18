@@ -8,6 +8,25 @@ from app.memory.manager import MemoryManager
 from app.memory.policy import MemoryPolicyError, normalized
 
 
+# Formas explícitas PT-BR/PT-PT. Só estas (ou o prefixo "prefiro"/"daqui pra frente")
+# gravam; uma pergunta comum que mencione memória não é comando.
+REMEMBER = re.compile(
+    r"^(?:"
+    r"lembra(?:-te)?(?:-se)?(?: que)?|"
+    r"lembre(?:-se)?(?: de)?(?: que)?|"
+    r"memoriza(?: que)?|memorize(?: que)?|"
+    r"guarda(?: isto| isso| a[ií])?(?: que)?|"
+    r"anota(?: a[ií])?(?: que)?|"
+    r"(?:quero|preciso) que (?:voc[eê]|tu) (?:se )?lembre(?:-se)?(?: de)?(?: que)?|"
+    r"podes? (?:te )?lembrar(?:-te)?(?: de)?(?: que)?"
+    r")\s*[:,]?\s+(.+)$",
+    re.I,
+)
+PREFERENCE = re.compile(r"^(?:eu\s+)?prefiro\s+.+$", re.I)
+FORWARD = re.compile(r"^(?:da[ií] pra frente|de agora em diante)\s*[, :]\s*(.+)$", re.I)
+QUESTION = re.compile(r"\?\s*$")
+
+
 def command(instruction: str, memory: MemoryManager) -> str | None:
     """None means ordinary task/chat; an ambiguous deletion never chooses for the user."""
     value = instruction.strip()
@@ -22,27 +41,27 @@ def command(instruction: str, memory: MemoryManager) -> str | None:
     forget = re.match(r'^(?:esque[cç]a|esquece|apague a mem[oó]ria)\s+(.+)$', value, re.I)
     if forget:
         target = forget[1].strip().rstrip('.')
-        items = memory.list(limit=100)
-        exact = [item for item in items if item.id == target or normalized(item.text).rstrip(' .') == normalized(target)]
-        matches = exact or memory.list(query=target, limit=100)
-        if len(matches) != 1:
-            return 'Seleção ausente ou ambígua; use o ID da memória. Nada foi apagado.'
-        memory.delete(matches[0].id)
+        # Exige alvo único e exato: uma palavra solta nunca apaga um bloco com outras informações.
+        removed = memory.forget_by_text(target)
+        if removed == 0:
+            return ('Seleção ausente ou ambígua; nada foi apagado. '
+                    'Repita o trecho exato que quer esquecer.')
         return 'Memória apagada.'
     invalidate = re.match(r'^(?:n[aã]o quero mais (?:usar )?|n[aã]o uso mais )(.+)$', value, re.I)
     if invalidate:
         target = invalidate[1].strip().rstrip('.')
-        matches = [item for item in memory.list(query=target, limit=100)
-                   if item.kind in {'preference', 'habit', 'decision'} and
-                   normalized(target) in normalized(item.text)]
-        if len(matches) != 1:
-            return 'Seleção ausente ou ambígua; use esquece com o ID. Nada foi apagado.'
-        memory.delete(matches[0].id)
+        removed = memory.forget_by_text(target, allow_suffix=True)
+        if removed == 0:
+            return ('Seleção ausente ou ambígua; nada foi apagado. '
+                    'Repita o trecho exato da preferência.')
         return 'Preferência invalidada.'
-    remember = re.match(r'^(?:lembra(?: que)?|lembre(?:-se)?(?: de)?(?: que)?|memorize(?: que)?)\s*[:,]?\s+(.+)$', value, re.I)
-    preference = re.match(r'^(?:eu\s+)?prefiro\s+.+$', value, re.I)
-    forward = re.match(r'^(?:da[ií] pra frente|de agora em diante)\s*[, :]\s*(.+)$', value, re.I)
+    remember = REMEMBER.match(value)
+    preference = PREFERENCE.match(value)
+    forward = FORWARD.match(value)
     if not remember and not preference and not forward:
+        return None
+    if not remember and QUESTION.search(value):
+        # Uma pergunta comum ("prefiro X?") não é uma declaração para guardar.
         return None
     if not memory.options()['enabled']:
         return 'Memória desabilitada; nada foi gravado.'

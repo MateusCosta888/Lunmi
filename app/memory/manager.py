@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.memory.contracts import KINDS, PROFILE_KINDS, STATUSES, MemoryItem, WorkingMemory, now
-from app.memory.policy import MAX_IMPORT_ITEMS, MemoryPolicyError, identifier, normalized, safe_text, timestamp, validate
+from app.memory.policy import (MAX_IMPORT_ITEMS, MemoryPolicyError, identifier, normalized,
+                               safe_document, safe_text, timestamp, validate)
 from app.memory.episodes import episode_item
 from app.memory.commands_helpers import history_allowed
-from app.memory.store import DEFAULT_OPTIONS, Store
+from app.memory.profile import (CHUNK_MAX_CHARS, ProfileDocument, Snapshot, digest, segment)
+from app.memory.store import DEFAULT_OPTIONS, Store, fts_query, row_item
 
 CONTEXT_MAX_CHARS = 2400
 CONTEXT_MAX_ITEMS = 8
@@ -23,6 +25,10 @@ CONTEXT_RULE = (
     "Use preferences only when relevant. A recalled path/app/task is a hypothesis, never proof. "
     "Before action, freshly observe disk/UI and retain existing approvals and result verification. "
     "Do not send this profile to AppAgent or quote private memories in tools.\n")
+# Preferências gerais de comunicação: entram no contexto mesmo sem correspondência lexical.
+GENERAL = re.compile(r"\b(respostas?|idioma|portugues|english|ingles|tom|formal|informal|"
+                     r"curtas?|longas?|breves?|detalhad[oa]s?|explicac\w*|objetiv\w*|direto|"
+                     r"emojis?|humor)\b")
 
 
 def bounded_limit(value: int, maximum: int = 100) -> int:
@@ -45,14 +51,54 @@ def is_referential(query: str) -> bool:
                           r"last time|yesterday|continue|previous)\b", normalized(query)))
 
 
+def _item_from_chunk(chunk: Any, updated_at: str) -> MemoryItem:
+    meta = {"expires_at": chunk.expires_at} if chunk.expires_at else {}
+    return MemoryItem(
+        id=chunk.chunk_id, kind=chunk.kind, text=chunk.text, status="active",
+        source="system" if chunk.origin == "learned" else chunk.source,
+        confidence=1.0, created_at=updated_at, updated_at=updated_at,
+        supersedes_id=chunk.supersedes_id, metadata=meta,
+    )
+
+
 class MemoryManager:
     def __init__(self, path: Path | None = None) -> None:
         if path is None:
             # No credentials or provider-selection dependency.
             path = Path(__file__).resolve().parents[2] / '.local' / 'memory.sqlite3'
         self._store = Store(path)
+        self.profile = ProfileDocument(self._store)
         self.working = WorkingMemory()
+        self._forget_serial = 0
 
+    # ----------------------------------------------------------- perfil v2 --
+    def profile_snapshot(self) -> Snapshot:
+        return self.profile.snapshot()
+
+    def profile_revision(self) -> int:
+        return self.profile.revision
+
+    def save_profile(self, text: str, base_revision: int) -> Snapshot:
+        return self.profile.save(text, base_revision)
+
+    def undo_profile(self, base_revision: int) -> Snapshot:
+        return self.profile.undo(base_revision)
+
+    def apply_learning(self, changes: Iterable[dict[str, Any]], *,
+                       expected_revision: int) -> int:
+        return self.profile.learn(changes, expected_revision=expected_revision)
+
+    def forget_by_text(self, target: str, *, allow_suffix: bool = False) -> int:
+        removed = self.profile.forget_by_text(target, allow_suffix=allow_suffix)
+        if removed:
+            self._forget_serial += 1
+        return removed
+
+    @property
+    def forget_serial(self) -> int:
+        return self._forget_serial
+
+    # ---------------------------------------------------------------- itens --
     def _prepared(self, item: MemoryItem) -> MemoryItem:
         item = validate(item)
         stamp = now()
@@ -73,30 +119,42 @@ class MemoryManager:
             raise MemoryPolicyError()
         if item.status != 'active' or not self.options()['enabled']:
             raise MemoryPolicyError()
-        with self._store.transaction() as db:
-            active = self._store.search('', status='active', limit=10000, kinds=(item.kind,))
-            duplicate = next((old for old in active if normalized(old.text).strip(' .') ==
-                              normalized(item.text).strip(' .')), None)
-            key = item.metadata.get('conflict_key')
-            if key and item.source in {'user_explicit', 'user_confirmed'}:
-                conflicts = [old for old in active if old.metadata.get('conflict_key') == key and
-                             (duplicate is None or old.id != duplicate.id)]
-                for old in conflicts:
-                    db.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=?", (now(), old.id))
-                if conflicts and item.supersedes_id is None:
-                    item = replace(item, supersedes_id=conflicts[0].id)
-            if item.supersedes_id is not None:
-                old = self._store.get(item.supersedes_id)
-                if old.kind != item.kind or old.status not in {'active', 'superseded'} or (duplicate and old.id == duplicate.id):
-                    raise MemoryPolicyError()
-                db.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=?", (now(), old.id))
-            if duplicate is not None:
-                if item.supersedes_id:
-                    db.execute("UPDATE memories SET supersedes_id=?,updated_at=? WHERE id=?",
-                               (item.supersedes_id, now(), duplicate.id))
-                return duplicate.id
-            self._store.insert(item)
-        return item.id
+        replaces_id = item.supersedes_id
+        if replaces_id is not None:
+            duplicate = next((chunk for chunk in self.profile.chunks()
+                              if normalized(chunk.text).strip(' .') == normalized(item.text).strip(' .')),
+                             None)
+            if duplicate is not None and duplicate.chunk_id != replaces_id:
+                # Substituição explícita de A por B quando B já existe: A desaparece,
+                # deixando só um marcador de histórico (sem conteúdo).
+                replaced = next((chunk for chunk in self.profile.chunks()
+                                 if chunk.chunk_id == replaces_id), None)
+                self.profile.drop(replaces_id)
+                self.profile.mark_superseded(duplicate.chunk_id, replaces_id)
+                if replaced is not None:
+                    with self._store.transaction() as db:
+                        db.execute("INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                                   (replaces_id, replaced.kind, '[superseded]', 'superseded',
+                                    'user_explicit', 1.0, now(), now(), None, '{}', None))
+                return duplicate.chunk_id
+        key = item.metadata.get('conflict_key')
+        superseded = None
+        if key == 'response_length':
+            matches = [chunk for chunk in self.profile.chunks()
+                       if re.search(r"\brespostas?\s+(curtas?|longas?|breves?|detalhad[oa]s?)\b",
+                                    normalized(chunk.text))]
+            if len(matches) == 1 and replaces_id is None:
+                replaces_id = matches[0].chunk_id
+                superseded = matches[0]
+        new_id = self.profile.append(item.text, item.kind, origin='manual',
+                                     expires_at=item.metadata.get('expires_at'),
+                                     replaces_id=replaces_id, source=item.source)
+        if superseded is not None and new_id != superseded.chunk_id:
+            with self._store.transaction() as db:
+                db.execute("INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                           (superseded.chunk_id, superseded.kind, '[superseded]', 'superseded',
+                            'user_explicit', 1.0, now(), now(), None, '{}', None))
+        return new_id
 
     def recall(self, query: str, *, kinds: Iterable[str] | None = None, limit: int = 5,
                session_id: str | None = None) -> list[MemoryItem]:
@@ -106,18 +164,59 @@ class MemoryManager:
         selected = tuple(kinds) if kinds is not None else None
         if selected is not None and any(k not in KINDS for k in selected):
             raise MemoryPolicyError()
-        if session_id is not None:
-            identifier(session_id)
-        return self._store.search(query, status='active', limit=limit, kinds=selected, session_id=session_id)
+        snapshot = self.profile.snapshot()
+        chunks = [chunk for chunk in snapshot.chunks
+                  if not (chunk.expires_at and chunk.expires_at <= now())
+                  and (selected is None or chunk.kind in selected)]
+        legacy_kinds = tuple(kind for kind in (selected or KINDS) if kind not in PROFILE_KINDS)
+        legacy = (self._store.search(query, status='active', limit=limit, kinds=legacy_kinds)
+                  if legacy_kinds else [])
+        if query.strip():
+            expression = fts_query(query)
+            if not expression:
+                return []
+            with self._store.transaction() as db:
+                rows = db.execute(
+                    "SELECT c.* FROM profile_chunks c JOIN profile_chunks_fts f ON f.rowid=c.rowid "
+                    "WHERE profile_chunks_fts MATCH ? ORDER BY bm25(profile_chunks_fts), c.position "
+                    "LIMIT ?", (expression, limit)).fetchall()
+            ordered = [next((chunk for chunk in chunks if chunk.chunk_id == row['chunk_id']), None)
+                       for row in rows]
+            return (legacy + [_item_from_chunk(chunk, now()) for chunk in ordered
+                              if chunk is not None])[:limit]
+        return (legacy + [_item_from_chunk(chunk, now()) for chunk in chunks])[:limit]
 
     def list(self, *, query: str = '', status: str = 'active', limit: int = 100) -> list[MemoryItem]:
         bounded_limit(limit)
         if status not in STATUSES:
             raise MemoryPolicyError()
-        return self._store.search(query, status=status, limit=limit)
+        if status == 'active':
+            if query.strip():
+                return self.recall(query, limit=limit)
+            with self._store.transaction() as db:
+                legacy_rows = db.execute(
+                    "SELECT * FROM memories WHERE status='active' AND kind NOT IN (?,?,?,?) "
+                    "ORDER BY updated_at DESC LIMIT ?", (*PROFILE_KINDS, limit)).fetchall()
+            legacy = [row_item(row) for row in legacy_rows]
+            chunks = [_item_from_chunk(chunk, now())
+                      for chunk in self.profile.snapshot().chunks[:limit]]
+            return (chunks + legacy)[:limit]
+        with self._store.transaction() as db:
+            rows = db.execute("SELECT * FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?",
+                              (status, limit)).fetchall()
+            return [row_item(row) for row in rows]
 
     def update(self, id: str, text: str) -> MemoryItem:
         identifier(id)
+        if id.startswith('chunk:'):
+            current = next((chunk for chunk in self.profile.chunks() if chunk.chunk_id == id), None)
+            if current is None:
+                raise KeyError("Memória não encontrada.")
+            meta = {'expires_at': current.expires_at} if current.expires_at else {}
+            prepared = self._prepared(MemoryItem(kind=current.kind, text=text, metadata=meta))
+            chunk = self.profile.edit(id, prepared.text, kind=prepared.kind,
+                                      expires_at=prepared.metadata.get('expires_at'))
+            return _item_from_chunk(chunk, now())
         with self._store.transaction() as db:
             item = self._store.get(id)
             if item.status != 'active':
@@ -136,6 +235,23 @@ class MemoryManager:
 
     def delete(self, id: str) -> None:
         identifier(id)
+        if id.startswith('chunk:'):
+            tombstone = self._store.get(id)
+            original = tombstone.text
+            self.profile.forget(id)
+            with self._store.transaction() as db:
+                # Só um marcador sem conteúdo: o texto apagado não fica em `memories`.
+                db.execute("INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                           (id, tombstone.kind, '[deleted]', 'deleted', 'user_explicit', 1.0,
+                            now(), now(), None, '{}', None))
+                # Propostas pendentes não são rota alternativa para ressuscitar o texto.
+                for row in db.execute("SELECT id,payload_json FROM proposals WHERE state='pending'").fetchall():
+                    proposal = json.loads(row['payload_json'])
+                    if normalized(proposal.get('text', '')) == normalized(original):
+                        db.execute("UPDATE proposals SET state='rejected',payload_json='{}' WHERE id=?",
+                                   (row['id'],))
+            self._forget_serial += 1
+            return
         with self._store.transaction() as db:
             item = self._store.get(id)
             # Keep only a non-content tombstone. FTS triggers remove old text.
@@ -147,9 +263,9 @@ class MemoryManager:
             for row in db.execute("SELECT id,payload_json FROM proposals WHERE state='pending'").fetchall():
                 proposal = json.loads(row['payload_json'])
                 if normalized(proposal['text']) == normalized(item.text):
-                    db.execute("UPDATE proposals SET state='rejected',payload_json='{}' WHERE id=?", (row['id'],))
-            # Profile is never derived from conversation history. Independent opt-in
-            # conversation rows are not owned by a request to delete this profile item.
+                    db.execute("UPDATE proposals SET state='rejected',payload_json='{}' WHERE id=?",
+                               (row['id'],))
+        self._forget_serial += 1
 
     def options(self) -> dict[str, bool]:
         return self._store.options()
@@ -162,14 +278,89 @@ class MemoryManager:
         if flags.get('enabled') is False:
             self.working.clear()
 
+    # -------------------------------------------------------------- export --
     def export(self) -> dict[str, Any]:
-        return self._store.export()
+        snapshot = self.profile.snapshot()
+        with self._store.transaction() as db:
+            memories = [asdict(row_item(row)) for row in
+                        db.execute("SELECT * FROM memories WHERE kind NOT IN (?,?,?,?) "
+                                   "ORDER BY created_at,id", PROFILE_KINDS)]
+            proposals = [json.loads(row['payload_json']) for row in
+                         db.execute("SELECT * FROM proposals WHERE state='pending'")]
+            conversations = [dict(row) for row in db.execute("SELECT * FROM conversations")]
+            messages = [dict(row) for row in db.execute("SELECT * FROM messages ORDER BY rowid")]
+            options = self.options()
+        return {
+            "version": 2,
+            "profile": {
+                "text": snapshot.text,
+                "revision": snapshot.revision,
+                "chunks": [{"text": chunk.text, "kind": chunk.kind, "origin": chunk.origin}
+                           for chunk in snapshot.chunks],
+            },
+            "memories": memories,
+            "proposals": proposals,
+            "options": options,
+            "conversations": conversations,
+            "messages": messages,
+        }
+
+    def _import_profile(self, profile: Any) -> int:
+        """Importa o perfil a partir do TEXTO canónico; o índice externo é só rótulo.
+
+        ``chunks`` de um export nunca são autoridade: o índice é derivado do documento
+        recebido, e digests de esquecimento são aplicados a cada trecho derivado (mesmo
+        quando ``chunks`` está vazio). Texto externo que não esteja no documento é ignorado.
+        """
+        if not isinstance(profile, dict) or set(profile) - {"text", "revision", "chunks"}:
+            raise MemoryPolicyError()
+        text = profile.get("text", "")
+        chunks = profile.get("chunks", [])
+        if not isinstance(text, str) or not isinstance(chunks, list) or len(chunks) > MAX_IMPORT_ITEMS:
+            raise MemoryPolicyError()
+        document = safe_document(text, maximum=max(8000, len(text)))
+        labels: dict[str, tuple[str, str]] = {}
+        for row in chunks:
+            if not isinstance(row, dict) or set(row) != {"text", "kind", "origin"}:
+                raise MemoryPolicyError()
+            if row["kind"] not in PROFILE_KINDS or row["origin"] not in {"manual", "learned"}:
+                raise MemoryPolicyError()
+            value = safe_text(row["text"], maximum=CHUNK_MAX_CHARS)
+            labels.setdefault(normalized(value).strip(" ."), (row["kind"], row["origin"]))
+        spans = segment(document)
+        if not spans:
+            return 0
+        with self._store.transaction() as db:
+            forgotten = {row["digest"] for row in
+                         db.execute("SELECT digest FROM profile_forgotten")}
+        kept = [span for span in spans if digest(span.text) not in forgotten]
+        if not kept:
+            return 0
+        if not self.profile.snapshot().text.strip() and len(kept) == len(spans):
+            # Documento vazio e nada esquecido: o texto exportado é a única cópia.
+            self.profile.save(document, base_revision=self.profile.revision)
+            return 1
+        inserted = 0
+        known = {normalized(chunk.text).strip(" .") for chunk in self.profile.chunks()}
+        for span in kept:
+            key = normalized(span.text).strip(" .")
+            if not key or key in known:
+                continue
+            kind, origin = labels.get(key, ("preference", "manual"))
+            self.profile.append(span.text, kind, origin=origin,
+                                learned_key=key if origin == "learned" else None)
+            known.add(key)
+            inserted += 1
+        return inserted
 
     def import_data(self, payload: dict) -> int:
-        required = {'version', 'memories', 'proposals', 'options'}
-        if not isinstance(payload, dict) or not required <= set(payload) or set(payload) - (required | {'conversations', 'messages'}):
+        if not isinstance(payload, dict):
             raise MemoryPolicyError()
-        if type(payload['version']) is not int or payload['version'] != 1:
+        version = payload.get("version")
+        if type(version) is not int or version not in {1, 2}:
+            raise MemoryPolicyError()
+        required = {'version', 'memories', 'proposals', 'options'}
+        if not required <= set(payload) or set(payload) - (required | {'conversations', 'messages', 'profile'}):
             raise MemoryPolicyError()
         try:
             if len(json.dumps(payload, allow_nan=False)) > 2_000_000:
@@ -179,7 +370,7 @@ class MemoryManager:
         records, candidates, flags = payload['memories'], payload['proposals'], payload['options']
         if not isinstance(records, list) or not isinstance(candidates, list) or len(records) + len(candidates) > MAX_IMPORT_ITEMS:
             raise MemoryPolicyError()
-        if not isinstance(flags, dict) or set(flags) != DEFAULT_OPTIONS.keys() or any(type(v) is not bool for v in flags.values()):
+        if not isinstance(flags, dict) or set(flags) - DEFAULT_OPTIONS.keys() or any(type(v) is not bool for v in flags.values()):
             raise MemoryPolicyError()
         items = [self._prepared(item_from_dict(value)) for value in records]
         proposed = [self._prepared(item_from_dict(value)) for value in candidates]
@@ -222,6 +413,8 @@ class MemoryManager:
                 if existing is not None:
                     # Imports merge, never overwrite deletion/supersede tombstones.
                     continue
+                if item.kind in PROFILE_KINDS:
+                    continue
                 self._store.insert(item)
                 if item.kind == 'episode' and item.status == 'active':
                     self._insert_episode(item)
@@ -243,7 +436,23 @@ class MemoryManager:
                     stored = self._store.get(item.id)
                     if stored.status == 'active' and stored.kind == 'conversation':
                         db.execute("INSERT OR IGNORE INTO conversation_summaries VALUES(?,?,?)", (item.id, session, stored.text))
-            self.set_options(**flags)
+            self.set_options(**{key: value for key, value in flags.items()})
+            # Perfil, opções e undo partilham a MESMA transação: um perfil inválido
+            # desfaz também opções/memórias, nunca deixa meia importação aplicada.
+            if version == 2:
+                inserted += self._import_profile(payload.get('profile'))
+            else:
+                profile_items = [item for item in items if item.kind in PROFILE_KINDS]
+                for item in profile_items:
+                    previous = db.execute("SELECT status FROM memories WHERE id=?", (item.id,)).fetchone()
+                    if (item.status != 'active' or previous is not None or
+                            db.execute("SELECT 1 FROM profile_forgotten WHERE digest=?",
+                                       (digest(item.text),)).fetchone()):
+                        continue
+                    # Um limite/erro recusa a importação inteira, nunca descarta a cauda do ficheiro.
+                    self.remember(replace(item, source='user_explicit'))
+                    inserted += 1
+            self.profile.clear_undo()
         return inserted
 
     def wipe(self) -> None:
@@ -252,11 +461,13 @@ class MemoryManager:
             db.execute("DELETE FROM episodes")
             db.execute("DELETE FROM proposals")
             db.execute("DELETE FROM memories")
+            self.profile.wipe(db)
             db.execute("DELETE FROM options")
             db.executemany("INSERT INTO options VALUES(?,?)", DEFAULT_OPTIONS.items())
             db.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
             db.execute("INSERT INTO episodes_fts(episodes_fts) VALUES('rebuild')")
-            self.working.clear()
+        self.working.clear()
+        self._forget_serial += 1
 
     @staticmethod
     def _clear_history(db: Any) -> None:
@@ -268,13 +479,43 @@ class MemoryManager:
     def context(self, query: str, session_id: str) -> tuple[str, int]:
         if not self.options()['enabled']:
             return '', 0
-        items = self.recall('', kinds=PROFILE_KINDS, limit=PROFILE_LIMIT, session_id=session_id)
+        snapshot = self.profile.snapshot()
+        visible = [chunk for chunk in snapshot.chunks
+                   if not (chunk.expires_at and chunk.expires_at <= now())]
+        selected: list[Any] = []
+        if query.strip():
+            expression = fts_query(query)
+            if expression:
+                with self._store.transaction() as db:
+                    rows = db.execute(
+                        "SELECT c.chunk_id FROM profile_chunks c JOIN profile_chunks_fts f "
+                        "ON f.rowid=c.rowid WHERE profile_chunks_fts MATCH ? "
+                        "ORDER BY bm25(profile_chunks_fts), c.position LIMIT ?",
+                        (expression, PROFILE_LIMIT)).fetchall()
+                matches = {row['chunk_id'] for row in rows}
+                selected.extend([chunk for chunk in visible if chunk.chunk_id in matches])
+        general = [chunk for chunk in visible if GENERAL.search(normalized(chunk.text))]
+        for chunk in general:
+            if len(selected) >= PROFILE_LIMIT + 2:
+                break
+            if chunk not in selected:
+                selected.append(chunk)
+        for chunk in visible:
+            if len(selected) >= CONTEXT_MAX_ITEMS:
+                break
+            if chunk not in selected:
+                selected.append(chunk)
+        legacy_lines: list[str] = []
         if is_referential(query):
-            extra_kinds = ['episode'] if self.options()['episodes'] else []
+            kinds: list[str] = []
+            if self.options()['episodes']:
+                kinds.append('episode')
             if self.options()['history']:
-                extra_kinds.append('conversation')
-            if extra_kinds:
-                items = self.recall(query, kinds=extra_kinds, limit=3) + items
+                kinds.append('conversation')
+            if kinds:
+                for item in self._store.search(query, status='active', limit=3, kinds=tuple(kinds)):
+                    legacy_lines.append(json.dumps({'kind': item.kind, 'text': item.text},
+                                                   ensure_ascii=False) + '\n')
         sections: list[str] = []
         working = self.working.get(session_id)
         working_line = ('Working: ' + json.dumps(working, ensure_ascii=False) + '\n') if working else ''
@@ -282,11 +523,17 @@ class MemoryManager:
             working_line = 'Working: ' + json.dumps({'task_id': working.get('task_id', '')}, ensure_ascii=False) + '\n'
         total = len(CONTEXT_RULE) + len(working_line)
         count = 0
-        for item in items[:CONTEXT_MAX_ITEMS]:
-            # JSON escaping keeps stored linebreaks from impersonating message roles.
-            line = json.dumps({'kind': item.kind, 'text': item.text}, ensure_ascii=False) + '\n'
+        for line in legacy_lines:
             if total + len(line) > CONTEXT_MAX_CHARS:
-                continue
+                break
+            sections.append(line)
+            total += len(line)
+            count += 1
+        for chunk in selected[:CONTEXT_MAX_ITEMS]:
+            # JSON escaping keeps stored linebreaks from impersonating message roles.
+            line = json.dumps({'kind': chunk.kind, 'text': chunk.text}, ensure_ascii=False) + '\n'
+            if total + len(line) > CONTEXT_MAX_CHARS:
+                continue  # Nunca corta um trecho a meio: salta-o e segue.
             sections.append(line)
             total += len(line)
             count += 1
@@ -294,6 +541,7 @@ class MemoryManager:
             sections.append(working_line)
         return (CONTEXT_RULE + ''.join(sections), count) if sections else ('', 0)
 
+    # ------------------------------------------------------------ propostas --
     def proposals(self) -> builtins.list[MemoryItem]:
         with self._store.transaction() as db:
             return [item_from_dict(json.loads(row['payload_json'])) for row in
@@ -324,7 +572,8 @@ class MemoryManager:
                 raise KeyError("Proposta pendente não encontrada.")
             candidate = item_from_dict(json.loads(row['payload_json']))
             memory_id = self.remember(replace(candidate, id='', source='user_confirmed', status='active'))
-            db.execute("UPDATE proposals SET state='accepted',payload_json='{}',memory_id=? WHERE id=?", (memory_id, id))
+            db.execute("UPDATE proposals SET state='accepted',payload_json='{}',memory_id=? WHERE id=?",
+                       (memory_id, id))
             return memory_id
 
     def reject_proposal(self, id: str) -> None:

@@ -22,6 +22,7 @@ import {
   MAX_MEMORY_TEXT_CHARS,
   MAX_PROFILE_AVATAR_BYTES,
   MAX_PROFILE_AVATAR_CHARS,
+  MAX_PROFILE_CHARS,
   MAX_PROFILE_NAME_CHARS,
   MAX_TOTAL_ATTACHMENTS_BYTES,
   MAX_TYPE_CHARS,
@@ -43,6 +44,7 @@ describe("Contrato IPC v1 (TypeScript <-> Golden <-> Python)", () => {
     expect(MAX_IMPORT_BYTES).toBe(golden.limits.max_import_bytes);
     expect(MAX_CHAT_TEXT_CHARS).toBe(golden.limits.max_chat_text_chars);
     expect(MAX_MEMORY_TEXT_CHARS).toBe(golden.limits.max_memory_text_chars);
+    expect(MAX_PROFILE_CHARS).toBe(golden.limits.max_profile_chars);
     expect(MAX_ID_CHARS).toBe(golden.limits.max_id_chars);
     expect(MAX_TYPE_CHARS).toBe(golden.limits.max_type_chars);
     expect(MAX_HOST_PIDS).toBe(golden.limits.max_host_pids);

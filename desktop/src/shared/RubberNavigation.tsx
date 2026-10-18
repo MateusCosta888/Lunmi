@@ -51,7 +51,7 @@ export function RubberNavigation({ items, value, disabled, onChange }: {
       onChange(items[next].id); track.current?.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
     }}>
     <span className="lunmi-rubber-thumb" ref={thumb} aria-hidden="true" />
-    {items.map(item => <button key={item.id} type="button" className={`lunmi-nav-item ${item.id === "brain" ? "lunmi-nav-child" : ""}`}
+    {items.map(item => <button key={item.id} type="button" className="lunmi-nav-item"
       data-testid={`nav-${item.id}`} aria-label={item.label} title={item.label} aria-current={value === item.id ? "page" : undefined}
       disabled={disabled} onClick={() => onChange(item.id)}>
       <span className="lunmi-nav-icon"><Icon name={item.icon} /></span><span className="lunmi-nav-text">{item.label}</span>

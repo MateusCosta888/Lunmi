@@ -14,6 +14,17 @@
   font-display: swap;
 }
 
+/* Geist Sans (SIL OFL 1.1, © The Geist Project Authors) — a fonte do lettering da marca. Entra
+   só na marca central; o resto da interface continua em Plus Jakarta Sans. O eixo vai de 100 a
+   900 porque o Kinetic Text precisa alcançar o 900 do hover (o Plus Jakarta Sans para no 800). */
+@font-face {
+  font-family: "Geist";
+  src: url("./assets/fonts/Geist-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 html,
 body,
 #root {
@@ -38,6 +49,14 @@ body {
 /* ------------------------------------------------------------------ shell */
 
 .lunmi-shell {
+  --lunmi-shell-pad: 12px;
+  --lunmi-brand-h: 72px;
+  --lunmi-panel-gap: 32px;
+  --lunmi-rail-bar-h: 32px;
+  --lunmi-rail-gap: 6px;
+  --lunmi-nav-bar-h: 32px;
+  /* Altura comum das duas cascas: teto de 560px com respiro inferior de 68px no mínimo. */
+  --lunmi-panel-h: min(560px, calc(100vh - 184px));
   position: relative;
   isolation: isolate;
   display: flex;
@@ -81,16 +100,10 @@ body {
   color: var(--lunmi-text-primary);
 }
 
-.lunmi-brand-word {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.34em;
-}
-
 .lunmi-nav-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
 }
 
 .lunmi-nav-label {
@@ -124,18 +137,20 @@ body {
 }
 
 .lunmi-nav-item[aria-current="page"] {
-  background-color: var(--lunmi-surface-hover);
-  color: var(--lunmi-text-primary);
+  background-color: var(--lunmi-accent);
+  color: var(--lunmi-on-accent);
+}
+
+.lunmi-nav-item[aria-current="page"]:hover {
+  background-color: var(--lunmi-accent-hover);
+}
+
+.lunmi-nav-item[aria-current="page"]:active {
+  background-color: var(--lunmi-accent-pressed);
 }
 
 .lunmi-nav-item[aria-current="page"] .lunmi-nav-icon {
-  color: var(--lunmi-accent);
-}
-
-/* Filho de um grupo (Brain pertence à configuração, não é rota primária própria). */
-.lunmi-nav-child {
-  padding-left: 24px;
-  font-size: 12.5px;
+  color: var(--lunmi-on-accent);
 }
 
 .lunmi-nav-icon {
@@ -152,12 +167,11 @@ body {
 }
 
 .lunmi-nav-collapse {
-  margin-left: auto;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -171,22 +185,14 @@ body {
 }
 
 .lunmi-sidebar[data-collapsed="true"] { width: 54px; margin-inline: 10px 0; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-brand { flex-direction: column; align-items: center; padding: 0; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-brand-word { display: none; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-collapse { margin-left: 0; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-brand { align-items: center; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-bar { justify-content: center; padding-inline: 0; }
 .lunmi-sidebar[data-collapsed="true"] .lunmi-nav-text { max-width: 0; opacity: 0; }
 .lunmi-sidebar[data-collapsed="true"] .lunmi-nav-item,
 .lunmi-sidebar[data-collapsed="true"] .lunmi-brand { justify-content: center; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-item { padding-left: 0; padding-right: 0; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-child { padding-left: 0; }
-
-.lunmi-sidebar-foot {
-  margin-top: auto;
-  padding: 14px 12px 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--lunmi-text-muted);
-}
+/* No trilho o rótulo fica em 0 de largura, mas o `gap` continua separando ícone e rótulo — o que
+   empurrava o ícone ~5px para a esquerda. Sem gap, o ícone fica centrado no botão. */
+.lunmi-sidebar[data-collapsed="true"] .lunmi-nav-item { padding-left: 0; padding-right: 0; gap: 0; }
 
 /* --------------------------------------------------------------- top bar */
 
@@ -546,15 +552,14 @@ button:active:not(:disabled) { filter: brightness(.94); }
 button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 3px; }
 ::selection { background: var(--lunmi-accent); color: var(--lunmi-on-accent); }
 input, textarea { caret-color: var(--lunmi-accent); }
-.lunmi-sidebar { background: transparent; border-right: 0; padding: 0; margin: 10px 0 10px 10px; width: 208px; gap: 0; position: relative; overflow: visible; }
-.lunmi-sidebar-inner { display: flex; flex-direction: column; gap: 26px; padding: 14px 10px 12px; height: 100%; min-height: 0; overflow-y: auto; }
+.lunmi-sidebar { display: flex; flex-direction: column; align-items: stretch; gap: var(--lunmi-rail-gap); background: transparent; border-right: 0; padding: 0; margin: var(--lunmi-shell-pad) 0 var(--lunmi-shell-pad) var(--lunmi-shell-pad); width: 260px; position: relative; overflow: visible; }
+/* Sem o perfil no rodapé, a navegação é a única coisa dentro do vidro: ela fica centrada na
+   vertical em vez de encostada no topo. `safe center` evita o corte inalcançável quando a janela
+   é curta demais para o conteúdo. */
+.lunmi-sidebar-inner { display: flex; flex: 1 1 auto; flex-direction: column; justify-content: center; justify-content: safe center; gap: 8px; padding: 16px 12px 12px; min-height: 0; overflow-y: auto; }
+.lunmi-sidebar > .lunmi-glass { flex: 0 1 auto; height: var(--lunmi-panel-h); }
 .lunmi-shell-main { background: transparent; }
 .lunmi-topbar { min-height: 64px; padding-right: 16px; }
-.lunmi-session-chip { margin-left: auto; flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
-  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--lunmi-border-hairline);
-  background: color-mix(in srgb, var(--lunmi-bg-card) 72%, transparent); color: var(--lunmi-text-muted); font-size: 11.5px; }
-.lunmi-session-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--lunmi-success); flex-shrink: 0; }
-.lunmi-session-chip[data-status="connecting"] i, .lunmi-session-chip[data-status="restarting"] i { background: var(--lunmi-warning); }
 .lunmi-failure-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px;
   border-bottom: 1px solid var(--lunmi-border-hairline);
   background: color-mix(in srgb, var(--lunmi-error) 10%, var(--lunmi-bg-card-subtle)); color: var(--lunmi-text-secondary); font-size: 12.5px; }
@@ -563,14 +568,6 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-failure-note { margin: 0; color: var(--lunmi-text-muted); font-size: 11.5px; }
 .lunmi-failure-strip button { margin-left: auto; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--lunmi-accent);
   background: transparent; color: var(--lunmi-accent); font-size: 13px; cursor: pointer; }
-.lunmi-toggle { display: flex; align-items: center; gap: 8px; position: relative; font-size: 12px; cursor: pointer; }
-.lunmi-toggle input { width: 36px; height: 22px; position: absolute; opacity: 0; margin: 0; }
-.lunmi-toggle-track { width: 36px; height: 22px; background: var(--lunmi-border-subtle); border-radius: 30px; position: relative; pointer-events: none; }
-.lunmi-toggle-track::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; left: 3px; top: 3px; background: var(--lunmi-text-primary); transition: transform 140ms ease; }
-.lunmi-toggle input:checked + span { background: var(--lunmi-accent); }
-.lunmi-toggle input:checked + span::after { transform: translateX(14px); background: var(--lunmi-on-accent); }
-.lunmi-toggle input:focus-visible + span { outline: 2px solid var(--lunmi-accent); outline-offset: 3px; }
-.lunmi-toggle input:disabled ~ span { opacity: .5; }
 .lunmi-chat-view { display: flex; flex: 1; min-height: 0; min-width: 0; }
 [hidden] { display: none !important; }
 .lunmi-conversation { min-width: 0; }
@@ -583,14 +580,22 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-mode input { width: 12px; height: 12px; accent-color: var(--lunmi-accent); }
 .lunmi-send { background: var(--lunmi-accent); color: var(--lunmi-on-accent); }
 .lunmi-stop { background: var(--lunmi-bg-card); color: var(--lunmi-error); border: 1px solid var(--lunmi-error); }
+/* Acento sólido: hover/pressionado trocam o preenchimento por tokens reais — o filtro de brilho global clarearia o vinho/índigo e derrubaria o contraste do rótulo. */
+.lunmi-send:not(.lunmi-stop):hover:not(:disabled), .lunmi-memory-go:hover:not(:disabled), .lunmi-modal-primary:hover:not(:disabled) { background: var(--lunmi-accent-hover); filter: none; }
+.lunmi-memory-go:hover:not(:disabled) { border-color: var(--lunmi-accent-hover); }
+.lunmi-send:not(.lunmi-stop):active:not(:disabled), .lunmi-memory-go:active:not(:disabled), .lunmi-modal-primary:active:not(:disabled) { background: var(--lunmi-accent-pressed); filter: none; }
+.lunmi-memory-go:active:not(:disabled) { border-color: var(--lunmi-accent-pressed); }
+.lunmi-nav-item[aria-current="page"]:focus-visible { outline-color: var(--lunmi-on-accent); }
 .lunmi-composer-note { color: var(--lunmi-text-muted); font-size: 10px; padding-left: 12px; }
 .lunmi-result-details { margin-top: 16px; color: var(--lunmi-text-secondary); }
 .lunmi-result-details summary { font-size: 12px; cursor: pointer; }
 .lunmi-session-details { color: var(--lunmi-text-muted); font-size: 11px; }
 .lunmi-session-details summary { cursor: pointer; }
 .lunmi-session-details[open] { padding: 8px; }
-.lunmi-rail { width: 302px; background: transparent; border-left: 0; padding: 0; margin: 10px 10px 10px 0; gap: 0; position: relative; overflow: visible; }
-.lunmi-rail-inner { display: flex; flex-direction: column; gap: 22px; padding: 20px 16px; height: 100%; min-height: 0; overflow-y: auto; }
+.lunmi-rail { align-self: stretch; width: 260px; background: transparent; border-left: 0; padding: 0; gap: var(--lunmi-rail-gap); position: relative; overflow: visible;
+  margin: calc(var(--lunmi-shell-pad) + var(--lunmi-brand-h) + var(--lunmi-panel-gap) - 72px - var(--lunmi-rail-bar-h) - var(--lunmi-rail-gap)) var(--lunmi-shell-pad) var(--lunmi-shell-pad) 0; }
+.lunmi-rail-inner { display: flex; flex-direction: column; gap: 20px; padding: 16px 14px 14px; min-height: 0; overflow-y: auto; }
+.lunmi-rail > .lunmi-glass { flex: 0 1 auto; height: var(--lunmi-panel-h); }
 .lunmi-rail-section { border: 1px solid var(--lunmi-border-hairline); border-radius: 16px; padding: 14px 12px; gap: 12px; }
 .lunmi-rail h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--lunmi-text-primary); }
 .lunmi-rail-note { font-size: 10px; line-height: 1.5; color: var(--lunmi-text-muted); margin: 0; }
@@ -598,7 +603,7 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-recent p { margin: 0 0 4px; line-height: 1.5; overflow-wrap: anywhere; }
 .lunmi-recent small { color: var(--lunmi-text-muted); font-size: 10px; }
 .lunmi-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lunmi-accent); flex: 0 0 auto; margin-top: 6px; }
-.lunmi-status-dot.finished { background: var(--lunmi-success); }
+.lunmi-status-dot.finished { background: var(--lunmi-depth-ready-dot); }
 .lunmi-status-dot.failed { background: var(--lunmi-error); }
 .lunmi-status-dot.cancelled { background: var(--lunmi-warning); }
 .lunmi-link { border: 0; padding: 0; background: transparent; text-align: left; color: var(--lunmi-accent); cursor: pointer; font-size: 12px; }
@@ -613,20 +618,16 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-windowbar { height: 40px; flex: 0 0 40px; app-region: drag; -webkit-app-region: drag; padding: 12px 160px 0 18px; font-size: 11px; color: var(--lunmi-text-muted); user-select: none; }
 .lunmi-sidebar .lunmi-brand { app-region: drag; -webkit-app-region: drag; }
 .lunmi-sidebar .lunmi-brand button { app-region: no-drag; -webkit-app-region: no-drag; }
-.lunmi-sidebar-foot { user-select: none; }
-@media (max-height: 640px) { .lunmi-sidebar-foot { padding: 6px 8px 4px; } }
 
-.lunmi-topbar { min-height: 72px; flex-shrink: 0; background: transparent; border-bottom: 0; padding-right: 154px; app-region: drag; -webkit-app-region: drag; }
+.lunmi-topbar { min-height: 72px; flex-shrink: 0; background: transparent; border-bottom: 0; app-region: drag; -webkit-app-region: drag; }
 .lunmi-topbar button, .lunmi-topbar label, .lunmi-topbar input { app-region: no-drag; -webkit-app-region: no-drag; }
 
 .lunmi-md-heading { font-size: 16px; line-height: 1.5; font-weight: 600; margin: 16px 0 8px; }
 
 /* Controls follow logical pixels; Chromium supplies the monitor's native DPI scaling. */
 .lunmi-nav-item { min-height: 44px; padding: 10px 14px; font-size: 14px; }
-.lunmi-nav-child { padding-left: 26px; }
 .lunmi-chip { min-height: 36px; box-sizing: border-box; font-size: 13px; }
 .lunmi-row { min-height: 40px; font-size: 13px; }
-.lunmi-toggle { font-size: 13px; }
 .lunmi-main > section button { min-height: 40px; }
 .lunmi-main > section input:not([type=checkbox]):not([type=radio]), .lunmi-main > section select { min-height: 40px; box-sizing: border-box; }
 .lunmi-shell-enter { animation: lunmi-shell-appear 200ms ease-out both; }
@@ -690,7 +691,7 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-memory-state { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px;
   border: 1px solid var(--lunmi-border-hairline); background: color-mix(in srgb, var(--lunmi-bg-card) 72%, transparent);
   color: var(--lunmi-text-secondary); font-size: 11.5px; }
-.lunmi-memory-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--lunmi-success); flex-shrink: 0; }
+.lunmi-memory-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--lunmi-depth-ready-dot); flex-shrink: 0; }
 .lunmi-memory-state[data-on="false"] i { background: var(--lunmi-warning); }
 .lunmi-memory-muted { margin: 0; color: var(--lunmi-text-muted); font-size: 12.5px; line-height: 1.5; }
 .lunmi-memory-notice { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 12.5px; }
@@ -738,27 +739,63 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-memory-propose-field { min-height: 64px; resize: vertical; }
 .lunmi-memory-danger-zone { border-color: color-mix(in srgb, var(--lunmi-error) 40%, var(--lunmi-border-hairline)); }
 
+/* ------------------------------- memória v2: documento de texto livre */
+
+.lunmi-profile-editor { display: flex; flex-direction: column; gap: 10px; max-width: 880px;
+  padding: 14px; border: 1px solid var(--lunmi-border-hairline); border-radius: 16px;
+  background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-control); }
+.lunmi-profile-text { min-height: 240px; resize: vertical; line-height: 1.6; font-size: 14px;
+  overflow-wrap: anywhere; }
+.lunmi-profile-text[readonly] { color: var(--lunmi-text-secondary); cursor: default; }
+.lunmi-profile-text:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-profile-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lunmi-profile-count { font-size: 11.5px; color: var(--lunmi-text-muted); font-variant-numeric: tabular-nums; }
+.lunmi-profile-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.lunmi-profile-options { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: 880px; }
+.lunmi-profile-options .lunmi-memory-muted { flex: 1 1 240px; }
+.lunmi-conflict { display: flex; flex-direction: column; gap: 10px; max-width: 880px; padding: 14px;
+  border: 1px solid var(--lunmi-warning); border-radius: 16px; background: var(--lunmi-bg-card-subtle); }
+.lunmi-conflict h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--lunmi-text-primary); }
+.lunmi-conflict h4 { margin: 0 0 6px; font-size: 11.5px; font-weight: 600; color: var(--lunmi-text-secondary); }
+.lunmi-conflict-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.lunmi-conflict-pane { margin: 0; padding: 10px 12px; border: 1px solid var(--lunmi-border-hairline); border-radius: 12px;
+  background: var(--lunmi-bg-input); color: var(--lunmi-text-primary); font: inherit; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
+.lunmi-advanced { display: flex; flex-direction: column; gap: 14px; max-width: 1080px; }
+.lunmi-advanced > [data-testid="memory-advanced-toggle"] { align-self: flex-start; }
+
 @media (max-width: 1000px) { .lunmi-memory-layout { grid-template-columns: minmax(0, 1fr); } }
 
-/* ------------------------------------------- topo: cápsula LUNMI + modelo */
+/* ------------------------------------------- topo: marca central “Lunmi” */
 
-.lunmi-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; }
-.lunmi-topbar-left { justify-self: start; }
-.lunmi-topbar-right { justify-self: end; display: inline-flex; }
-.lunmi-topbar .lunmi-session-chip { margin-left: 0; }
-.lunmi-model-capsule { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%;
-  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--lunmi-border-hairline);
-  background: color-mix(in srgb, var(--lunmi-bg-card) 72%, transparent); color: var(--lunmi-text-secondary);
-  font-size: 12.5px; user-select: none; }
-.lunmi-capsule-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lunmi-accent); flex-shrink: 0; }
-.lunmi-capsule-brand { font-weight: 600; letter-spacing: .22em; color: var(--lunmi-text-primary); flex-shrink: 0; }
-.lunmi-capsule-sep { color: var(--lunmi-text-muted); flex-shrink: 0; }
-.lunmi-capsule-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 850px) { .lunmi-model-capsule { padding: 6px 10px; gap: 6px; } .lunmi-capsule-brand { letter-spacing: .12em; } }
+.lunmi-topbar { display: flex; align-items: center; justify-content: center; }
+/* A marca central é só o nome “Lunmi” com Kinetic Text (Magic UI): sem cápsula, sem balão. Cada
+   letra reage ao ponteiro (peso 300 → 900) na fonte da marca, a Geist — a mesma do lettering do
+   símbolo. Como o ponteiro só precisa passar por cima, a marca é uma região no-drag LIMITADA —
+   o resto do cabeçalho continua arrastando a janela. */
+.lunmi-brand-mark { display: inline-flex; align-items: center; justify-content: center; min-width: 0;
+  color: var(--lunmi-text-primary); font-family: "Geist", "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  font-size: clamp(26px, 2.6vw, 34px); line-height: 1.1;
+  letter-spacing: -0.02em; user-select: none; app-region: no-drag; -webkit-app-region: no-drag; }
+@media (max-width: 850px) { .lunmi-brand-mark { font-size: 24px; } }
+
+/* A cápsula da marca fica no eixo do chat (logo/título/compositor), não no centro do espaço
+   restante do header: descontamos o painel direito quando ele existe. O deslocamento é
+   exatamente a largura reservada ao rail — 260px + respiro quando aberto; 40px do trilho
+   recolhido; zero quando o rail não está em cena (≤1180px ou fora do chat). */
+@media (min-width: 1001px) {
+  .lunmi-topbar { position: relative; }
+  .lunmi-brand-mark { position: absolute; top: 50%; left: calc(50% - var(--lunmi-topbar-axis-shift, 0px) / 2);
+    transform: translate(-50%, -50%); max-width: min(46%, 420px); }
+}
+@media (min-width: 1181px) {
+  .lunmi-topbar[data-rail="open"] { --lunmi-topbar-axis-shift: calc(260px + var(--lunmi-shell-pad)); }
+  .lunmi-topbar[data-rail="edge"] { --lunmi-topbar-axis-shift: 40px; }
+}
 
 /* ------------------------------------------------- rail: recolher/expandir */
 
-.lunmi-rail-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lunmi-rail-bar { padding-inline: 14px; min-height: var(--lunmi-rail-bar-h); box-sizing: border-box; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .lunmi-rail-title { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--lunmi-text-muted); }
 .lunmi-rail-collapse { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px;
   background: transparent; color: var(--lunmi-text-muted); cursor: pointer; }
@@ -793,20 +830,18 @@ input, textarea { caret-color: var(--lunmi-accent); }
 
 /* ------------------------------------------------- perfil: miniperfil + modal */
 
-.lunmi-profile-mini { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px;
-  border: 1px solid var(--lunmi-border-hairline); border-radius: 12px; background: var(--lunmi-bg-card);
-  color: var(--lunmi-text-secondary); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+/* O perfil saiu do rodapé: agora é o avatar redondo do canto superior esquerdo, no lugar da logo.
+   Só o avatar, sem nome visível — o nome acessível vem do aria-label do botão. */
+.lunmi-profile-mini { display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--lunmi-border-hairline); border-radius: 50%; background: var(--lunmi-bg-card);
+  color: var(--lunmi-text-secondary); cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease; }
 .lunmi-profile-mini:hover { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
-.lunmi-profile-thumb, .lunmi-profile-fallback { width: 28px; height: 28px; border-radius: 50%; flex: 0 0 auto;
+.lunmi-profile-thumb, .lunmi-profile-fallback { width: 32px; height: 32px; border-radius: 50%;
   display: grid; place-items: center; overflow: hidden; background: var(--lunmi-bg-card-subtle);
   border: 1px solid var(--lunmi-border-subtle); color: var(--lunmi-text-muted); }
 .lunmi-profile-thumb { object-fit: cover; }
-.lunmi-profile-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-sidebar-foot { padding: 0; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-sidebar-inner { padding-inline: 5px; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-profile-mini { width: 44px; height: 44px; margin: 0 auto; padding: 0; gap: 0; border-radius: 50%; justify-content: center; }
-.lunmi-sidebar[data-collapsed="true"] .lunmi-profile-mini .lunmi-nav-text { display: none; }
+.lunmi-sidebar[data-collapsed="true"] .lunmi-sidebar-inner { padding-inline: 4px; }
 
 .lunmi-modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
   background: rgba(0, 0, 0, .55); animation: lunmi-modal-in 160ms ease-out both; }
@@ -841,16 +876,16 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-modal-quiet { padding: 8px 14px; border: 1px solid var(--lunmi-border-subtle); border-radius: 10px;
   background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 13px; cursor: pointer; }
 
-/* Keep the model centered and the attachment/model pair together in compact windows. */
+/* Compact windows: a marca central continua centralizada na linha do topo. */
 @media (max-width: 1000px) {
-  .lunmi-topbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 8px; }
-  .lunmi-topbar-left { grid-column: 1; grid-row: 1; }
-  .lunmi-topbar-right { grid-column: 2; grid-row: 1; }
-  .lunmi-model-capsule { grid-column: 1 / -1; grid-row: 2; justify-self: center; max-width: 100%; }
+  .lunmi-brand-mark { max-width: 100%; }
 }
 @media (max-width: 850px) {
   .lunmi-composer-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr); }
   .lunmi-composer-toolbar > .lunmi-model-picker { min-width: 0; }
+  /* O chip de Autoaprovação ocupa a própria linha utilitária: na grade, se ficasse na coluna 1,
+     a largura dele empurraria o seletor de modelo para longe do Anexar. */
+  .lunmi-composer-toolbar > .lunmi-auto-approve { grid-column: 1 / -1; justify-self: start; }
   .lunmi-composer-actions { grid-column: 1 / -1; }
 }
 
@@ -861,16 +896,63 @@ input, textarea { caret-color: var(--lunmi-accent); }
    `.lunmi-glass-layer` é absoluta (0,0 preenche o painel), os utilitários recebem position/top/left
    via props (strings "0px" verdadeiras) e o transform residual é neutralizado aqui — sem simular
    Tailwind. O conteúdo é irmão da camada, com altura/rolagem próprias e hit-test livre. */
-.lunmi-glass { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; overflow: hidden; }
+.lunmi-glass { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; width: 100%; overflow: hidden;
+  border: 1px solid var(--lunmi-depth-glass-edge); background: var(--lunmi-depth-glass-surface);
+  box-shadow: var(--lunmi-depth-glass-shadow), var(--lunmi-depth-glass-light); }
 .lunmi-glass-layer { position: absolute; inset: 0; pointer-events: none; z-index: 0; border-radius: inherit; overflow: hidden; }
 .lunmi-glass-layer > * { transform: none !important; width: 100% !important; height: 100% !important; }
-/* Override the package's inline-flex baseline: even empty content shifted the glass down 17px. */
+/* Override the package's inline-flex baseline: even empty content shifted the glass down 17px.
+   O preenchimento tonal vem do painel; o warp do pacote amostra o backdrop real (cosmos + laterais). */
 .lunmi-glass-layer .glass { position: absolute !important; inset: 0; display: flex !important; flex-direction: column; width: 100%; height: 100%; min-height: 0;
-  box-shadow: none !important; background: color-mix(in srgb, var(--lunmi-bg-sidebar) 46%, transparent); }
+  box-shadow: none !important; background: transparent; }
 .lunmi-glass-layer .glass > div { font: inherit !important; text-shadow: none !important; }
-.lunmi-glass-layer .glass__warp { opacity: var(--lunmi-glass-refraction-opacity, 1); }
-.lunmi-glass-content { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.lunmi-rail-edge { background: color-mix(in srgb, var(--lunmi-bg-sidebar) 55%, transparent); border-left: 0; border-radius: 14px 0 0 14px; margin: 10px 0; }
+/* As bordas decorativas do pacote (varredura branca + preto) são substituídas pelo contorno autoral do painel. */
+.lunmi-glass-layer > span { display: none !important; }
+.lunmi-glass-layer .glass__warp { opacity: var(--lunmi-depth-glass-refraction, var(--lunmi-glass-refraction-opacity, 1)); }
+/* Espessura e reflexo especular dos temas claros: um brilho diagonal discreto sobre o painel ajuda
+   a ler o vidro sem lavar o conteúdo. O Celestial aprovado fica exatamente como estava. */
+:root[data-theme="soft-light"] .lunmi-glass::before,
+:root[data-theme="red-velvet"] .lunmi-glass::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(143deg, #ffffff9e 0%, #ffffff3d 20%, transparent 42%, transparent 72%, #ffffff4d 100%);
+}
+/* Mecanismo "bento light" nas cascas laterais (ver shared/bento.tsx): spotlight sob o conteúdo e
+   contorno de 1px acima dele. Decorativos: pointer-events none; nada captura clique, arrasto ou
+   seleção. O raio/intensidade vive aqui — trocar de tema não toca em JavaScript. */
+.lunmi-bento-light { position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(var(--bento-spot-size, 300px) circle at var(--bento-x, -999px) var(--bento-y, -999px),
+    rgba(var(--lunmi-depth-glow), calc(var(--lunmi-bento-spot, 1) * .13 * var(--bento-hot, 0))), transparent 74%); }
+.lunmi-bento-ring { position: absolute; inset: 0; box-sizing: border-box; padding: 1px; z-index: 2; border-radius: inherit; pointer-events: none;
+  background:
+    radial-gradient(circle at var(--bento-wx, -999px) var(--bento-wy, -999px),
+      transparent calc(var(--bento-wr, 0px) - 90px),
+      rgba(var(--lunmi-depth-glow), calc(var(--lunmi-bento-ring, 1) * .44 * var(--bento-wa, 0) * .32)) calc(var(--bento-wr, 0px) - 58px),
+      rgba(var(--lunmi-depth-glow), calc(var(--lunmi-bento-ring, 1) * .44 * var(--bento-wa, 0))) calc(var(--bento-wr, 0px) - 4px),
+      rgba(var(--lunmi-depth-glow), 0) var(--bento-wr, 0px)),
+    radial-gradient(var(--bento-border-size, 300px) circle at var(--bento-x, -999px) var(--bento-y, -999px),
+      rgba(var(--lunmi-depth-glow), calc(var(--lunmi-bento-ring, 1) * .42 * var(--bento-near, 0))), transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+/* Intensidade por tema, separada por parte do mecanismo: spotlight (--spot) e contorno/onda
+   (--ring). Celestial mantém 1.15 nas duas, exatamente como aprovado; os temas claros recebem
+   mais luz no spotlight e um contorno firme, sem virar neon. */
+:root { --lunmi-bento-spot: 1; --lunmi-bento-ring: 1; }
+:root[data-theme="celestial"] { --lunmi-bento-spot: 1.15; --lunmi-bento-ring: 1.15; }
+:root[data-theme="soft-light"] { --lunmi-bento-spot: 2.25; --lunmi-bento-ring: 1.4; }
+:root[data-theme="red-velvet"] { --lunmi-bento-spot: 2.35; --lunmi-bento-ring: 1.45; }
+/* Movimento reduzido: nada de spotlight, contorno ou onda — nem em hover. */
+@media (prefers-reduced-motion: reduce) {
+  .lunmi-bento-light, .lunmi-bento-ring, .lunmi-composer-surface::before, .lunmi-composer-surface::after { display: none; }
+}
+/* A preferência pertence ao sistema, sem estado global mantido por painéis independentes. */
+@media (prefers-reduced-transparency: reduce) {
+  .lunmi-glass-layer, .lunmi-bento-light, .lunmi-bento-ring,
+  .lunmi-composer-surface::before, .lunmi-composer-surface::after { display: none !important; }
+  .lunmi-glass { background-image: none; background-color: var(--lunmi-bg-card); }
+  .lunmi-composer-surface { background: var(--lunmi-bg-card); }
+}
+.lunmi-glass-content { position: relative; z-index: 1; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.lunmi-rail-edge { align-self: center; height: 56px; justify-content: center; background: color-mix(in srgb, var(--lunmi-bg-sidebar) 24%, transparent); border-left: 0; border-radius: 16px 0 0 16px; margin: 0; padding: 0; }
 
 /* ------------------------------------------------- controles de janela próprios */
 
@@ -882,3 +964,15 @@ input, textarea { caret-color: var(--lunmi-accent); }
 .lunmi-wincontrol:active:not(:disabled) { background: color-mix(in srgb, var(--lunmi-surface-hover) 70%, var(--lunmi-bg-window)); filter: none; }
 .lunmi-wincontrol-close:hover:not(:disabled) { background: var(--lunmi-error); color: var(--lunmi-on-error); filter: none; }
 .lunmi-wincontrol-close:active:not(:disabled) { background: color-mix(in srgb, var(--lunmi-error) 85%, var(--lunmi-on-error)); color: var(--lunmi-on-error); filter: none; }
+
+/* Both laterals float in the same external box (260px wide, equal height); the material is authored per theme. */
+.lunmi-sidebar > .lunmi-brand { align-self: stretch; justify-content: center; align-items: center; box-sizing: border-box; min-height: calc(var(--lunmi-brand-h) + var(--lunmi-panel-gap) - var(--lunmi-nav-bar-h) - 2 * var(--lunmi-rail-gap)); padding: 0 8px; }
+/* Linha do controle de recolher/expandir, fora do vidro e imediatamente acima da casca esquerda —
+   mesma linguagem do controle do painel direito. A geometria conserva o topo da casca (116px). */
+.lunmi-sidebar > .lunmi-nav-bar { align-self: stretch; box-sizing: border-box; display: flex; align-items: center; justify-content: flex-end; padding-inline: 12px; min-height: var(--lunmi-nav-bar-h); }
+.lunmi-sidebar[data-collapsed="true"] { width: 54px; }
+.lunmi-sidebar[data-collapsed="true"] > .lunmi-brand { justify-content: center; padding-inline: 0; }
+/* Superfícies internas do rail: sólidas e legíveis, sem novo vidro e sem sombras de relevo pesadas. */
+.lunmi-rail .lunmi-rail-section { background: color-mix(in srgb, var(--lunmi-bg-card) 80%, transparent); border: 1px solid var(--lunmi-border-hairline); border-radius: 14px; padding: 12px; box-shadow: none; }
+.lunmi-topbar { position: relative; }
+.lunmi-topbar .lunmi-wincontrols { position: absolute; }

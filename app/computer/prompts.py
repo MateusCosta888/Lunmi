@@ -9,6 +9,7 @@ from ufo.prompter.basic import BasicPrompter
 from ufo.prompter.prompt_sanitizer import sanitize_user_input
 
 from app.computer.controls import CONTROL_LIMIT_DEFAULT, rank_controls
+from app.computer.prompt_budget import CONTROL_FIELDS
 from app.computer.prompt_encoding import encode_context, observation_history
 
 
@@ -212,20 +213,47 @@ class CompactAppPrompter(CompactPrompts, AppAgentPrompter):
                                  last_success_actions: Any = None) -> str:
         controls = self.narrow_controls(control_item, subtask, user_request, prev_plan,
                                         last_success_actions)
-        # Preserve official TargetRegistry IDs while supplementing the bounded prompt
-        # with metadata the stock TargetInfo intentionally drops. UI content is data.
+        # Preserve official TargetRegistry IDs and every metadata field the stock
+        # TargetInfo drops. The lossless columns/rows form is used again for this
+        # richer shape, so the budget can select context without inventing or
+        # truncating values. Parents outside the selected rows travel in `contexts`.
         if self.uia_metadata and isinstance(controls, list):
-            keys = ("automation_id", "parent", "patterns", "access_key", "enabled", "offscreen", "focusable",
-                    "focused", "framework", "class_name", "rect", "pid")
-            controls = [{**item, **{key: self.uia_metadata.get(str(item.get("id")), {}).get(key)
-                                   for key in keys}} for item in controls]
-            by_id = self.uia_metadata
-            for item in controls:
-                parent = by_id.get(str(item.get("parent")), {})
-                item["context"] = {"id": parent.get("id"), "name": parent.get("name"), "type": parent.get("type")}
-            controls = {"observation": self.uia_observation, "elements": controls}
-        # Explicit column header makes this representation reversible. Unknown
-        # shapes keep ordinary JSON, rather than silently dropping extra fields.
+            rows: list[dict[str, Any]] = [
+                {**item, **self.uia_metadata.get(str(item.get("id")), {})}
+                for item in controls]
+            selected_ids = {str(item.get("id")) for item in controls}
+            contexts: dict[str, dict[str, Any]] = {}
+            # The official control items carry only id/name/type. Parent identity comes
+            # from the enriched rows, otherwise a parent outside the selected rows is lost.
+            for row in rows:
+                parent = str(row.get("parent", ""))
+                if parent and parent not in selected_ids:
+                    context = self.uia_metadata.get(parent)
+                    if context:
+                        contexts[parent] = dict(context)
+            # Known fields first, then anything this provider adds, so no identity or
+            # state field is lost just because the adapter has not named it yet.
+            fields = list(CONTROL_FIELDS)
+            for source in [*rows, *contexts.values()]:
+                for key in source:
+                    name = str(key)
+                    if name != "context" and name not in fields:
+                        fields.append(name)
+            controls = {
+                "observation": self.uia_observation,
+                "selection": {"collected": self.controls_collected,
+                              "sent": self.controls_sent,
+                              "omitted": max(0, self.controls_collected - self.controls_sent),
+                              "reason": "ranked" if self.controls_sent < self.controls_collected else "complete"},
+                "elements": {"columns": fields,
+                             "rows": [[row.get(field) for field in fields] for row in rows]},
+            }
+            if contexts:
+                controls["elements"]["contexts"] = {
+                    key: {field: value.get(field) for field in fields}
+                    for key, value in contexts.items()}
+        # Explicit column header makes the no-metadata representation reversible.
+        # Unknown shapes keep ordinary JSON, rather than silently dropping fields.
         columns = ["id", "name", "type"]
         if self._encodable(controls):
             controls = {"columns": columns, "rows": [[item[key] for key in columns] for item in controls]}

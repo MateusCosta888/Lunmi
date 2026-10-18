@@ -7,6 +7,8 @@ desktop. The UFO HostAgent/AppAgent remains the single agent that acts.
 from __future__ import annotations
 
 from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import aclosing
 
 from app.brain.contracts import (
     BrainError,
@@ -15,6 +17,7 @@ from app.brain.contracts import (
     Capabilities,
     Capability,
     ErrorKind,
+    EventKind,
     HealthStatus,
     ModelInfo,
     events_for,
@@ -33,6 +36,8 @@ def translate(exc: BaseException) -> BrainError:
     if isinstance(exc, CodexError):
         code = getattr(exc, "code", None)
         detail = getattr(exc, "detail", "") or str(exc)
+        if code == "configuration":
+            return BrainError(ErrorKind.CONFIGURATION, str(exc))
         if code == "usageLimitExceeded":
             return BrainError(ErrorKind.QUOTA_EXCEEDED,
                               "Limite de uso da conta Codex atingido. Tente novamente quando a cota liberar.",
@@ -66,6 +71,7 @@ class CodexBrain:
         self.settings = settings
         self.model = settings.model
         self._client = CodexAppServer()
+        self.call_metrics = self._client.call_metrics
         # No SHELL/TOOL_CALLS/WORKING_DIRECTORY: in this mode the CLI must not act.
         self.capabilities = Capabilities.of(
             Capability.SYSTEM_PROMPTS,
@@ -75,10 +81,19 @@ class CodexBrain:
             Capability.INTERACTIVE_LOGIN,
             Capability.SESSIONS,
             Capability.CANCELLATION,
+            Capability.STREAMING,
         )
 
     async def complete(self, messages: list[dict[str, Any]]) -> Completion:
         try:
+            if self.settings.effort:
+                completion = None
+                async for value in self._client.stream(self.model, messages, effort=self.settings.effort):
+                    if isinstance(value, Completion):
+                        completion = value
+                if completion is None:
+                    raise BrainError(ErrorKind.MALFORMED_RESPONSE, "O Codex não concluiu a resposta.")
+                return completion
             return await self._client.complete(self.model, messages)
         except BaseException as exc:  # noqa: BLE001 - normalized below, then re-raised as BrainError
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
@@ -89,6 +104,23 @@ class CodexBrain:
 
     def events(self, completion: Completion) -> list[BrainEvent]:
         return events_for(self.provider_id, completion)
+
+    async def stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[BrainEvent]:
+        yield BrainEvent(EventKind.STARTED, {"provider": self.provider_id, "streaming": True})
+        try:
+            completion = None
+            async with aclosing(self._client.stream(self.model, messages, effort=self.settings.effort)) as events:
+                async for value in events:
+                    if isinstance(value, str):
+                        yield BrainEvent(EventKind.TEXT_DELTA, {"text": value})
+                    else:
+                        completion = value
+            if completion is None:
+                raise BrainError(ErrorKind.MALFORMED_RESPONSE, "O Codex não concluiu a resposta.")
+            for event in self.events(completion)[1:]:
+                yield event
+        except Exception as exc:
+            raise translate(exc) from exc
 
     async def login(self) -> list[ModelInfo]:
         """Open the vendor's official login when the account is not connected yet."""

@@ -1,14 +1,15 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getBridgeApi, makeSendCommand, type SendCommandFn } from "./shared/ipc/client";
 import { useSession } from "./shared/ipc/useSession";
-import { BrandMark, Icon } from "./shared/ui";
-import type { ApprovalDto, BrainGetDto, MemoryListDto, UiPreferencesDto } from "./shared/types";
-import { SessionStatusChip, SessionFailureStrip } from "./features/session/SessionState";
+import { Icon } from "./shared/ui";
+import type { ApprovalDto, BrainGetDto, BrainStateDto, MemoryProfileDto, UiPreferencesDto } from "./shared/types";
+import { SessionFailureStrip } from "./features/session/SessionState";
 import { INTRO_DURATION_MS, StartupScreen } from "./features/session/StartupScreen";
 import { ChatPanel } from "./features/chat/ChatPanel";
 import { useChatTask } from "./features/chat/useChatTask";
 import { BrainPanel } from "./features/brain/BrainPanel";
 import { MemoryPanel } from "./features/memory/MemoryPanel";
+import type { MemoryProfileDraft } from "./features/memory/MemoryPanel";
 import { PreferencesPanel } from "./features/preferences/PreferencesPanel";
 import { ModelPicker } from "./features/chat/ModelPicker";
 import { useAttachments } from "./features/chat/useAttachments";
@@ -17,15 +18,18 @@ import { EMPTY_PROFILE } from "./features/profile/useProfile";
 import type { ProfileDto } from "./shared/types";
 import { Starfield } from "./shared/Starfield";
 import { GlassSurface } from "./shared/GlassSurface";
+import { KineticText } from "./shared/KineticText";
 import { WindowControls } from "./features/shell/WindowControls";
 import { RubberNavigation } from "./shared/RubberNavigation";
 import { getTheme } from "./shared/theme";
 import { applyTheme } from "./shared/themeDom";
 
-type View = "chat" | "brain" | "memory" | "preferences";
+const AppsPanel = lazy(() => import("./features/integrations/AppsPanel"));
+type View = "chat" | "brain" | "memory" | "preferences" | "apps";
 const NAV = [
   { id: "chat", label: "Conversa", icon: "chat" },
   { id: "memory", label: "Memória", icon: "memory" },
+  { id: "apps", label: "Apps", icon: "apps" },
   { id: "preferences", label: "Configurações", icon: "settings" },
   { id: "brain", label: "Brain", icon: "brain" },
 ] as const;
@@ -42,9 +46,15 @@ export function App(): React.ReactElement {
   const [brain, setBrain] = useState<BrainGetDto | null>(null);
   const [approval, setApproval] = useState<ApprovalDto | null>(null);
   const [preferences, setPreferences] = useState<UiPreferencesDto | null>(null);
-  const [memory, setMemory] = useState<MemoryListDto | null>(null);
+  const [memory, setMemory] = useState<MemoryProfileDto | null>(null);
+  // Rascunho do perfil vive aqui (não no módulo): sobrevive à troca de aba, é por sessão e
+  // morre com a app — wipe/esquecer nunca o ressuscita.
+  const [memoryDraft, setMemoryDraft] = useState<{ sessionId: string } & MemoryProfileDraft | null>(null);
   const [draft, setDraft] = useState("");
   const [shellError, setShellError] = useState("");
+  // Resultado final de uma troca de cérebro que demorou mais que a resposta do comando:
+  // o backend publica o estado em `brain.updated` e é aqui que ele fica visível.
+  const [brainNotice, setBrainNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [policyBusy, setPolicyBusy] = useState(false);
   const [opened, setOpened] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -64,6 +74,11 @@ export function App(): React.ReactElement {
   const [fontReady, setFontReady] = useState(!document.fonts);
   const notifiedSession = useRef("");
   const sessionId = session.session?.session_id ?? "";
+  // Identidade estável: o painel depende disto em useCallback; sem isto, cada render recria a
+  // carga do perfil e transforma o `memory.profile.get` em loop de IPC.
+  const onMemoryDraftChange = useCallback((next: MemoryProfileDraft | null) => {
+    setMemoryDraft(next ? { ...next, sessionId } : null);
+  }, [sessionId]);
   const themeId = getTheme(preferences?.theme).id;
   // The approved intro remains celestial; apply the saved work theme when the shell mounts.
   useLayoutEffect(() => { applyTheme(opened ? themeId : "celestial"); }, [themeId, opened]);
@@ -100,6 +115,34 @@ export function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
+    const api = getBridgeApi();
+    if (!api) return;
+    const unsubscribe = api.onEvent((event) => {
+      if (event.type !== "brain.updated") return;
+      const payload = event.payload as unknown as BrainStateDto;
+      // O estado publicado é autoritativo: aplica-o sem esperar outra navegação/consulta.
+      setBrain(previous => (previous ? { ...previous, current: { ...payload } } : previous));
+      if (payload.ok === false) {
+        setBrainNotice({
+          text: `O cérebro não mudou: ${payload.error?.message ?? "a aplicação falhou"}`
+            + (payload.error?.stage ? ` (${payload.error.stage})` : ""),
+          error: true,
+        });
+      } else if (payload.persisted === false) {
+        const suffix = payload.error?.message ? ` ${payload.error.message}` : "";
+        setBrainNotice({
+          text: `Cérebro aplicado nesta sessão, mas a seleção não foi gravada; ela pode não voltar no próximo arranque.${suffix}`,
+          error: true,
+        });
+      } else {
+        setBrainNotice(null);
+      }
+      setRevision(r => r + 1);
+    });
+    return () => unsubscribe();
+  }, [session.sessionVersion]);
+
+  useEffect(() => {
     if (session.status !== "ready") return;
     let alive = true;
     const available = Object.values(session.session?.capabilities ?? {}).some(Boolean);
@@ -120,13 +163,14 @@ export function App(): React.ReactElement {
   useEffect(() => {
     let alive = true;
     setMemory(null);
+    setMemoryDraft(current => (current && current.sessionId === sessionId ? current : null));
     if (session.status === "ready") {
       const pending = session.session?.capabilities.memory
-        ? sendCommand<MemoryListDto>("memory.list", {}) : Promise.resolve({ enabled: false, items: [] });
+        ? sendCommand<MemoryProfileDto>("memory.profile.get", {}) : Promise.resolve<MemoryProfileDto>({ enabled: false, auto_learn: false, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "disabled" });
       pending.then(data => {
         if (alive) { setMemory(data); setMemorySession(sessionId); }
       }).catch(() => { if (alive) {
-        setMemory({ enabled: false, items: [] });
+        setMemory({ enabled: false, auto_learn: false, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "disabled" });
         if (!openedRef.current) setStartupError("Não foi possível carregar a memória local.");
         else setShellError("Não foi possível atualizar a memória local. Abra Memória para verificar.");
       } });
@@ -157,11 +201,6 @@ export function App(): React.ReactElement {
   const profile: ProfileDto = preferences?.profile
     ? { name: preferences.profile.name ?? "", avatar_data_url: preferences.profile.avatar_data_url ?? "" }
     : EMPTY_PROFILE;
-  // O modelo exibido é sempre o real. Vazio significa padrão/não identificado — nunca um nome inventado.
-  const modelLabel = brain?.current.model?.trim() || "Modelo padrão";
-  const modelTitle = brain?.current.model?.trim()
-    ? `Modelo em uso: ${brain.current.model}`
-    : "Nenhum modelo identificado; o provedor usará o padrão dele.";
   const saveProfile = async (next: ProfileDto): Promise<string | null> => {
     setProfileBusy(true);
     try {
@@ -211,12 +250,20 @@ export function App(): React.ReactElement {
   return (
     <div className="lunmi-shell lunmi-shell-enter">
       <Starfield themeId={themeId} />
-      <WindowControls />
       <aside className="lunmi-sidebar" aria-label="Navegação principal" data-collapsed={navCollapsed}>
-        <GlassSurface radius={18} className="lunmi-sidebar-glass">
-          <div className="lunmi-sidebar-inner">
         <div className="lunmi-brand">
-          <BrandMark size={30} /><span className="lunmi-brand-word">LUNMI</span>
+          {/* Canto superior esquerdo: o avatar do usuário ocupa o lugar da logo. É o único
+              controle ali e abre o modal do perfil. */}
+          <button type="button" className="lunmi-profile-mini" data-testid="profile-button"
+            aria-label={profileName ? `Perfil de ${profileName}` : "Seu perfil"}
+            title={profileName || "Seu perfil"} onClick={() => setProfileOpen(true)}>
+            {profile.avatar_data_url
+              ? <img className="lunmi-profile-thumb" src={profile.avatar_data_url} alt="" />
+              : <span className="lunmi-profile-fallback" aria-hidden="true"><Icon name="user" size={18} /></span>}
+          </button>
+        </div>
+        {/* Controle de recolher/expandir imediatamente acima da casca, fora do vidro — como o painel direito. */}
+        <div className="lunmi-nav-bar">
           <button type="button" className="lunmi-nav-collapse" data-testid="nav-collapse-toggle"
             aria-expanded={!navCollapsed} aria-label={navCollapsed ? "Expandir navegação" : "Recolher navegação"}
             title={navCollapsed ? "Expandir navegação" : "Recolher navegação"}
@@ -224,40 +271,28 @@ export function App(): React.ReactElement {
             <Icon name={navCollapsed ? "expand" : "collapse"} size={20} />
           </button>
         </div>
+        <GlassSurface radius={18} className="lunmi-sidebar-glass">
+          <div className="lunmi-sidebar-inner">
         <RubberNavigation items={NAV} value={view} disabled={modelBusy} onChange={next => setView(next as View)} />
-        <div className="lunmi-sidebar-foot">
-          <button type="button" className="lunmi-profile-mini" data-testid="profile-button"
-            aria-label={profileName ? `Perfil de ${profileName}` : "Seu perfil"}
-            title={profileName || "Seu perfil"} onClick={() => setProfileOpen(true)}>
-            {profile.avatar_data_url
-              ? <img className="lunmi-profile-thumb" src={profile.avatar_data_url} alt="" />
-              : <span className="lunmi-profile-fallback" aria-hidden="true"><Icon name="user" size={16} /></span>}
-            <span className="lunmi-nav-text lunmi-profile-name">{profileName || "Seu perfil"}</span>
-          </button>
-        </div>
           </div>
         </GlassSurface>
       </aside>
       <div className="lunmi-shell-main">
-        <header className="lunmi-topbar">
-          <label className="lunmi-toggle lunmi-topbar-left" title="Vale para a próxima tarefa. Ações sensíveis continuam exigindo confirmação.">
-            <input type="checkbox" aria-label="Autoaprovação" data-testid="header-auto-approve" checked={approval?.auto_approve ?? false}
-              disabled={!approval || policyBusy || modelBusy} onChange={e => void changePolicy(e.target.checked)} />
-            <span className="lunmi-toggle-track" aria-hidden="true" /><span>Autoaprovação</span>
-          </label>
-          <span className="lunmi-model-capsule" data-testid="brain-pill" title={modelTitle}>
-            <i className="lunmi-capsule-dot" aria-hidden="true" />
-            <span className="lunmi-capsule-brand">LUNMI</span>
-            <span className="lunmi-capsule-sep" aria-hidden="true">•</span>
-            <span className="lunmi-capsule-model" data-testid="topbar-model">{modelLabel}</span>
-          </span>
-          <span className="lunmi-topbar-right"><SessionStatusChip status={session.status} /></span>
+        <header className="lunmi-topbar" data-rail={view === "chat" ? (railCollapsed ? "edge" : "open") : "none"}>
+          {/* Marca central: somente “Lunmi”, sem cápsula, com Kinetic Text (Magic UI): as letras
+              reagem ao ponteiro mudando de peso. Fica no meio, grande mas contida. */}
+          <KineticText text="Lunmi" className="lunmi-brand-mark" data-testid="brand-text" title="Lunmi" />
+          <WindowControls />
         </header>
         {session.status === "failed" && (
           <SessionFailureStrip failure={session.failure} errorMessage={session.errorMessage}
             onRestart={() => void session.restart()} />
         )}
         {shellError && <p role="alert" className="lunmi-shell-error">{shellError}</p>}
+        {brainNotice && (
+          <p role={brainNotice.error ? "alert" : "status"} className="lunmi-shell-error"
+            data-testid="brain-notice">{brainNotice.text}</p>
+        )}
         {view !== "chat" && chat.busy && <div className="lunmi-taskstrip">
           <span className="lunmi-taskstrip-text">{chat.confirmRequest || chat.inputRequest ? "A tarefa precisa da sua resposta." : chat.task?.progress || "Tarefa em andamento"}</span>
           <button type="button" onClick={() => setView("chat")}>Voltar à tarefa</button>
@@ -267,6 +302,7 @@ export function App(): React.ReactElement {
           <main className="lunmi-main">
             <div className="lunmi-chat-view" hidden={view !== "chat"}>
               <ChatPanel chat={chat} session={session.session} draft={draft} setDraft={setDraft} modelChanging={modelBusy}
+                autoApprove={{ ready: Boolean(approval), enabled: approval?.auto_approve ?? false, busy: policyBusy || modelBusy, onToggle: next => void changePolicy(next) }}
                 attachments={attachments.items}
                 attachmentPayload={() => attachments.items.map(item => ({ name: item.name, text: attachments.contents.get(item.id) ?? "", size_bytes: item.size }))}
                 onPickAttachment={() => void attachments.pick()} onRemoveAttachment={attachments.remove}
@@ -279,7 +315,12 @@ export function App(): React.ReactElement {
                   onProviderSettings={() => setView("brain")} />} />
             </div>
             {view === "brain" && <BrainPanel sendCommand={sendCommand} session={session.session} onConfigured={() => setRevision(r => r + 1)} />}
-            {view === "memory" && <MemoryPanel sendCommand={sendCommand} session={session.session} refreshToken={chat.memoryVersion} />}
+            {view === "apps" && <Suspense fallback={<p role="status">A carregar Apps…</p>}>
+              <AppsPanel sendCommand={sendCommand} session={session.status === "ready" ? session.session : null} />
+            </Suspense>}
+            {view === "memory" && <MemoryPanel sendCommand={sendCommand} session={session.session} refreshToken={chat.memoryVersion}
+              draft={memoryDraft && memoryDraft.sessionId === sessionId ? { text: memoryDraft.text, baseRevision: memoryDraft.baseRevision } : null}
+              onDraftChange={onMemoryDraftChange} />}
             {view === "preferences" && <PreferencesPanel sendCommand={sendCommand} session={session.session}
               onThemeChanged={theme => { setPreferences(current => current ? { ...current, theme } : current); setRevision(r => r + 1); }} />}
           </main>
@@ -293,8 +334,6 @@ export function App(): React.ReactElement {
             </aside>
           ) : (
           <aside className="lunmi-rail" aria-label="Contexto da conversa">
-            <GlassSurface radius={18} className="lunmi-rail-glass">
-            <div className="lunmi-rail-inner">
             <div className="lunmi-rail-bar">
               <span className="lunmi-rail-title">Contexto</span>
               <button type="button" className="lunmi-rail-collapse" data-testid="rail-collapse-toggle"
@@ -303,6 +342,8 @@ export function App(): React.ReactElement {
                 <Icon name="collapse" size={16} />
               </button>
             </div>
+            <GlassSurface radius={18} className="lunmi-rail-glass">
+            <div className="lunmi-rail-inner">
             <section className="lunmi-rail-section"><h2>Ações rápidas</h2><p className="lunmi-rail-empty">Preenchem a mensagem. Você decide quando enviar.</p>
               {(preferences?.actions ?? []).map((action, index) => <button className="lunmi-row" type="button" key={index}
                 disabled={Boolean(draft.trim())} title={draft.trim() ? "Termine ou limpe o rascunho antes de usar um atalho" : "Preencher mensagem"}
@@ -319,7 +360,7 @@ export function App(): React.ReactElement {
             </section>
             <section className="lunmi-rail-section"><h2>Resumo de memória</h2>
               {memory === null ? <p className="lunmi-rail-empty">Carregando memória…</p> : !memory.enabled ? <p className="lunmi-rail-empty">Memória desligada.</p>
-                : memory.items.length ? memory.items.slice(0, 4).map(item => <p className="lunmi-memory-item" key={item.id}><Icon name="memory" size={16} />{item.text}</p>)
+                : memory.text.trim() ? memory.text.split(/\n\s*\n/).filter(p => p.trim()).slice(0, 3).map((paragraph, index) => <p className="lunmi-memory-item" key={index}><Icon name="memory" size={16} />{paragraph.trim()}</p>)
                 : <p className="lunmi-rail-empty">Você controla o que a Lunmi lembra.</p>}
               <button className="lunmi-link" type="button" onClick={() => setView("memory")}>Gerenciar memória</button>
             </section>

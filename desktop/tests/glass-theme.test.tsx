@@ -107,7 +107,8 @@ describe("Red Velvet (lote C — só cores)", () => {
     applyTheme("red-velvet");
     expect(document.documentElement.dataset.theme).toBe("red-velvet");
     expect(document.documentElement.style.colorScheme).toBe("light");
-    expect(document.documentElement.style.getPropertyValue("--lunmi-bg-window")).toBe("#FFF8F6");
+    // O canvas do Red Velvet virou gradiente #FFF8F6→#FDEEEB; o token guarda o stop escuro (pior caso de contraste).
+    expect(document.documentElement.style.getPropertyValue("--lunmi-bg-window")).toBe("#FDEEEB");
     expect(document.documentElement.style.getPropertyValue("--lunmi-accent")).toBe("#800000");
     expect(document.documentElement.style.getPropertyValue("--lunmi-depth-raised")).toContain("rgba(130, 80, 75");
     applyTheme("celestial");
@@ -143,13 +144,19 @@ describe("Red Velvet (lote C — só cores)", () => {
     };
     (window as unknown as { lunmi: LunmiBridgeApi }).lunmi = api as unknown as LunmiBridgeApi;
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId("session-status").textContent).toBe("Ready"));
+    await screen.findByTestId("composer");
+    // Native Electron drag hit testing needs no-drag controls INSIDE the draggable header.
+    expect(screen.getByTestId("window-controls").closest(".lunmi-topbar")).not.toBeNull();
+    const brand = document.querySelector(".lunmi-brand");
+    expect(brand).not.toBeNull();
+    expect(brand!.closest(".lunmi-glass")).toBeNull();
     fireEvent.click(screen.getByTestId("nav-preferences"));
     const choice = await screen.findByTestId("theme-red-velvet");
     expect(choice.textContent).toContain("Red Velvet");
     fireEvent.click(choice);
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe("red-velvet"));
     expect(calls.some(call => call.type === "ui.preferences.set" && call.payload.theme === "red-velvet")).toBe(true);
-    expect(screen.getByTestId("session-status").textContent).toBe("Ready");
+    // A sessão continua saudável após a troca de tema (o compositor permanece montado).
+    expect(screen.getByTestId("composer")).toBeTruthy();
   });
 });

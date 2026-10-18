@@ -119,9 +119,14 @@ def main() -> None:
     enriched = json.loads(next(line for line in compact.user_prompt_construction(**fields).splitlines()
         if line.startswith(labels["control_item"])).split(":> ", 1)[1])
     assert enriched["observation"]["truncated"] and not enriched["observation"]["complete"]
-    assert len(enriched["elements"]) == 30
-    assert enriched["elements"][1]["context"]["id"] == "0"
-    assert enriched["elements"][1]["patterns"] == ["Invoke"]
+    columns = enriched["elements"]["columns"]
+    rows = [dict(zip(columns, row, strict=True)) for row in enriched["elements"]["rows"]]
+    assert columns[:3] == ["id", "name", "type"]
+    assert len(rows) == 30
+    assert rows[1]["parent"] == "0"
+    assert rows[1]["patterns"] == ["Invoke"]
+    assert enriched["selection"] == {"collected": 100, "sent": 30, "omitted": 70,
+                                     "reason": "ranked"}
     compact.uia_metadata = {}
     compact.uia_observation = {}
     for cls in (CompactHostPrompter, HostAgentPrompter):
@@ -146,16 +151,20 @@ def main() -> None:
 
     from app.computer.ufo_runtime import RuntimeDispatcher
 
+    operation_counter = 0
+
     class Command:
         def __init__(self, tool_type: str, tool_name: str) -> None:
+            nonlocal operation_counter
+            operation_counter += 1
             self.tool_type, self.tool_name = tool_type, tool_name
             self.parameters: dict[str, Any] = {}
-            self.call_id = "call"
+            self.call_id = f"call-{operation_counter}"
             self.namespace = "WindowsTools"
 
     class Reply:
         is_error = False
-        data: dict[str, Any] = {}
+        data: dict[str, Any] = {"verified": True}
         content = None
 
     class Computer:
@@ -202,8 +211,13 @@ def main() -> None:
 
     batch_runtime = BatchRuntime()
     dispatcher = RuntimeDispatcher(batch_runtime)
-    asyncio.run(dispatcher.execute_commands([Command("action", "click_input"),
-                                             Command("action", "set_edit_text")]))
+    # Independent verified filesystem operations do not require a UI transition between
+    # them; a bare click with unknown effect must no longer permit another mutation.
+    first_file = Command("action", "filesystem")
+    first_file.parameters = {"operation": "create_file", "path": "fixture-a.txt", "text": "a"}
+    second_file = Command("action", "filesystem")
+    second_file.parameters = {"operation": "create_file", "path": "fixture-b.txt", "text": "b"}
+    asyncio.run(dispatcher.execute_commands([first_file, second_file]))
     asyncio.run(dispatcher.execute_commands([Command("action", "list_tools"),
                                              Command("action", "")]))
     # Two real actions counted, the meta call and the empty name not.

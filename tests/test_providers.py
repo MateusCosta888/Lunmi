@@ -106,8 +106,11 @@ def test_app_brain_selection_validates_and_reports_corruption(
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ConfigurationError):
         settings_module.save_app_selection("unknown", "model")
-    with pytest.raises(ConfigurationError):
-        settings_module.save_app_selection("qoder", "")
+    # Provider-only selection is valid when it inherits the main model;
+    # Settings.validate still rejects a different provider without its own model.
+    settings_module.save_app_selection("qoder", "")
+    assert json.loads(settings_module.app_selection_path().read_text(encoding="utf-8")) == {
+        "provider": "qoder", "model": ""}
     settings_module.save_app_selection("qoder", "model")
     (tmp_path / ".local" / "app-brain.json").write_text('{"provider": 1}', encoding="utf-8")
     with pytest.raises(ConfigurationError, match="AppAgent"):

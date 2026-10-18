@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import time
 from pathlib import Path
 
 import httpx
@@ -346,7 +348,7 @@ def test_anthropic_payload() -> None:
         provider = AnthropicProvider(Settings(provider="anthropic", model="test-model", api_key="test-key"))
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["anthropic-version"] == "2023-06-01"
-            assert request.headers["Authorization"] == "Bearer test-key"
+            assert request.headers["x-api-key"] == "test-key"
             assert "system" in json.loads(request.content)
             return httpx.Response(200, json={"content": [{"type": "text", "text":
                 '{"supported":true,"application":"notepad","operation":"open","reason":""}'}],
@@ -580,11 +582,13 @@ def test_worker_receives_controller_identity_without_provider_credentials(tmp_pa
     monkeypatch.setattr(ufo_engine.UFOEngine, "_read", ready)
 
     async def scenario():
-        engine = ufo_engine.UFOEngine(Settings(logs_path=tmp_path))
+        engine = ufo_engine.UFOEngine(Settings(logs_path=tmp_path, state_root=tmp_path))
         try:
             await engine.start()
             assert captured["UFO_CONTROLLER_PID"] == str(ufo_engine.os.getpid())
             assert not {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"} & captured.keys()
+            # The worker searches the same application index the controller learns into.
+            assert captured["LUNMI_STATE_ROOT"] == str(tmp_path)
         finally:
             await engine.stop()
     asyncio.run(scenario())
@@ -680,7 +684,7 @@ def test_a_task_that_never_reached_inference_inherits_no_provider_timing(tmp_pat
         assert result.failure_kind == "CONFIGURATION"
         assert result.llm_calls == 0
         assert result.provider_calls == []
-        assert (result.provider_startup_ms, result.provider_wait_ms) == (0, 0)
+        assert (result.provider_startup_ms, result.provider_wait_ms) == (None, None)
         assert result.session_reused == 0
         await controller.close()
     asyncio.run(scenario())
@@ -1505,26 +1509,33 @@ def test_an_unverified_attempt_that_was_repeated_and_verified_is_not_a_false_suc
 
     # The same chat, after the collection fix: a *dispatched* action is not a claim. Enter
     # only dispatched the query, and the verified read of the result row is its
-    # postcondition being checked.
-    dispatched = [
-        {"operation": "set_edit_text", "verified": True, "handle": 1901472},
-        {"operation": "keyboard_input", "verified": False, "handle": 1901472,
-         "needs_postcondition": True},
-        {"operation": "uia_verify", "verified": True, "handle": 1901472},
-    ]
-    assert unresolved_evidence(dispatched) == []
+    # postcondition being checked — tied to the query written into this very field.
+    from app.computer.verification import issue_association
+    query = "Thriller"
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()
+    typed = {"operation": "set_edit_text", "verified": True, "handle": 1901472,
+             "id": "query-field", "runtime_id": [1, 4], "length": len(query),
+             "text_sha256": digest}
+    enter = {"operation": "keyboard_input", "verified": False, "handle": 1901472,
+             "id": "query-field", "runtime_id": [1, 4], "submitted": True,
+             "needs_postcondition": True}
+    result = {"operation": "uia_verify", "verified": True, "handle": 1901472,
+              "id": "result-row", "runtime_id": [2, 7], "property": "text",
+              "results_verified": True, "workflow": "spotify_search",
+              "query_length": len(query), "query_sha256": digest}
+    result["association"] = issue_association(result, digest)
+    assert unresolved_evidence([typed, enter, result]) == []
+
+    # A foreign read carrying only a forged boolean/marker cannot retire the Enter.
+    forged = {**result, "id": "other-row", "runtime_id": [3, 8], "association": "forged"}
+    assert unresolved_evidence([typed, enter, forged]) == [enter]
+    boolean_only = {key: value for key, value in result.items() if key != "association"}
+    assert unresolved_evidence([typed, enter, boolean_only]) == [enter]
 
     # A dispatch nobody ever read back stays unresolved, in this window or another one.
-    never_read = [
-        {"operation": "keyboard_input", "verified": False, "handle": 1901472,
-         "needs_postcondition": True},
-    ]
+    never_read = [enter]
     assert len(unresolved_evidence(never_read)) == 1
-    read_elsewhere = [
-        {"operation": "keyboard_input", "verified": False, "handle": 1901472,
-         "needs_postcondition": True},
-        {"operation": "uia_verify", "verified": True, "handle": 4242},
-    ]
+    read_elsewhere = [enter, {**result, "handle": 4242}]
     assert len(unresolved_evidence(read_elsewhere)) == 1
 
 
@@ -1659,6 +1670,140 @@ def test_batch_counting_ignores_observations_and_meta_calls() -> None:
     assert is_action(Command("action", "click_input"))
     assert not is_action(Command("action", "list_tools"))
     assert not is_action(Command("data_collection", "get_app_window_info"))
+
+
+def test_the_task_log_keeps_proof_shape_but_not_desktop_content(tmp_path: Path) -> None:
+    """`logs/tasks.jsonl` não recebe o que a tela ou os arquivos continham.
+
+    Antes, a evidência ia inteira para o log mesmo com LOG_INSTRUCTIONS=false: texto
+    esperado, títulos de janela, caminhos e listagens de pasta. O tipo de prova, os
+    números e as flags continuam no registro; o conteúdo só vai com o opt-in.
+    """
+    from app.core.controller import loggable
+
+    evidence = [
+        {"operation": "verify_window", "handle": 77, "verified": True, "title": "Diário — SECRET_TITLE",
+         "expected_text": "SECRET_TEXT", "control_type": "Document", "text_matches": ["SECRET_TEXT"]},
+        {"operation": "list", "path": r"C:\Users\Someone\SECRET_DIR", "verified": True,
+         "entries": [{"name": "SECRET_FILE.txt", "directory": False}]},
+        {"operation": "uia_verify", "id": "e4", "handle": 77, "runtime_id": [42, 7],
+         "property": "name", "observed": "SECRET_LABEL", "verified": True},
+        {"operation": "open_settings_page", "page": "Som", "uri": "ms-settings:sound",
+         "verified_by": "page_text", "verified": True},
+        {"operation": "select_application_window", "verified": True,
+         "window": {"root_name": "SECRET_APP.exe", "bound_by": "selection_tool",
+                    "window_info": {"handle": 77, "title": "SECRET_WIN_TITLE",
+                                    "class_name": "Chrome_WidgetWin_1", "process_id": 1234,
+                                    "process_name": "SECRET_PROC.exe"}}},
+    ]
+    approvals = [{"tool": "keyboard_input", "level": "unknown", "asked": True, "mode": "manual",
+                  "identifier": "e4", "reason": "tecla 'SECRET_KEYS {F5}' sem classificação de risco"}]
+
+    # Sentinelas sintéticas sob chaves que antes eram allowlisted só pelo nome:
+    sentinel_sample = {
+        "uri": "PRIVATE_SENTINEL_URI",
+        "source": "PRIVATE_SENTINEL_SOURCE",
+        "id": "PRIVATE_SENTINEL_ID",
+        "identifier": "PRIVATE_SENTINEL_IDENTIFIER",
+        "page": "PRIVATE_SENTINEL_PAGE",
+        "operation": "PRIVATE_SENTINEL_OPERATION",
+        "class": "PRIVATE_SENTINEL_CLASS",
+        "nested": {
+            "uri": "https://private.example/secret-token",
+            "id": "uia-2-15",
+            "DYNAMIC_SECRET_KEY": "PRIVATE_SENTINEL_VALUE",
+        },
+    }
+    sanitized_sentinel = loggable(sentinel_sample)
+    serialized_sentinel = json.dumps(sanitized_sentinel, ensure_ascii=False)
+    assert "PRIVATE_SENTINEL" not in serialized_sentinel
+    assert "secret-token" not in serialized_sentinel
+    assert "DYNAMIC_SECRET_KEY" not in serialized_sentinel
+    assert sanitized_sentinel["nested"]["id"] == "uia-2-15"
+
+    class Engine:
+        process = None
+        worker_ready = True
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        async def run_task(self, instruction, completion, confirm, *,
+                           approval_mode: str = "manual") -> dict:
+            return {"status": "SUCCESS", "evidence": evidence, "approvals": approvals}
+
+    def logged(log_instruction: bool) -> str:
+        logs = tmp_path / ("opt-in" if log_instruction else "default")
+        controller = TaskController(agent_settings(provider="codex", model="fixture-model",
+                                                   logs_path=logs, collect_metrics=False,
+                                                   log_instruction=log_instruction))
+        controller.brain = SilentBrain()  # type: ignore[assignment]
+        controller.engine = Engine()  # type: ignore[assignment]
+
+        async def scenario() -> None:
+            result = await controller.run("Abra o Diário e confira.")
+            # The result handed to the chat keeps everything; only the log is minimised.
+            assert result.evidence == evidence
+            await controller.close()
+        asyncio.run(scenario())
+        return (logs / "tasks.jsonl").read_text(encoding="utf-8")
+
+    text = logged(False)
+    assert "SECRET" not in text
+    row = json.loads(text)
+    first, listing, read, settings_ev, select_ev = row["evidence"]
+    assert (first["operation"], first["handle"], first["verified"]) == ("verify_window", 77, True)
+    assert first["control_type"] == "Document" and first["title"] == "[not stored]"
+    assert listing["entries"] == "[not stored] (1 items)"
+    assert read["runtime_id"] == [42, 7] and read["property"] == "name" and read["id"] == "e4"
+    assert settings_ev["page"] == "Som" and settings_ev["uri"] == "ms-settings:sound"
+    assert select_ev["window"]["bound_by"] == "selection_tool"
+    assert select_ev["window"]["root_name"] == "[not stored]"
+    assert select_ev["window"]["window_info"]["class_name"] == "Chrome_WidgetWin_1"
+    assert select_ev["window"]["window_info"]["title"] == "[not stored]"
+    assert row["approvals"][0]["tool"] == "keyboard_input"
+    assert row["approvals"][0]["identifier"] == "e4"
+    assert row["approvals"][0]["reason"] == "[not stored]"
+
+    opted_in = logged(True)
+    assert "SECRET_TEXT" in opted_in and "SECRET_DIR" in opted_in
+
+
+def test_only_closed_operation_diagnostics_reach_the_task_log(tmp_path: Path) -> None:
+    """The log keeps the failure reason, not the arguments that produced it."""
+    from app.core.controller import TaskResult
+
+    log = tmp_path / "logs"
+    controller = TaskController(agent_settings(provider="codex", model="fixture-model",
+                                               logs_path=log, collect_metrics=False))
+    result = TaskResult(
+        status="FAILED",
+        message="",
+        operation_states=[
+            {"operation_id": "op-" + "a" * 32, "state": "failed_no_effect", "verified": False,
+             "tool": "filesystem", "category": "read_only",
+             "failure_reason": "read_only_exception", "path": "PRIVATE_SENTINEL_PATH"},
+            {"operation_id": "op-" + "b" * 32, "state": "uncertain", "verified": False,
+             "tool": "PRIVATE_SENTINEL_TOOL", "category": "mutation",
+             "failure_reason": "PRIVATE_SENTINEL_REASON"},
+        ],
+    )
+    controller._record(result, "Fixture", attachment_turn=True)
+    text = (log / "tasks.jsonl").read_text(encoding="utf-8")
+    row = json.loads(text)
+    assert row["operation_states"][0] == {
+        "operation_id": "op-" + "a" * 32, "state": "failed_no_effect", "verified": False,
+        "tool": "filesystem", "category": "read_only",
+        "failure_reason": "read_only_exception",
+    }
+    assert row["operation_states"][1] == {
+        "operation_id": "op-" + "b" * 32, "state": "uncertain", "verified": False,
+        "category": "mutation",
+    }
+    assert "PRIVATE_SENTINEL" not in text
 
 
 def test_fase_3_measurements_reach_the_task_record(tmp_path: Path) -> None:
@@ -1993,4 +2138,215 @@ def test_cold_and_warm_starts_are_never_mixed(tmp_path: Path) -> None:
         assert warm.cold_start is False
         assert cold.cold_start is True
         await controller.close()
+    asyncio.run(scenario())
+
+
+class _DecisionBrain:
+    """Tool decision after a scripted delay; no provider and no network."""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+
+    async def complete(self, messages: list[dict]) -> object:
+        from app.llm import Completion
+        await asyncio.sleep(self.delay)
+        return Completion(json.dumps({"kind": "tool", "operation": {
+            "name": "filesystem",
+            "args": {"operation": "list", "path": "synthetic"}}, "finish": True}))
+
+    async def close(self) -> None:
+        pass
+
+
+class _AnswerBrain:
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+
+    async def complete(self, messages: list[dict]) -> object:
+        from app.llm import Completion
+        await asyncio.sleep(self.delay)
+        return Completion("Resposta sintética de conversa.")
+
+    async def close(self) -> None:
+        pass
+
+
+def _deadline_settings(tmp_path: Path, timeout: float) -> Settings:
+    return agent_settings(provider="custom", model="synthetic", api_key="synthetic",
+                          base_url="http://127.0.0.1:1/v1", prewarm=False,
+                          app_index=False, app_search=False, collect_metrics=False,
+                          timeout_seconds=timeout, logs_path=tmp_path / "logs",
+                          output_path=tmp_path / "output", state_root=tmp_path / "state")
+
+
+def _deadline_controller(settings: Settings, tmp_path: Path) -> TaskController:
+    from app.memory import MemoryManager
+    memory = MemoryManager(tmp_path / "memory.sqlite3")
+    memory.set_options(enabled=False, episodes=False, history=False, proposals=False)
+    return TaskController(settings, memory=memory)
+
+
+def test_the_warm_task_deadline_is_not_restarted_between_decision_and_execution(tmp_path: Path) -> None:
+    """.65 s of decision + .65 s of worker under a 1 s budget is a TIMEOUT near 1 s.
+
+    The historical defect opened a second full timeout for the execution phase, so the
+    same scripted task reported SUCCESS at ~1.3 s. The allowance here is zero because
+    the worker is already warm.
+    """
+    class SlowEngine:
+        worker_ready, process, host_pids = True, None, set()
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        async def run_task(self, *args: object, **kwargs: object) -> dict:
+            await asyncio.sleep(.65)
+            return {"status": "SUCCESS", "message": "SYNTHETIC", "actions": 1,
+                    "steps": 1, "evidence": [{"operation": "list", "verified": True}]}
+
+    async def scenario() -> None:
+        settings = _deadline_settings(tmp_path, 1)
+        controller = _deadline_controller(settings, tmp_path)
+        controller.brain = _DecisionBrain(.65)  # type: ignore[assignment]
+        controller.engine = SlowEngine()  # type: ignore[assignment]
+        try:
+            started = time.monotonic()
+            result = await controller.run("Lista a pasta sintética.", automatic=True)
+            elapsed = time.monotonic() - started
+        finally:
+            await controller.close()
+        assert result.status == "FAILED"
+        assert result.failure_kind == "TIMEOUT"
+        assert elapsed < 1.25, elapsed
+
+    asyncio.run(scenario())
+
+
+def test_the_cold_start_allowance_is_granted_once_and_never_reapplied(tmp_path: Path) -> None:
+    """A cold worker gets its boot allowance once; a later phase does not get it again."""
+    def engine(boot: float, work: float) -> object:
+        class ColdEngine:
+            worker_ready, process, host_pids = False, None, set()
+
+            async def start(self) -> None:
+                await asyncio.sleep(boot)
+
+            async def stop(self) -> None:
+                pass
+
+            async def run_task(self, *args: object, **kwargs: object) -> dict:
+                await asyncio.sleep(work)
+                return {"status": "SUCCESS", "message": "SYNTHETIC", "actions": 1,
+                        "steps": 1, "evidence": [{"operation": "list", "verified": True}]}
+        return ColdEngine()
+
+    async def scenario() -> None:
+        # timeout 1 s + allowance 1 s = 2 s for the whole task. The boot (1.3 s) is
+        # larger than the task budget and is still paid, but only once.
+        settings = _deadline_settings(tmp_path, 1)
+        controller = _deadline_controller(settings, tmp_path)
+        controller.brain = _DecisionBrain(0)  # type: ignore[assignment]
+        controller.engine = engine(boot=1.3, work=.3)  # type: ignore[assignment]
+        try:
+            result = await controller.run("Lista a pasta sintética.", automatic=True)
+        finally:
+            await controller.close()
+        assert result.cold_start is True
+        assert result.status == "SUCCESS", (result.status, result.message)
+
+        # The same allowance would be enough for 1.3 + .9 s if it were applied again.
+        controller = _deadline_controller(settings, tmp_path)
+        controller.brain = _DecisionBrain(0)  # type: ignore[assignment]
+        controller.engine = engine(boot=1.3, work=.9)  # type: ignore[assignment]
+        try:
+            result = await controller.run("Lista a pasta sintética.", automatic=True)
+        finally:
+            await controller.close()
+        assert result.status == "FAILED"
+        assert result.failure_kind == "TIMEOUT"
+
+    asyncio.run(scenario())
+
+
+def test_pure_conversation_starts_no_worker_and_gets_no_boot_allowance(tmp_path: Path) -> None:
+    class IdleEngine:
+        worker_ready, process, host_pids = False, None, set()
+        starts = 0
+
+        async def start(self) -> None:
+            self.starts += 1
+
+        async def stop(self) -> None:
+            pass
+
+    async def scenario() -> None:
+        settings = _deadline_settings(tmp_path, 1)
+        answer = IdleEngine()
+        controller = _deadline_controller(settings, tmp_path)
+        controller.brain = _AnswerBrain(.65)  # type: ignore[assignment]
+        controller.engine = answer  # type: ignore[assignment]
+        try:
+            result = await controller.run("Como se chama a capital de Portugal?", conversation=True)
+        finally:
+            await controller.close()
+        assert result.status == "SUCCESS"
+        assert result.scope == "conversation"
+        assert answer.starts == 0
+
+        # A conversation slower than the task budget is a timeout even though a cold
+        # worker exists: the boot tolerance belongs to a boot this task never asks for.
+        slow = IdleEngine()
+        controller = _deadline_controller(settings, tmp_path)
+        controller.brain = _AnswerBrain(1.2)  # type: ignore[assignment]
+        controller.engine = slow  # type: ignore[assignment]
+        try:
+            result = await controller.run("Como se chama a capital de Portugal?", conversation=True)
+        finally:
+            await controller.close()
+        assert result.status == "FAILED" and result.failure_kind == "TIMEOUT"
+        assert slow.starts == 0
+
+    asyncio.run(scenario())
+
+
+def test_a_late_reply_cannot_finish_after_the_deadline(tmp_path: Path) -> None:
+    """A transport that swallows cancellation and returns late is not a completion."""
+    class LateBrain:
+        async def complete(self, messages: list[dict]) -> object:
+            from app.llm import Completion
+            try:
+                await asyncio.sleep(1.5)
+            except asyncio.CancelledError:
+                await asyncio.sleep(.01)   # buffered reply during shutdown
+            return Completion('Resposta sintética tardia.')
+
+        async def close(self) -> None:
+            pass
+
+    class NeverStartedEngine:
+        worker_ready, process, host_pids = False, None, set()
+
+        async def start(self) -> None:
+            raise AssertionError("uma resposta de conversa não inicia o worker")
+
+        async def stop(self) -> None:
+            pass
+
+    async def scenario() -> None:
+        settings = _deadline_settings(tmp_path, 1)
+        controller = _deadline_controller(settings, tmp_path)
+        controller.brain = LateBrain()  # type: ignore[assignment]
+        controller.engine = NeverStartedEngine()  # type: ignore[assignment]
+        try:
+            started = time.monotonic()
+            result = await controller.run("Explica uma estrela.", automatic=True)
+        finally:
+            await controller.close()
+        assert result.status != "SUCCESS"
+        assert result.failure_kind == "TIMEOUT"
+        assert time.monotonic() - started < 1.3
+
     asyncio.run(scenario())

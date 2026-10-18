@@ -22,6 +22,7 @@ function setup({ fixed = false, unavailable = false, defer = false } = {}) {
         current = { ...current, model: payload.model as string }; return current;
       }
       if (type === "memory.list") return { enabled: true, items: [] };
+      if (type === "memory.profile.get") return { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" };
       if (type === "ui.preferences.get") return { scale_pct: 200, actions: [] };
       if (type === "approval.get") return { auto_approve: false };
       return {};
@@ -65,7 +66,12 @@ it("bloqueia envio durante troca, permite rascunho e mantém modelo após falha"
   fireEvent.click(screen.getByTestId("composer-model"));
   fireEvent.click(await screen.findByRole("option", { name: "Fast" }));
   expect((screen.getByTestId("send-task") as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByTestId("header-auto-approve") as HTMLInputElement).disabled).toBe(true);
+  const autoApprove = screen.getByTestId("header-auto-approve") as HTMLButtonElement;
+  expect(autoApprove.closest(".lunmi-composer-surface")).not.toBeNull();
+  expect(autoApprove.tagName).toBe("BUTTON");
+  expect(autoApprove.type).toBe("button");
+  expect(autoApprove.getAttribute("aria-pressed")).toBe("false");
+  expect(autoApprove.disabled).toBe(true);
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "Novo rascunho" } });
   fireEvent.keyDown(screen.getByTestId("composer"), { key: "Enter" });
   expect(fake.api.sendCommand.mock.calls.some(([type]) => type === "chat.send")).toBe(false);

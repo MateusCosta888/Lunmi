@@ -8,6 +8,8 @@ export const MAX_IMPORT_BYTES = 4 * 1024 * 1024;
 export const MAX_LINE_BYTES = 5 * 1024 * 1024;
 export const MAX_CHAT_TEXT_CHARS = 8000;
 export const MAX_MEMORY_TEXT_CHARS = 800;
+/** Teto do documento de perfil livre (`memory.profile.*`), contado sobre o texto real. */
+export const MAX_PROFILE_CHARS = 8000;
 export const MAX_ID_CHARS = 128;
 export const MAX_TYPE_CHARS = 64;
 export const MAX_HOST_PIDS = 64;
@@ -35,6 +37,12 @@ export const TYPE_PATTERN = /^[a-z][a-z0-9_.]*$/;
 
 export const COMMAND_TYPES = [
   "session.hello",
+  "integrations.get",
+  "integrations.connect",
+  "integrations.cancel",
+  "integrations.select",
+  "integrations.disconnect",
+
   "chat.send",
   "task.cancel",
   "task.confirm",
@@ -61,6 +69,9 @@ export const COMMAND_TYPES = [
   "memory.wipe",
   "memory.options.get",
   "memory.options.set",
+  "memory.profile.get",
+  "memory.profile.save",
+  "memory.profile.undo",
   "ui.preferences.get",
   "ui.preferences.set",
   "app.shutdown",
@@ -72,6 +83,15 @@ export const RESPONSE_TYPES = ["command.result", "command.error"] as const;
 export type ResponseType = (typeof RESPONSE_TYPES)[number];
 
 export const EVENT_TYPES = [
+  "integrations.changed",
+  "response.started",
+  "response.text.delta",
+  "response.text.stable",
+  "operation.started",
+  "operation.finished",
+  "response.completed",
+  "response.error",
+  "response.cancelled",
   "session.ready",
   "chat.message",
   "task.started",
@@ -89,6 +109,9 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number];
 
 export interface Capabilities {
+  integrations?: boolean;
+  /** Chat único: só anunciado quando o backend valida resposta e ferramentas no mesmo fluxo. */
+  auto?: boolean;
   converse: boolean;
   execute: boolean;
   memory: boolean;
@@ -109,6 +132,7 @@ export interface ProtocolLimits {
   max_import_bytes: number;
   max_chat_text_chars: number;
   max_memory_text_chars?: number;
+  max_profile_chars?: number;
   max_id_chars?: number;
   max_type_chars?: number;
   max_host_pids?: number;

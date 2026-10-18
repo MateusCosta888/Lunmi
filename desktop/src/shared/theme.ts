@@ -40,7 +40,14 @@ export interface ThemeDefinition {
   description: string;
   mode: "dark" | "light";
   colors: Palette;
-  depth: { raised: string; inset: string; control: string; pressed: string; rim: string; spotlight: string; skyOpacity: string };
+  depth: {
+    raised: string; inset: string; control: string; pressed: string; rim: string; spotlight: string; skyOpacity: string;
+    canvas: string; glassSurface: string; glassEdge: string; glassLight: string; glassShadow: string; readyDot: string;
+    /** Opacidade da camada de refração do vidro (warp do pacote) — reflexo real do fundo. */
+    glassRefraction: string;
+    /** Triplet "R, G, B" do brilho do mecanismo bento (spotlight/contorno/onda). */
+    glow: string;
+  };
 }
 
 export const THEMES = {
@@ -52,43 +59,69 @@ export const THEMES = {
       inset: "inset 4px 4px 10px #00000080, inset -3px -3px 8px #24334a40",
       control: "3px 3px 8px #00000080, -2px -2px 7px #26365045",
       pressed: "inset 2px 2px 5px #00000099, inset -2px -2px 5px #27385355",
-      rim: "#7183a030", spotlight: "#7dafff12", skyOpacity: "0.18",
+      rim: "#7183a030", spotlight: "#7dafff12", skyOpacity: "0.55",
+      canvas: "radial-gradient(560px 620px at 6% 42%, #12305540, transparent 70%), radial-gradient(500px 560px at 94% 58%, #0d245040, transparent 72%), linear-gradient(172deg, #071021 0%, #04080f 48%, #030508 100%)",
+      glassSurface: "linear-gradient(173deg, color-mix(in srgb, var(--lunmi-bg-user) 52%, transparent) 0%, color-mix(in srgb, var(--lunmi-bg-card) 26%, transparent) 46%, color-mix(in srgb, var(--lunmi-bg-window) 70%, transparent) 100%)",
+      glassEdge: "#7e93bb33",
+      glassLight: "inset 0 1px 0 #c8dbff1c, inset 0 -20px 34px -26px #000000e0",
+      glassShadow: "0 18px 36px -22px #000000e6, 0 6px 16px -10px #00000073",
+      readyDot: "#76CFA9",
+      glassRefraction: "0.8",
+      glow: "125, 175, 255",
     },
   },
   "soft-light": {
     id: "soft-light", label: "Claro suave", description: "Relevo acetinado e índigo", mode: "light",
     colors: {
-      bgWindow: "#E8EAF0", bgSidebar: "#E5E7ED", bgChat: "#E8EAF0", bgCard: "#E8EAF0",
-      bgCardSubtle: "#E0E2EB", bgUser: "#DDDFF1", bgInput: "#E8EAF0",
-      borderSubtle: "#C1C5D1", borderHairline: "#CDD0DB", borderOnUser: "#BEC2DE",
-      textPrimary: "#2E3040", textSecondary: "#505261", textMuted: "#606371", textMutedOnUser: "#56596C",
-      accent: "#5145CD", accentHover: "#4338B8", accentPressed: "#392E9C", onAccent: "#FFFFFF",
-      success: "#16654D", warning: "#85500D", error: "#B42342", onError: "#FFFFFF", disabled: "#727787", surfaceHover: "#D6DAED",
+      bgWindow: "#E8EDF5", bgSidebar: "#F3F6FB", bgChat: "#E8EDF5", bgCard: "#FFFFFF",
+      bgCardSubtle: "#EEF1F9", bgUser: "#E2E8F8", bgInput: "#FFFFFF",
+      borderSubtle: "#C4CDE2", borderHairline: "#D8DFEE", borderOnUser: "#BFC9E6",
+      textPrimary: "#0F172A", textSecondary: "#5E6B80", textMuted: "#5F6B7E", textMutedOnUser: "#586783",
+      accent: "#5F62EE", accentHover: "#5356E4", accentPressed: "#4A4DD8", onAccent: "#FFFFFF",
+      success: "#16654D", warning: "#85500D", error: "#B42342", onError: "#FFFFFF", disabled: "#727787", surfaceHover: "#DDE3F4",
     },
     depth: {
-      raised: "8px 8px 18px #a6afc373, -8px -8px 18px #fffffff2",
-      inset: "inset 3px 3px 7px #a6afc35c, inset -3px -3px 7px #ffffffe6",
-      control: "4px 4px 10px #a6afc366, -4px -4px 10px #fffffff2",
-      pressed: "inset 2px 2px 5px #a6afc359, inset -2px -2px 5px #ffffffd9",
-      rim: "#ffffffbf", spotlight: "#6366f112", skyOpacity: "0.12",
+      raised: "0 10px 25px -5px rgba(99, 102, 241, 0.08), -8px -8px 18px #fffffff2",
+      inset: "inset 3px 3px 7px rgba(99, 102, 241, 0.12), inset -3px -3px 7px #ffffffe6",
+      control: "4px 4px 10px rgba(99, 102, 241, 0.12), -4px -4px 10px #fffffff2",
+      pressed: "inset 2px 2px 5px rgba(99, 102, 241, 0.14), inset -2px -2px 5px #ffffffd9",
+      rim: "#ffffffd9", spotlight: "rgba(99, 102, 241, 0.10)", skyOpacity: "0.42",
+      canvas: "radial-gradient(560px 620px at 6% 42%, rgba(99, 102, 241, 0.10), transparent 70%), radial-gradient(500px 560px at 94% 58%, rgba(99, 102, 241, 0.08), transparent 72%), linear-gradient(170deg, #F1F4FA 0%, #E8EDF5 100%)",
+      // Light themes: a slightly more transparent panel plus a tinted 1px edge and a real specular
+      // highlight make the liquid glass legible on a pale backdrop (warp + blur of the real cosmos).
+      glassSurface: "linear-gradient(173deg, color-mix(in srgb, var(--lunmi-bg-card) 90%, transparent) 0%, color-mix(in srgb, var(--lunmi-bg-card) 82%, transparent) 46%, color-mix(in srgb, var(--lunmi-bg-card) 88%, transparent) 100%)",
+      glassEdge: "#AEB4E8",
+      glassLight: "inset 0 1px 0 #ffffff, inset 1px 0 0 #ffffffb3, inset 0 -1px 0 rgba(95, 98, 238, 0.22), inset 0 -16px 28px -22px rgba(95, 98, 238, 0.30)",
+      glassShadow: "0 18px 36px -22px rgba(95, 98, 238, 0.36), 0 4px 12px -8px rgba(24, 30, 66, 0.12)",
+      readyDot: "#10B981",
+      glassRefraction: "0.68",
+      glow: "95, 98, 238",
     },
   },
   "red-velvet": {
     id: "red-velvet", label: "Red Velvet", description: "Creme quente, maroon e rosa", mode: "light",
     colors: {
-      bgWindow: "#FFF8F6", bgSidebar: "#FFF0EE", bgChat: "#FFF8F6", bgCard: "#FFF8F6",
-      bgCardSubtle: "#FFE9E6", bgUser: "#F7DDD8", bgInput: "#FFF8F6",
-      borderSubtle: "#E2BFB9", borderHairline: "#FDE2DE", borderOnUser: "#E8C6C0",
-      textPrimary: "#261816", textSecondary: "#746561", textMuted: "#746662", textMutedOnUser: "#6E5F5C",
-      accent: "#800000", accentHover: "#961B1B", accentPressed: "#6B0000", onAccent: "#FFFFFF",
-      success: "#16654D", warning: "#85500D", error: "#BA1A1A", onError: "#FFFFFF", disabled: "#8A7A76", surfaceHover: "#F6DAD4",
+      bgWindow: "#FDEEEB", bgSidebar: "#FFF0EE", bgChat: "#FFF8F6", bgCard: "#FFFFFF",
+      bgCardSubtle: "#FFF0EE", bgUser: "#F7DDD8", bgInput: "#FFFFFF",
+      borderSubtle: "#F1D6D2", borderHairline: "#F7E4E0", borderOnUser: "#E9C9C4",
+      textPrimary: "#1C0F0E", textSecondary: "#7A5C58", textMuted: "#746662", textMutedOnUser: "#6E5F5C",
+      accent: "#800000", accentHover: "#9E2A2B", accentPressed: "#6E0B14", onAccent: "#FFFFFF",
+      success: "#16654D", warning: "#85500D", error: "#BA1A1A", onError: "#FFFFFF", disabled: "#8A7A76", surfaceHover: "#F8DED9",
     },
     depth: {
       raised: "8px 8px 18px rgba(130, 80, 75, 0.28), -8px -8px 18px rgba(255, 255, 255, 0.95)",
       inset: "inset 3px 3px 7px rgba(130, 80, 75, 0.22), inset -3px -3px 7px rgba(255, 255, 255, 0.90)",
       control: "4px 4px 10px rgba(130, 80, 75, 0.25), -4px -4px 10px rgba(255, 255, 255, 0.95)",
       pressed: "inset 2px 2px 5px rgba(130, 80, 75, 0.22), inset -2px -2px 5px rgba(255, 255, 255, 0.85)",
-      rim: "rgba(255, 255, 255, 0.75)", spotlight: "rgba(128, 0, 0, 0.07)", skyOpacity: "0.10",
+      rim: "#F1D6D2", spotlight: "rgba(128, 0, 0, 0.07)", skyOpacity: "0.42",
+      canvas: "radial-gradient(560px 620px at 6% 42%, rgba(128, 0, 0, 0.08), transparent 70%), radial-gradient(500px 560px at 94% 58%, rgba(158, 42, 43, 0.07), transparent 72%), linear-gradient(170deg, #FFF8F6 0%, #FDEEEB 100%)",
+      glassSurface: "linear-gradient(173deg, color-mix(in srgb, var(--lunmi-bg-card) 90%, transparent) 0%, color-mix(in srgb, var(--lunmi-bg-sidebar) 82%, transparent) 46%, color-mix(in srgb, var(--lunmi-bg-card-subtle) 88%, transparent) 100%)",
+      glassEdge: "#E0AAA3",
+      glassLight: "inset 0 1px 0 #ffffff, inset 1px 0 0 #ffffffb3, inset 0 -1px 0 rgba(128, 0, 0, 0.22), inset 0 -16px 28px -22px rgba(128, 0, 0, 0.28)",
+      glassShadow: "0 18px 34px -20px rgba(128, 0, 0, 0.32), 0 4px 12px -8px rgba(70, 20, 18, 0.14)",
+      readyDot: "#10B981",
+      glassRefraction: "0.68",
+      glow: "158, 42, 43",
     },
   },
 } satisfies Record<string, ThemeDefinition>;
@@ -148,7 +181,10 @@ export function contrastPairs(colors: Palette): readonly ContrastCheckPair[] {
   { fgLabel: "placeholder do campo", bgLabel: "campo de escrita", fg: colors.textMuted, bg: colors.bgInput, floor: TEXT_FLOOR },
   { fgLabel: "texto no campo", bgLabel: "campo de escrita", fg: colors.textPrimary, bg: colors.bgInput, floor: TEXT_FLOOR },
   { fgLabel: "texto selecionado", bgLabel: "marcação do campo", fg: colors.onAccent, bg: colors.accent, floor: TEXT_FLOOR },
-  { fgLabel: "rótulo da rota ativa", bgLabel: "sidebar", fg: colors.accent, bg: colors.bgSidebar, floor: TEXT_FLOOR },
+  { fgLabel: "rótulo da rota ativa", bgLabel: "preenchimento de acento", fg: colors.onAccent, bg: colors.accent, floor: TEXT_FLOOR },
+  { fgLabel: "rótulo da rota ativa (hover)", bgLabel: "preenchimento de acento", fg: colors.onAccent, bg: colors.accentHover, floor: TEXT_FLOOR },
+  { fgLabel: "rótulo da rota ativa (pressionado)", bgLabel: "preenchimento de acento", fg: colors.onAccent, bg: colors.accentPressed, floor: TEXT_FLOOR },
+  { fgLabel: "link em cartão", bgLabel: "cartão", fg: colors.accent, bg: colors.bgCard, floor: TEXT_FLOOR },
   { fgLabel: "seta de enviar", bgLabel: "botão azul", fg: colors.onAccent, bg: colors.accent, floor: GRAPHIC_FLOOR },
   { fgLabel: "sucesso", bgLabel: "cartão", fg: colors.success, bg: colors.bgCard, floor: TEXT_FLOOR },
   { fgLabel: "atenção", bgLabel: "cartão", fg: colors.warning, bg: colors.bgCard, floor: TEXT_FLOOR },

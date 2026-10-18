@@ -346,7 +346,6 @@ _INFERENCE_CAPABILITIES = (
     Capability.SYSTEM_PROMPTS,
     Capability.STRUCTURED_OUTPUT,
     Capability.USAGE,
-    Capability.SESSIONS,
     Capability.CANCELLATION,
 )
 
@@ -399,7 +398,7 @@ CLI_SPECS: dict[str, CliSpec] = {
         # NOT_VERIFIED on every task, while the low-effort model completed real
         # tasks. Keep that as the offered default; the user may pick any model.
         preferred_model="gemini-3.8-flash-low",
-        capabilities=_capabilities(Capability.MODEL_DISCOVERY, max_safe_prompt_chars=28_000),
+        capabilities=_capabilities(Capability.MODEL_DISCOVERY, Capability.STREAMING, max_safe_prompt_chars=28_000),
     ),
     "qoder": CliSpec(
         id="qoder",

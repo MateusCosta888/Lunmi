@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { BrainGetDto, BrainStateDto, ModelListingDto } from "../../shared/types";
-import type { SendCommandFn } from "../../shared/ipc/client";
+import { getBridgeApi, toBridgeError, type SendCommandFn } from "../../shared/ipc/client";
 import { Icon } from "../../shared/ui";
 import { useVisualActivity } from "../../shared/useVisualActivity";
 
@@ -58,6 +58,26 @@ export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChan
     setCycle((value) => value + 1);
   };
 
+  // O resultado final de uma troca lenta chega por `brain.updated`: o aviso de "em andamento"
+  // precisa sair de cena sem esperar uma nova consulta, e a falha real precisa aparecer.
+  useEffect(() => {
+    const api = getBridgeApi();
+    if (!api) return;
+    return api.onEvent((event) => {
+      if (event.type !== "brain.updated") return;
+      const published = event.payload as unknown as BrainStateDto;
+      if (published.ok === false) {
+        setError(published.error?.message ?? "O cérebro não mudou.");
+        return;
+      }
+      if (published.persisted === false) {
+        setError("Modelo aplicado, mas a seleção não foi gravada; pode não voltar no próximo arranque.");
+        return;
+      }
+      setError("");
+    });
+  }, []);
+
   useEffect(() => { if (disabled) { hardClose(); setListing(null); } }, [disabled]);
   useEffect(() => {
     if (!open || !provider || disabled) return;
@@ -85,7 +105,13 @@ export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChan
       // Model-only payload preserves credentials, endpoint and the separate AppAgent selection.
       const state = await sendCommand<BrainStateDto>("brain.set", { model });
       onChanged(state); requestClose();
-    } catch { setError("Não foi possível trocar o modelo. A seleção anterior foi mantida."); }
+    } catch (error) {
+      // Sem promessa falsa: ou a troca ainda está em andamento (o commit continua no backend e o
+      // estado final sai em `brain.updated`), ou falhou de verdade.
+      setError(toBridgeError(error).code === "reconfiguring"
+        ? "A troca de modelo continua em andamento; o resultado aparece sozinho quando terminar."
+        : "Não foi possível confirmar a troca do modelo agora. O estado real aparece ao lado do seletor.");
+    }
     finally { onBusyChange(false); }
   };
   const models = listing?.ok ? listing.models.filter(model => `${model.label} ${model.id}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : [];

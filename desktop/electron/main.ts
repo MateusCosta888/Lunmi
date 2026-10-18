@@ -7,7 +7,7 @@
  *   Python, coletar os PIDs reais da árvore Electron (`app.getAppMetrics()`) e impedir que o
  *   renderer envie `session.hello` ou falsifique `host_pids`.
  */
-import { app, BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent, nativeTheme, screen, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent, nativeTheme, screen, session, shell } from "electron";
 import { CELESTIAL_COLORS, getTheme } from "../src/shared/theme";
 import * as fs from "fs";
 import * as path from "path";
@@ -92,11 +92,37 @@ function elapsedMs(): number {
   return Number((Number(process.hrtime.bigint() - bootStartHr) / 1_000_000).toFixed(2));
 }
 
-function getRepoRoot(): string {
+export function getRepoRoot(): string {
   if (process.env.LUNMI_REPO_ROOT) {
     return path.resolve(process.env.LUNMI_REPO_ROOT);
   }
+  // Renamed Electron reports isPackaged in dev; defaultApp still identifies a source launch.
+  if (app.isPackaged && !process.defaultApp) {
+    // Recursos somente-leitura do pacote: backend Python e `vendor/UFO` ficam fora do asar.
+    return path.join(process.resourcesPath, "app");
+  }
   return path.resolve(__dirname, "..", "..", "..");
+}
+
+/** Raiz dos recursos do pacote (onde vive o runtime Python privado), ou `null` em dev. */
+export function getResourcesRoot(): string | null {
+  return app.isPackaged && !process.defaultApp ? process.resourcesPath : null;
+}
+
+/**
+ * Raiz de dados graváveis por utilizador. No pacote fica em `LOCALAPPDATA\Lunmi`, fora dos
+ * recursos somente-leitura instalados: reinstalar ou desinstalar não apaga o que o testador
+ * criou, e nada escreve dentro de `resources/`.
+ */
+export function getUserDataRoot(): string {
+  if (process.env.LUNMI_USER_DATA) {
+    return path.resolve(process.env.LUNMI_USER_DATA);
+  }
+  if (app.isPackaged && !process.defaultApp) {
+    const base = process.env.LOCALAPPDATA || app.getPath("userData");
+    return path.join(base, "Lunmi");
+  }
+  return getRepoRoot();
 }
 
 function collectLiveElectronHostPids(): number[] {
@@ -601,15 +627,20 @@ if (isElectronMainRuntime()) {
     });
 
     const repoRoot = getRepoRoot();
+    const resourcesRoot = getResourcesRoot();
+    const userDataRoot = getUserDataRoot();
     const sandboxDir = process.env.LUNMI_SANDBOX_DIR || null;
     const handshakeOnly = process.env.LUNMI_HANDSHAKE_ONLY === "1";
 
-    // Preferências de tela do escopo em uso: sandbox quando houver, senão o estado do usuário.
-    prefsLocalDir = path.join(sandboxDir ?? repoRoot, ".local");
+    // Preferências de tela do escopo em uso: sandbox quando houver, senão o estado gravável
+    // do utilizador (LOCALAPPDATA\Lunmi no pacote), nunca a pasta instalada.
+    prefsLocalDir = path.join(sandboxDir ?? userDataRoot, ".local");
     appliedPrefs = readPreferencesFile(prefsLocalDir);
 
     backendSupervisor = new PythonBackendSupervisor({
       repoRoot,
+      resourcesRoot,
+      userDataRoot,
       clientVersion: app.getVersion(),
       sandboxDir,
       handshakeOnly,
@@ -617,6 +648,7 @@ if (isElectronMainRuntime()) {
       // persistência confinada ao sandbox. Sem esta variável o comportamento é o de produção.
       settingsInRam: process.env.LUNMI_SETTINGS_IN_RAM === "1",
       getHostPids: collectLiveElectronHostPids,
+      onIntegrationAuthOpen: (url) => shell.openExternal(url),
       onEvent: (envelope) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send("lunmi:event", envelope);

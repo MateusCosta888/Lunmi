@@ -10,8 +10,11 @@ import asyncio
 import time
 from typing import Any
 
+import hashlib
+
 from app.computer.controls import fold
 from app.computer.uia import UIAError
+from app.computer.verification import issue_association
 from app.computer.windows_tools import PreconditionMissing
 
 SEARCH_LABELS = frozenset({"o que voce quer ouvir", "what do you want to play",
@@ -73,8 +76,11 @@ def result_proof(engine: Any, observation: dict[str, Any], query: str) -> dict[s
         if proof['verified']:
             # Preserve the operation the provider answered: only a native `uia_verify` read
             # resolves the pending dispatch; workflow identity goes as metadata (B0 measured).
-            return {**proof, 'workflow': 'spotify_search', 'results_verified': True,
-                    'query_length': len(query)}
+            query_sha256 = hashlib.sha256(query.encode('utf-8')).hexdigest()
+            result = {**proof, 'workflow': 'spotify_search', 'results_verified': True,
+                      'query_length': len(query), 'query_sha256': query_sha256}
+            result['association'] = issue_association(result, query_sha256)
+            return result
     return None
 
 

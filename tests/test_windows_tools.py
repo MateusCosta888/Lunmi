@@ -74,6 +74,20 @@ def test_the_search_returns_a_target_the_launcher_accepts(tmp_path: Path,
     assert results["Meus Documentos"]["target"] == r"C:\Users\TestUser\Documents"
 
 
+def test_the_worker_searches_the_index_of_the_state_root_its_parent_names(
+        tmp_path: Path, monkeypatch) -> None:
+    """A sandboxed session's worker reads the sandbox index, never the machine's own."""
+    AppIndex(entries=ENTRIES).save(default_index_path(tmp_path))
+    monkeypatch.setenv("LUNMI_STATE_ROOT", str(tmp_path))
+
+    async def confirm(_: str) -> bool:
+        return True
+
+    tools = WindowsTools(object(), confirm)
+    names = {item["name"] for item in tools.find_application("Spotify", 5)["results"]}
+    assert "Spotify" in names
+
+
 def test_a_window_belonging_to_a_child_process_proves_the_application_opened(monkeypatch) -> None:
     """Steam's window is owned by `steamwebhelper.exe`, a child of the process started.
 

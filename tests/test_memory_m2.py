@@ -170,15 +170,17 @@ def test_controller_proposals_no_extra_llm_no_autoaccept(tmp_path: Path) -> None
             'memory_proposals': [{'kind': 'fact', 'text': 'uso editor Alpha'}]}))
         response = await controller.run('No meu trabalho uso editor Alpha', conversation=True)
         assert response.status == 'SUCCESS' and response.llm_calls == 1
-        assert controller.memory.proposals()[0].text == 'uso editor Alpha'
-        assert controller.memory.list() == []
+        # Aprendizagem automática: entra no perfil, sem proposta pendente nem aceite humano.
+        assert [item.text for item in controller.memory.list()] == ['uso editor Alpha']
+        assert controller.memory.proposals() == []
+        before = controller.memory.profile_snapshot()
         controller.brain.reply = json.dumps({'message': 'Olá', 'memory_proposals': [{'kind': 'fact', 'text': 'inventada'}]})
         await controller.run('Assunto sem esse fato', conversation=True)
-        assert len(controller.memory.proposals()) == 1
+        assert controller.memory.profile_snapshot().text == before.text
         controller.brain.reply = json.dumps({'message': 'Olá', 'memory_proposals': [{'kind': 'fact', 'text': 'senha: fixture'}]})
         response = await controller.run('Minha senha: fixture', conversation=True)
         assert response.status == 'SUCCESS' and response.memory_error
-        assert len(controller.memory.proposals()) == 1
+        assert controller.memory.profile_snapshot().text == before.text
         await controller.close()
     asyncio.run(scenario())
 

@@ -44,6 +44,8 @@ def test_constants_and_capabilities_contract() -> None:
     # Sessão sem handlers não anuncia falsas capacidades
     caps_minimal = protocol.default_capabilities()
     assert caps_minimal == {
+        "integrations": False,
+        "auto": False,
         "converse": False,
         "execute": False,
         "memory": False,
@@ -56,6 +58,8 @@ def test_constants_and_capabilities_contract() -> None:
     # Sessão com todos os comandos de protocolo habilita converse/execute/memory/brain/file_read
     caps_full = protocol.capabilities_for_commands(protocol.COMMAND_TYPES)
     assert caps_full == {
+        "integrations": True,
+        "auto": True,
         "converse": True,
         "execute": True,
         "memory": True,
@@ -95,6 +99,7 @@ def test_python_protocol_matches_shared_golden_v1() -> None:
     assert protocol.MAX_IMPORT_BYTES == golden["limits"]["max_import_bytes"]
     assert protocol.MAX_CHAT_TEXT_CHARS == golden["limits"]["max_chat_text_chars"]
     assert protocol.MAX_MEMORY_TEXT_CHARS == golden["limits"]["max_memory_text_chars"]
+    assert protocol.MAX_PROFILE_CHARS == golden["limits"]["max_profile_chars"]
     assert protocol.MAX_ID_CHARS == golden["limits"]["max_id_chars"]
     assert protocol.MAX_TYPE_CHARS == golden["limits"]["max_type_chars"]
     assert protocol.MAX_HOST_PIDS == golden["limits"]["max_host_pids"]
@@ -267,6 +272,8 @@ def test_server_hello_ready_honest_capabilities_unknown_command_and_shutdown_in_
     ready_events = [m for m in messages if m["type"] == "session.ready"]
     assert len(ready_events) == 1
     assert ready_events[0]["payload"]["capabilities"] == {
+        "integrations": False,
+        "auto": False,
         "converse": False,
         "execute": False,
         "memory": False,
@@ -296,6 +303,135 @@ def test_server_clean_eof_exits_zero() -> None:
     server = BridgeServer(stdin=stdin, stdout=stdout, stderr=stderr)
     assert server.run() == 0
     assert stdout.getvalue() == b""
+
+
+def test_a_slow_provider_command_never_blocks_cancel_or_confirm() -> None:
+    """`brain.probe` esperando o provider não segura Parar nem a resposta a uma confirmação.
+
+    Antes, todo comando de domínio era respondido na única thread que lê o stdin: um teste
+    de modelo (até 95 s) congelava `task.cancel` e `task.confirm` atrás dele.
+    """
+    import threading
+
+    provider_released = threading.Event()
+    answered: list[str] = []
+
+    def dispatcher(env: protocol.Envelope, _send) -> dict:
+        if env.type == "brain.probe":
+            assert provider_released.wait(5.0)
+        answered.append(env.type)
+        return {"ok": True}
+
+    stdout = io.BytesIO()
+    server = BridgeServer(stdin=io.BytesIO(), stdout=stdout, stderr=io.BytesIO(),
+                          dispatcher=dispatcher,
+                          supported_commands={"brain.probe", "task.cancel", "task.confirm"})
+
+    def send(identifier: str, kind: str, payload: dict) -> None:
+        server.handle_raw_line(protocol.encode_message(
+            {"v": 1, "id": identifier, "type": kind, "payload": payload}).encode("utf-8"))
+
+    send("h", "session.hello", {"client": "test"})
+    send("p", "brain.probe", {"consent": True})
+    send("c", "task.cancel", {})
+    send("k", "task.confirm", {"request_id": "cfm-1", "approved": False})
+    # Both answers left while the provider was still holding the probe.
+    assert answered == ["task.cancel", "task.confirm"]
+
+    provider_released.set()
+    assert server.wait_for_slow_commands(5.0)
+    messages = [json.loads(line) for line in stdout.getvalue().decode("utf-8").splitlines() if line.strip()]
+    results = [m["id"] for m in messages if m["type"] == "command.result"]
+    assert results == ["h", "c", "k", "p"]
+
+
+def test_slow_commands_enforce_hard_thread_admission_limit_and_preserve_inline_commands() -> None:
+    """MAX_SLOW_COMMANDS é aplicado na admissão: nunca cria mais threads que o teto."""
+    import threading
+    from app.bridge.server import MAX_SLOW_COMMANDS
+
+    entered = threading.Barrier(MAX_SLOW_COMMANDS + 1, timeout=5.0)
+    release = threading.Event()
+    inline_answered: list[str] = []
+
+    def dispatcher(env: protocol.Envelope, _send) -> dict:
+        if env.type == "brain.list":
+            entered.wait()
+            assert release.wait(5.0)
+            if env.id == "list-err":
+                raise RuntimeError("boom")
+            return {"ok": True}
+        inline_answered.append(env.id)
+        return {"ok": True}
+
+    stdout = io.BytesIO()
+    server = BridgeServer(
+        stdin=io.BytesIO(),
+        stdout=stdout,
+        stderr=io.BytesIO(),
+        dispatcher=dispatcher,
+        supported_commands={"brain.list", "task.cancel", "task.confirm"},
+    )
+
+    def send(identifier: str, kind: str, payload: dict) -> None:
+        server.handle_raw_line(
+            protocol.encode_message({"v": 1, "id": identifier, "type": kind, "payload": payload}).encode("utf-8")
+        )
+
+    send("h", "session.hello", {"client": "test"})
+    send("list-err", "brain.list", {})
+    for idx in range(1, MAX_SLOW_COMMANDS):
+        send(f"list-{idx}", "brain.list", {})
+
+    entered.wait()
+    with server._slow_lock:
+        assert len(server._slow_threads) == MAX_SLOW_COMMANDS
+
+    # Com os 4 slots ocupados, mais 4 brain.list são recusados imediatamente sem criar threads.
+    for extra in range(MAX_SLOW_COMMANDS, MAX_SLOW_COMMANDS * 2):
+        send(f"list-{extra}", "brain.list", {})
+
+    with server._slow_lock:
+        assert len(server._slow_threads) == MAX_SLOW_COMMANDS
+
+    # Enquanto saturado, task.cancel e task.confirm continuam respondendo inline.
+    send("cancel-sat", "task.cancel", {})
+    send("confirm-sat", "task.confirm", {"request_id": "cfm-sat", "approved": True})
+    assert inline_answered == ["cancel-sat", "confirm-sat"]
+
+    release.set()
+    assert server.wait_for_slow_commands(5.0)
+    with server._slow_lock:
+        assert len(server._slow_threads) == 0
+
+    # Após liberar os slots (inclusive o que lançou exceção), um novo brain.list volta a ser aceito.
+    entered_single = threading.Event()
+
+    def dispatcher_after(env: protocol.Envelope, _send) -> dict:
+        entered_single.set()
+        return {"recovered": True}
+
+    server._dispatcher = dispatcher_after
+    send("list-after", "brain.list", {})
+    assert server.wait_for_slow_commands(5.0)
+    assert entered_single.is_set()
+
+    messages = [json.loads(line) for line in stdout.getvalue().decode("utf-8").splitlines() if line.strip()]
+    by_id = {m["id"]: m for m in messages if "id" in m and m["type"] in {"command.result", "command.error"}}
+
+    for extra in range(MAX_SLOW_COMMANDS, MAX_SLOW_COMMANDS * 2):
+        err = by_id[f"list-{extra}"]
+        assert err["type"] == "command.error"
+        assert err["payload"]["code"] == "slow_commands_busy"
+
+    assert by_id["list-err"]["type"] == "command.error"
+    assert by_id["list-err"]["payload"]["code"] == "internal_error"
+    for idx in range(1, MAX_SLOW_COMMANDS):
+        assert by_id[f"list-{idx}"]["type"] == "command.result"
+    assert by_id["cancel-sat"]["type"] == "command.result"
+    assert by_id["confirm-sat"]["type"] == "command.result"
+    assert by_id["list-after"]["type"] == "command.result"
+    assert by_id["list-after"]["payload"]["recovered"] is True
 
 
 def test_subprocess_stdio_only_jsonl_and_no_personal_db_touched(tmp_path: Path) -> None:

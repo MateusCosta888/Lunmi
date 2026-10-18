@@ -43,8 +43,11 @@ from app.brain.discovery import DiscoveryStatus, ModelDiscovery, ModelListing, g
 from app.brain.probe import PROBE_TIMEOUT_SECONDS, probe_settings
 from app.brain.registry import resolve as resolve_brain
 from app.bridge import protocol
+from app.computer.com_cache import use_in_memory_com_modules
 from app.core.controller import TaskController, TaskResult
+from app.bridge.responses import PublicResponse, verified_speech_prefix
 from app.memory import MemoryItem, MemoryManager, MemoryPolicyError
+from app.memory.profile import MemoryDisabled, NothingToUndo, ProfileTooLarge, StaleRevision
 from app.memory.contracts import PROFILE_KINDS
 from app.settings import (
     API_KEY_PROVIDERS,
@@ -55,6 +58,12 @@ from app.settings import (
 from app.ui import ui_preferences
 
 LOCATION_TIMEOUT_SECONDS = 45.0
+# Quanto a thread lenta do comando `brain.set` espera o commit na thread do loop antes de
+# devolver um erro de operação pendente. Fica abaixo do prazo do Electron (35 s) para que o
+# cliente receba uma resposta tipada em vez de abandonar a promessa.
+RECONFIGURE_TIMEOUT_SECONDS = 30.0
+# Prazo da listagem de modelos de um provider (espera de rede, cancelável no estouro).
+BRAIN_LIST_TIMEOUT_SECONDS = 30.0
 
 
 def filter_trusted_host_pids(candidate_pids: list[int], *, trusted_root_pid: int | None = None) -> set[int]:
@@ -121,6 +130,10 @@ def public_task_result_dto(result: TaskResult) -> dict[str, Any]:
         "cold_start": bool(result.cold_start),
         "duration_ms": round(float(result.duration_ms or 0.0), 2),
         "llm_time_ms": round(float(result.llm_time_ms or 0.0), 2),
+        "first_provider_event_ms": result.first_provider_event_ms,
+        "first_provider_text_ms": result.first_provider_text_ms,
+        "first_public_text_ms": result.first_public_text_ms,
+        "operation_states": result.operation_states,
         "planning_time_ms": round(float(result.planning_time_ms or 0.0), 2),
         "observation_time_ms": round(float(result.observation_time_ms or 0.0), 2),
         "execution_time_ms": round(float(result.execution_time_ms or 0.0), 2),
@@ -135,6 +148,19 @@ def public_task_result_dto(result: TaskResult) -> dict[str, Any]:
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
         "total_tokens": result.total_tokens,
+        "token_usage": result.token_usage,
+        "provider_calls": result.provider_calls,
+        "provider_startup_ms": result.provider_startup_ms,
+        "provider_wait_ms": result.provider_wait_ms,
+        **({"operation_counts": {
+            "total": len(result.operation_states),
+            "read_only": sum(op.get("category") == "read_only" for op in result.operation_states),
+            "mutation": sum(op.get("category") == "mutation" for op in result.operation_states),
+            "verified_mutations": sum(op.get("category") == "mutation" and op.get("verified") is True
+                                      for op in result.operation_states),
+            "uncertain": sum(op.get("state") == "uncertain" for op in result.operation_states),
+        }} if all(op.get("category") in {"read_only", "mutation"}
+                  for op in result.operation_states) else {}),
         "evidence_count": len(evidence),
         "evidence_verified_count": verified_count,
         "approval_mode": result.approval_mode,
@@ -180,10 +206,17 @@ class BridgeService:
         memory: MemoryManager | None = None,
         discovery: ModelDiscovery | None = None,
         trusted_root_pid: int | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._emit = emit
+        self.session_id = session_id or 'sess-' + uuid.uuid4().hex[:16]
+        self._public_response: PublicResponse | None = None
         self.sandbox_dir = Path(sandbox_dir).resolve() if sandbox_dir is not None else None
-        self.root_dir = self.sandbox_dir if self.sandbox_dir is not None else Path(settings_module.ROOT)
+        # Estado gravável: sandbox quando pedido, senão a raiz de dados do utilizador
+        # (a mesma `LOCALAPPDATA` que o Electron usa no pacote), nunca `resources/`.
+        self.root_dir = (
+            self.sandbox_dir if self.sandbox_dir is not None else Path(settings_module.USER_DATA_ROOT)
+        )
         self.trusted_root_pid = trusted_root_pid if trusted_root_pid is not None else os.getppid()
         self.host_pids: set[int] = filter_trusted_host_pids([], trusted_root_pid=self.trusted_root_pid)
 
@@ -203,6 +236,11 @@ class BridgeService:
                 self.settings = Settings.load()
             except ConfigurationError:
                 self.settings = Settings()
+        if self.sandbox_dir is not None:
+            # A sandbox never reaches the machine's own task state, whatever settings it
+            # was handed: the application index the launcher reads and learns into lives
+            # inside the sandbox too.
+            self.settings = replace(self.settings, state_root=self.sandbox_dir)
 
         self._memory_owned = memory is None
         if memory is not None:
@@ -216,6 +254,10 @@ class BridgeService:
             ModelDiscovery() if self.sandbox_dir is not None else get_discovery()
         )
 
+        # Antes de criar o controlador (que pode importar pywinauto/UIA): wrappers COM gerados em
+        # memória, para nada ser escrito em `resources/` do pacote. Ver `app/computer/com_cache.py`.
+        use_in_memory_com_modules()
+
         factory = controller_factory or TaskController
         self.controller = factory(
             self.settings,
@@ -226,16 +268,56 @@ class BridgeService:
             memory=self.memory,
         )
         self._sync_engine_host_pids()
+        from app.integrations.gmail import GmailIntegration
+        self.integrations = GmailIntegration(
+            self.root_dir / '.local' / 'composio.dpapi', self._integration_emit, self.session_id)
+        self.controller.integrations = self.integrations
 
         self._active_task_id: str | None = None
         self._active_task_future: concurrent.futures.Future[TaskResult] | None = None
         self._reconfiguring = False
+        # Commit da troca de cérebro em voo. A guarda `_reconfiguring` é liberada só no
+        # `finally` da própria coroutine no loop, nunca pela thread que já desistiu de esperar.
+        self._reconfig_future: concurrent.futures.Future[dict[str, Any]] | None = None
         self._closed = False
 
         # Solicitações interativas pendentes (confirm, choice, location)
         self._pending_confirms: dict[str, tuple[str, asyncio.Future[bool]]] = {}
         self._pending_inputs: dict[str, tuple[str, str, int, asyncio.Future[Any]]] = {}
         self._lock = threading.RLock()
+        if self.integrations.path.exists():
+            self._loop.call_soon_threadsafe(self.integrations.resume)
+
+    def _integration_emit(self, kind: str, payload: dict[str, Any]) -> None:
+        self._emit(kind, {**payload, 'session_id': self.session_id})
+
+    async def _integration_command(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.integrations.oauth import IntegrationError
+        if command == 'integrations.browser.failed':
+            if set(payload) != {'flow_id'} or not isinstance(payload['flow_id'], str):
+                raise protocol.ProtocolError('invalid_payload', 'Pedido de ligação inválido.')
+            if payload['flow_id'] == self.integrations.flow_id:
+                self.integrations.cancel(notify=False)
+                self.integrations.changed('error', 'Não foi possível abrir a autorização. Tente ligar novamente.')
+            return self.integrations.dto()
+        expected = {'account_id'} if command == 'integrations.select' else set()
+        if set(payload) != expected:
+            raise protocol.ProtocolError('invalid_payload', 'Pedido de ligação inválido.')
+        try:
+            if command == 'integrations.connect':
+                return self.integrations.connect()
+            if command == 'integrations.cancel':
+                return self.integrations.cancel()
+            if command == 'integrations.disconnect':
+                return self.integrations.disconnect()
+            if command == 'integrations.select':
+                identifier = payload['account_id']
+                if not isinstance(identifier, str) or not 1 <= len(identifier) <= 128:
+                    raise IntegrationError('invalid_payload')
+                return self.integrations.select(identifier)
+            return self.integrations.dto()
+        except IntegrationError:
+            raise protocol.ProtocolError('invalid_payload', 'Ligação Gmail indisponível ou conta inválida.') from None
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -449,6 +531,22 @@ class BridgeService:
         cmd = env.type
         payload = env.payload
 
+        if cmd != "app.shutdown":
+            with self._lock:
+                if self._closed:
+                    raise protocol.ProtocolError(
+                        "shutting_down",
+                        "Sessão em encerramento.",
+                        request_id=env.id,
+                    )
+
+        if cmd.startswith('integrations.'):
+            if cmd == 'integrations.get':
+                if payload:
+                    raise protocol.ProtocolError('invalid_payload', 'Pedido de ligação inválido.')
+                return self.integrations.dto()
+            future = asyncio.run_coroutine_threadsafe(self._integration_command(cmd, payload), self._loop)
+            return future.result(timeout=5)
         if cmd == "chat.send":
             return self._handle_chat_send(payload)
         if cmd == "task.cancel":
@@ -493,6 +591,12 @@ class BridgeService:
             return self._handle_memory_options_get()
         if cmd == "memory.options.set":
             return self._handle_memory_options_set(payload)
+        if cmd == "memory.profile.get":
+            return self._handle_memory_profile_get()
+        if cmd == "memory.profile.save":
+            return self._handle_memory_profile_save(payload)
+        if cmd == "memory.profile.undo":
+            return self._handle_memory_profile_undo(payload)
         if cmd == "memory.export":
             return self._handle_memory_export(payload)
         if cmd == "memory.import":
@@ -516,10 +620,10 @@ class BridgeService:
 
     def _handle_chat_send(self, payload: dict[str, Any]) -> dict[str, Any]:
         mode = payload.get("mode")
-        if mode not in {"converse", "execute"}:
+        if mode not in {"converse", "execute", "auto"}:
             raise protocol.ProtocolError(
                 "invalid_payload",
-                "Campo 'mode' obrigatório: use 'converse' ou 'execute'.",
+                "Campo 'mode' obrigatório: use 'auto', 'converse' ou 'execute'.",
             )
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
@@ -532,7 +636,7 @@ class BridgeService:
             )
 
         attachments = protocol.validate_chat_attachments(payload.get("attachments"))
-        if attachments and mode != "converse":
+        if attachments and mode not in {"converse", "auto"}:
             raise protocol.ProtocolError(
                 "invalid_payload",
                 "Arquivos anexados são suportados no modo Conversar. "
@@ -565,6 +669,10 @@ class BridgeService:
                     {"name": item["name"], "size_bytes": item["size_bytes"]}
                     for item in attachments
                 ]
+            # The task context exists before any echo: the consumer must be able to
+            # accept the user turn even when the next turn starts immediately.
+            self._emit("task.started", {"task_id": task_id, "mode": mode, "instruction": stripped})
+            user_msg["message_id"] = f"{task_id}:user"
             self._emit("chat.message", user_msg)
             if conversation:
                 self._emit(
@@ -573,9 +681,9 @@ class BridgeService:
                         "role": "system",
                         "text": "Modo Conversar: nenhuma ação no Windows será executada nesta resposta.",
                         "task_id": task_id,
+                        "message_id": f"{task_id}:notice",
                     },
                 )
-            self._emit("task.started", {"task_id": task_id, "mode": mode, "instruction": stripped})
 
             user_name = self.prefs.profile.name
             fut = asyncio.run_coroutine_threadsafe(
@@ -583,6 +691,7 @@ class BridgeService:
                     task_id,
                     stripped,
                     conversation=conversation,
+                    automatic=mode == 'auto',
                     user_name=user_name,
                     attachments=attachments,
                 ),
@@ -598,22 +707,36 @@ class BridgeService:
         instruction: str,
         *,
         conversation: bool,
+        automatic: bool = False,
         user_name: str = "",
         attachments: list[dict[str, Any]] | None = None,
     ) -> TaskResult:
         res: TaskResult | None = None
         err: Exception | None = None
+        response = PublicResponse(self._emit, self.session_id, task_id)
+        self._public_response = response
+        self.controller.on_public = response.receive
         try:
             run_kwargs: dict[str, Any] = {"conversation": conversation}
+            if automatic:
+                run_kwargs.update(automatic=True, task_id=task_id)
             if user_name:
                 run_kwargs["user_name"] = user_name
             if attachments:
                 run_kwargs["attachments"] = attachments
+            before_revision = self.memory.profile_revision()
             res = await self.controller.run(instruction, **run_kwargs)
+            after_revision = self.memory.profile_revision()
+            if after_revision != before_revision:
+                # Aprendizagem ou pedido explícito aplicado durante o turno.
+                self._emit("memory.changed", {"reason": "learned", "revision": after_revision})
             res = replace(res, task_id=task_id)
         except Exception as exc:
             err = exc
         finally:
+            self.controller.on_public = None
+            if self._public_response is response:
+                self._public_response = None
             self._deny_all_pending_questions()
             with self._lock:
                 if self._active_task_id == task_id:
@@ -621,6 +744,7 @@ class BridgeService:
                     self._active_task_future = None
 
         if err is not None or res is None:
+            response.fail('internal_error')
             msg = "Falha interna ao executar tarefa."
             self._emit(
                 "task.error",
@@ -636,10 +760,26 @@ class BridgeService:
             return fallback
 
         dto = public_task_result_dto(res)
-        if conversation and res.status == "SUCCESS":
+        if res.status == 'SUCCESS':
+            # Provenance before speech: a file's content or the agent's own summary is
+            # never marked verified just because *some* evidence was attached.
+            speech = verified_speech_prefix(res.evidence, scope=res.scope, status=res.status)
+            response.finish(res.message, res.status, verified_result=bool(speech),
+                            verified_prefix=speech)
+        elif res.failure_kind == 'AUTHORIZATION_REFUSED':
+            # The refusal is honest public text appended to whatever the model already
+            # streamed: no response.error and no configuration/provider blame.
+            response.flush()
+            prefix = response.text
+            response.finish((prefix + '\n\n' if prefix else '') + res.message, res.status)
+        else:
+            response.fail(res.failure_kind or 'task_failed', cancelled=res.status == 'CANCELLED')
+        if (res.scope in {'conversation', 'memory_command'}
+                and (res.status == "SUCCESS" or res.failure_kind == 'AUTHORIZATION_REFUSED')):
             self._emit(
                 "chat.message",
-                {"role": "assistant", "text": res.message, "task_id": task_id, "scope": res.scope},
+                {"role": "assistant", "text": res.message, "task_id": task_id, "scope": res.scope,
+                 'message_id': response.ids['message_id'], 'response_id': response.ids['response_id']},
             )
         if res.status == "CANCELLED":
             self._emit("task.cancelled", {"task_id": task_id, "message": res.message, "result": dto})
@@ -657,6 +797,9 @@ class BridgeService:
             if not self._is_task_running():
                 return {"cancelled": False, "reason": "no_active_task"}
             self._deny_all_pending_questions()
+            active_response = self._public_response
+            if active_response:
+                self._loop.call_soon_threadsafe(lambda: active_response.fail('cancelled', cancelled=True))
             self._loop.call_soon_threadsafe(self.controller.cancel)
             return {"cancelled": True, "task_id": active_id or ""}
 
@@ -782,6 +925,18 @@ class BridgeService:
             "app_provider": self.settings.app_provider,
             "app_model": self.settings.app_model,
             "effort": self.settings.effort,
+            "effective": {
+                "host": {"provider": self.settings.provider, "model": self.settings.model,
+                         "provider_inherited": False, "model_inherited": False},
+                "app": {"provider": self.settings.app_provider or self.settings.provider,
+                        "model": self.settings.app_model or self.settings.model,
+                        "provider_inherited": not bool(self.settings.app_provider),
+                        "model_inherited": not bool(self.settings.app_model)},
+                "app_inheritance": (
+                    "full" if not self.settings.app_provider and not self.settings.app_model
+                    else "provider" if not self.settings.app_provider
+                    else "model" if not self.settings.app_model else "none"),
+            },
             "env_overrides": {
                 "provider": bool(env_provider),
                 "model": bool(env_model),
@@ -816,7 +971,13 @@ class BridgeService:
         except (BrainError, KeyError) as exc:
             raise protocol.ProtocolError("invalid_payload", f"Provider desconhecido: {provider}.") from exc
 
-        model = str(payload.get("model") if "model" in payload else self.settings.model).strip()
+        # Um modelo só é herdado quando o provider é o mesmo: ao abrir outro provider
+        # o campo ainda está vazio, e herdar o modelo salvo faria a lista acusar um
+        # "modelo salvo indisponível" que o utilizador nunca escolheu ali.
+        if "model" in payload:
+            model = str(payload.get("model") or "").strip()
+        else:
+            model = self.settings.model.strip() if provider == self.settings.provider else ""
         raw_key = payload.get("api_key")
         if isinstance(raw_key, str) and raw_key.strip():
             api_key = raw_key.strip()
@@ -843,8 +1004,6 @@ class BridgeService:
 
         app_provider = str(payload.get("app_provider") if "app_provider" in payload else self.settings.app_provider).strip().lower()
         app_model = str(payload.get("app_model") if "app_model" in payload else self.settings.app_model).strip()
-        if not app_provider:
-            app_model = ""
 
         return replace(
             self.settings,
@@ -865,20 +1024,22 @@ class BridgeService:
         except (BrainError, KeyError) as exc:
             raise protocol.ProtocolError("invalid_payload", f"Provider desconhecido: {provider}.") from exc
 
-        if role == "app":
-            if provider == self.settings.provider:
-                target = replace(self.settings, provider=provider)
+        # `provider` é sempre o alvo real: o principal em role=main e o do AppAgent
+        # em role=app. O caminho antigo de role=app ignorava a chave rascunho e caía
+        # na variável de ambiente, então uma chave acabada de digitar não listava.
+        target = self._candidate_settings_from_payload({**payload, "provider": provider})
+        if role == "app" and provider != self.settings.provider:
+            # O AppAgent com outro provider ainda não tem credencial persistível
+            # própria (app_brain_settings usa só a fonte canónica do ambiente). Uma
+            # chave do provider principal nunca pode viajar para outro host, e não
+            # existe campo de UI cuja única função fosse listar e não aplicar.
+            if provider in CLI_PROVIDERS:
+                target = replace(target, api_key="", base_url="")
             else:
-                key_name = provider.upper() + "_API_KEY" if provider in API_KEY_PROVIDERS else "LLM_APP_API_KEY"
-                target = replace(
-                    self.settings,
-                    provider=provider,
-                    model="",
-                    api_key=os.getenv(key_name, ""),
-                    base_url=os.getenv("LLM_APP_BASE_URL", ""),
-                )
-        else:
-            target = self._candidate_settings_from_payload({**payload, "provider": provider})
+                key_name = (provider.upper() + "_API_KEY" if provider in API_KEY_PROVIDERS
+                            else "LLM_APP_API_KEY")
+                target = replace(target, api_key=os.getenv(key_name, ""),
+                                 base_url=os.getenv("LLM_APP_BASE_URL", ""))
 
         try:
             target.validate(model=False)
@@ -891,11 +1052,14 @@ class BridgeService:
                 "models": [],
             }
 
-        fut = asyncio.run_coroutine_threadsafe(
-            self.discovery.list(provider, settings=target, force=force),
-            self._loop,
+        list_kwargs: dict[str, Any] = {"settings": target, "force": force}
+        if role != "main":
+            # `role` is part of the cache identity only when it is not the default;
+            # keeping the main call shape stable also preserves existing adapters.
+            list_kwargs["role"] = role
+        listing: ModelListing = self._run_on_loop_with_deadline(
+            self.discovery.list(provider, **list_kwargs), BRAIN_LIST_TIMEOUT_SECONDS,
         )
-        listing: ModelListing = fut.result(timeout=30.0)
         return self._listing_dto(listing, saved_model=target.model)
 
     @staticmethod
@@ -929,7 +1093,21 @@ class BridgeService:
             brain = resolve_brain(target)
             try:
                 health = await brain.health()
-                listing = await self.discovery.list(target.provider, settings=target, brain=brain, force=True)
+                # Só o ApiBrain expõe a listagem que health() acabou de obter. Reusar
+                # essa lista fresca evita um segundo GET do mesmo catálogo; nunca é
+                # cache antigo nem substitui a verificação de credencial/health.
+                fresh = None
+                fresh_models = getattr(brain, "fresh_models", None)
+                if callable(fresh_models):
+                    fresh = fresh_models()
+                failure = None
+                fresh_failure = getattr(brain, "fresh_failure", None)
+                if callable(fresh_failure):
+                    failure = fresh_failure()
+                listing = await self.discovery.list(
+                    target.provider, settings=target, brain=brain, force=True,
+                    entries=fresh, failure=failure,
+                )
                 return {
                     "provider": target.provider,
                     "model": target.model,
@@ -941,8 +1119,7 @@ class BridgeService:
             finally:
                 await brain.close()
 
-        fut = asyncio.run_coroutine_threadsafe(_verify(), self._loop)
-        return fut.result(timeout=45.0)
+        return self._run_on_loop_with_deadline(_verify(), 45.0)
 
     def _handle_brain_probe(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("consent") is not True:
@@ -956,11 +1133,10 @@ class BridgeService:
         except ConfigurationError as exc:
             raise protocol.ProtocolError("invalid_configuration", str(exc)) from exc
 
-        fut = asyncio.run_coroutine_threadsafe(
+        res = self._run_on_loop_with_deadline(
             probe_settings(target, timeout=min(PROBE_TIMEOUT_SECONDS, target.timeout_seconds)),
-            self._loop,
+            PROBE_TIMEOUT_SECONDS + 5.0,
         )
-        res = fut.result(timeout=PROBE_TIMEOUT_SECONDS + 5.0)
         return {
             "provider": res.provider,
             "model": res.model,
@@ -971,6 +1147,22 @@ class BridgeService:
             "input_tokens": res.input_tokens,
             "output_tokens": res.output_tokens,
         }
+
+    def _run_on_loop_with_deadline(self, coro: Any, timeout: float) -> Any:
+        """Roda `coro` no loop do serviço e espera `timeout`, sem deixar operação órfã.
+
+        `Future.result` estourando o prazo abandona só a thread que espera: a coroutine
+        continua viva no loop. Os slots de comando lento limitam threads, não coroutines,
+        então uma consulta de provider precisa ser cancelada aqui em vez de se acumular
+        depois que a resposta já foi entregue.
+        """
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            if not self._loop.is_closed():
+                self._loop.call_soon_threadsafe(fut.cancel)
+            raise
 
     def _handle_brain_set(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -1001,21 +1193,122 @@ class BridgeService:
 
             target.validate()
             remember = payload.get("remember_credentials") is True
+        except ConfigurationError as exc:
+            with self._lock:
+                self._reconfiguring = False
+            raise protocol.ProtocolError("invalid_configuration", str(exc)) from exc
+        except BaseException:
+            with self._lock:
+                self._reconfiguring = False
+            raise
 
-            fut = asyncio.run_coroutine_threadsafe(self.controller.reconfigure(target), self._loop)
-            fut.result(timeout=30.0)
+        # O commit inteiro — reconfigure, settings do serviço, persistência e evento — roda
+        # numa única coroutine no loop. Assim `self.settings` e `controller.settings` mudam
+        # juntos e a guarda `_reconfiguring` é liberada no fim real, não pela thread que
+        # desistiu de esperar (era o defeito: timeout soltava a guarda com a coroutine viva).
+        try:
+            fut = asyncio.run_coroutine_threadsafe(
+                self._reconfigure_commit(target, remember), self._loop
+            )
+        except RuntimeError:
+            with self._lock:
+                self._reconfiguring = False
+            raise protocol.ProtocolError(
+                "internal_error", "O serviço de cérebro não está disponível."
+            ) from None
+        with self._lock:
+            self._reconfig_future = fut
+
+        try:
+            return fut.result(timeout=RECONFIGURE_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            # A coroutine continua dona da guarda e vai publicar o estado final num evento
+            # `brain.updated` (ok ou erro). Nada fica invisível e nenhuma tarefa entra antes.
+            raise protocol.ProtocolError(
+                "reconfiguring",
+                "A troca de cérebro continua em andamento; o resultado final será publicado no "
+                "evento brain.updated.",
+            ) from None
+
+    async def _reconfigure_commit(self, target: Settings, remember: bool) -> dict[str, Any]:
+        """Aplica a troca de cérebro e libera a guarda somente num estado consistente.
+
+        Reconhece sucesso, falha de `reconfigure` e falha de persistência. Em todos os casos
+        publica um `brain.updated` final com `ok` (e `error` quando houver), para que o cliente
+        que já abandonou a promessa não fique sem estado.
+        """
+        final: dict[str, Any] = {
+            **self._public_brain_state(), "ok": False, "persisted": False,
+            "error": {"stage": "reconfigure", "code": "Unknown",
+                      "message": "A troca de cérebro não terminou."},
+        }
+        try:
+            try:
+                await self.controller.reconfigure(target)
+                # Verify the applied candidate, not just the DTO we are about to return.
+                if self._selection_of(self.controller.settings) != self._selection_of(target):
+                    raise ConfigurationError("O cérebro aplicado não confere com a seleção pedida.")
+            except BaseException as exc:
+                final = {
+                    **self._public_brain_state(),
+                    "ok": False,
+                    "persisted": False,
+                    "error": {
+                        "stage": "reconfigure",
+                        "code": type(exc).__name__,
+                        "message": "Falha ao aplicar o novo cérebro.",
+                    },
+                }
+                raise
             self.settings = target
             self._sync_engine_host_pids()
-
-            self._persist_brain_selection(target, remember=remember)
-            state = self._public_brain_state()
-            self._emit("brain.updated", state)
-            return state
-        except ConfigurationError as exc:
-            raise protocol.ProtocolError("invalid_configuration", str(exc)) from exc
+            try:
+                self._persist_brain_selection(target, remember=remember)
+                if self._persisted_selection() != self._selection_of(target):
+                    raise ValueError("A seleção gravada não confere com o cérebro aplicado.")
+            except Exception as exc:
+                final = {
+                    **self._public_brain_state(),
+                    "ok": True,
+                    "persisted": False,
+                    "error": {
+                        "stage": "persist",
+                        "code": type(exc).__name__,
+                        "message": "Cérebro aplicado, mas a seleção não pôde ser gravada.",
+                    },
+                }
+            else:
+                final = {**self._public_brain_state(), "ok": True, "persisted": True}
+            return final
         finally:
             with self._lock:
                 self._reconfiguring = False
+                self._reconfig_future = None
+            try:
+                self._emit("brain.updated", final)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _selection_of(settings: Settings) -> tuple[str, str, str, str]:
+        return (settings.provider.strip().lower(), settings.model.strip(),
+                settings.app_provider.strip().lower(), settings.app_model.strip())
+
+    def _persisted_selection(self) -> tuple[str, str, str, str]:
+        """Read back what the commit wrote; absence is full inheritance, not a guess."""
+        if self.sandbox_dir is not None:
+            local_dir = self.sandbox_dir / ".local"
+            main_path = local_dir / "brain-selection.json"
+            app_path = local_dir / "app-brain.json"
+        else:
+            main_path = settings_module.selection_path()
+            app_path = settings_module.app_selection_path()
+        main = json.loads(main_path.read_text(encoding="utf-8")) if main_path.exists() else {}
+        app = json.loads(app_path.read_text(encoding="utf-8")) if app_path.exists() else {}
+        if not isinstance(main, dict) or not isinstance(app, dict):
+            raise ValueError("A seleção gravada não é um objeto JSON.")
+        return (str(main.get("provider") or "").strip().lower(), str(main.get("model") or "").strip(),
+                str(app.get("provider") or "").strip().lower(), str(app.get("model") or "").strip())
 
     def _persist_brain_selection(self, target: Settings, *, remember: bool) -> None:
         if self.sandbox_dir is not None:
@@ -1026,7 +1319,7 @@ class BridgeService:
                 encoding="utf-8",
             )
             app_file = local_dir / "app-brain.json"
-            if target.app_provider:
+            if target.app_provider or target.app_model:
                 app_file.write_text(
                     json.dumps({"provider": target.app_provider, "model": target.app_model}, ensure_ascii=False),
                     encoding="utf-8",
@@ -1115,7 +1408,8 @@ class BridgeService:
             raise protocol.ProtocolError("not_found", "Memória não encontrada.") from None
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
-        self._emit("memory.changed", {"reason": "updated", "id": updated.id})
+        self._emit("memory.changed", {"reason": "updated", "id": updated.id,
+                                      "revision": self.memory.profile_revision()})
         return {"item": public_memory_item_dto(updated)}
 
     def _handle_memory_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1130,7 +1424,8 @@ class BridgeService:
             raise protocol.ProtocolError("not_found", "Memória não encontrada.") from None
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
-        self._emit("memory.changed", {"reason": "deleted", "id": item_id.strip()})
+        self._emit("memory.changed", {"reason": "deleted", "id": item_id.strip(),
+                                      "revision": self.memory.profile_revision()})
         return {"deleted": True, "id": item_id.strip()}
 
     def _handle_memory_proposals(self) -> dict[str, Any]:
@@ -1156,7 +1451,8 @@ class BridgeService:
             prop_id = self.memory.propose(MemoryItem(kind=kind, text=text.strip(), source="user_explicit"))
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
-        self._emit("memory.changed", {"reason": "proposed", "id": prop_id})
+        self._emit("memory.changed", {"reason": "proposed", "id": prop_id,
+                                      "revision": self.memory.profile_revision()})
         return {"proposal_id": prop_id}
 
     def _handle_memory_accept(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1169,7 +1465,8 @@ class BridgeService:
             raise protocol.ProtocolError("not_found", "Proposta pendente não encontrada.") from None
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
-        self._emit("memory.changed", {"reason": "accepted", "id": memory_id})
+        self._emit("memory.changed", {"reason": "accepted", "id": memory_id,
+                                      "revision": self.memory.profile_revision()})
         return {"memory_id": memory_id}
 
     def _handle_memory_reject(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1180,8 +1477,82 @@ class BridgeService:
             self.memory.reject_proposal(prop_id.strip())
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
-        self._emit("memory.changed", {"reason": "rejected", "id": prop_id.strip()})
+        self._emit("memory.changed", {"reason": "rejected", "id": prop_id.strip(),
+                                      "revision": self.memory.profile_revision()})
         return {"rejected": True, "id": prop_id.strip()}
+
+    def _profile_dto(self, snapshot: Any) -> dict[str, Any]:
+        options = self.memory.options()
+        text = snapshot.text
+        count = len(text)
+        if not options.get("enabled"):
+            state = "disabled"
+        elif not text.strip():
+            state = "empty"
+        elif count > protocol.MAX_PROFILE_CHARS:
+            state = "legacy_long"
+        else:
+            state = "ready"
+        return {
+            "enabled": bool(options.get("enabled")),
+            "auto_learn": bool(options.get("auto_learn")),
+            "text": text,
+            "revision": int(snapshot.revision),
+            "can_undo": bool(snapshot.can_undo),
+            "char_count": count,
+            "max_chars": protocol.MAX_PROFILE_CHARS,
+            "state": state,
+        }
+
+    def _handle_memory_profile_get(self) -> dict[str, Any]:
+        return self._profile_dto(self.memory.profile_snapshot())
+
+    def _handle_memory_profile_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        text = payload.get("text")
+        base = payload.get("base_revision")
+        if not isinstance(text, str):
+            raise protocol.ProtocolError("invalid_payload", "Campo 'text' deve ser texto.")
+        if type(base) is not int or base < 0:
+            raise protocol.ProtocolError("invalid_payload",
+                                         "Campo 'base_revision' deve ser um inteiro não negativo.")
+        try:
+            snapshot = self.memory.save_profile(text, base)
+        except StaleRevision as exc:
+            raise protocol.ProtocolError(
+                "stale_revision", "O perfil mudou entretanto. Recarregue e decida.",
+                details={"revision": exc.revision, "can_undo": exc.can_undo}) from None
+        except MemoryDisabled:
+            raise protocol.ProtocolError("memory_disabled", "Memória desligada; nada foi gravado.") from None
+        except ProfileTooLarge as exc:
+            raise protocol.ProtocolError(
+                "profile_too_large",
+                f"O perfil excede o limite de {exc.max_chars} caracteres.",
+                details={"char_count": exc.char_count, "max_chars": exc.max_chars}) from None
+        except MemoryPolicyError as exc:
+            raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
+        self._emit("memory.changed", {"reason": "saved", "revision": snapshot.revision})
+        return self._profile_dto(snapshot)
+
+    def _handle_memory_profile_undo(self, payload: dict[str, Any]) -> dict[str, Any]:
+        base = payload.get("base_revision")
+        if type(base) is not int or base < 0:
+            raise protocol.ProtocolError("invalid_payload",
+                                         "Campo 'base_revision' deve ser um inteiro não negativo.")
+        try:
+            snapshot = self.memory.undo_profile(base)
+        except StaleRevision as exc:
+            raise protocol.ProtocolError(
+                "stale_revision", "O perfil mudou entretanto. Recarregue e decida.",
+                details={"revision": exc.revision, "can_undo": exc.can_undo}) from None
+        except NothingToUndo as exc:
+            raise protocol.ProtocolError("nothing_to_undo", "Não há alteração para desfazer.",
+                                         details={"revision": exc.revision}) from None
+        except MemoryDisabled:
+            raise protocol.ProtocolError("memory_disabled", "Memória desligada; nada foi desfeito.") from None
+        except MemoryPolicyError as exc:
+            raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
+        self._emit("memory.changed", {"reason": "undone", "revision": snapshot.revision})
+        return self._profile_dto(snapshot)
 
     def _handle_memory_options_get(self) -> dict[str, Any]:
         return {"options": self.memory.options()}
@@ -1197,7 +1568,8 @@ class BridgeService:
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
         updated = self.memory.options()
-        self._emit("memory.changed", {"reason": "options", "options": updated})
+        self._emit("memory.changed", {"reason": "options", "options": updated,
+                                      "revision": self.memory.profile_revision()})
         return {"options": updated}
 
     def _handle_memory_export(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1246,9 +1618,15 @@ class BridgeService:
             )
         try:
             inserted = self.memory.import_data(import_data)
+        except ProfileTooLarge as exc:
+            raise protocol.ProtocolError(
+                "profile_too_large",
+                f"Importação não aplicada: o perfil excede o limite de {exc.max_chars} caracteres.",
+                details={"char_count": exc.char_count, "max_chars": exc.max_chars}) from None
         except MemoryPolicyError as exc:
             raise protocol.ProtocolError("memory_policy_error", str(exc)) from None
-        self._emit("memory.changed", {"reason": "imported", "inserted": inserted})
+        self._emit("memory.changed", {"reason": "imported", "inserted": inserted,
+                                      "revision": self.memory.profile_revision()})
         return {"imported": True, "inserted": inserted}
 
     def _handle_memory_wipe(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1256,7 +1634,8 @@ class BridgeService:
             raise protocol.ProtocolError("confirmation_required", "Confirmação explícita necessária para limpar tudo.")
         self.memory.wipe()
         options = self.memory.options()
-        self._emit("memory.changed", {"reason": "wiped", "options": options})
+        self._emit("memory.changed", {"reason": "wiped", "options": options,
+                                      "revision": self.memory.profile_revision()})
         return {"wiped": True, "options": options}
 
     # ---------------------------------------------------- preferências UI (F2b) --
@@ -1346,9 +1725,18 @@ class BridgeService:
             if self._closed:
                 return
             self._closed = True
+            pending_reconfig = self._reconfig_future
         self._deny_all_pending_questions()
+        # Um commit de cérebro em voo termina (ou falha) antes de fechar: encerrar no meio
+        # deixaria o controlador com brain/engine trocados pela metade.
+        if pending_reconfig is not None and not pending_reconfig.done():
+            try:
+                pending_reconfig.result(timeout=RECONFIGURE_TIMEOUT_SECONDS)
+            except Exception:
+                pass
         if not self._loop.is_closed():
             try:
+                self._loop.call_soon_threadsafe(self.integrations.cancel)
                 fut = asyncio.run_coroutine_threadsafe(self.controller.close(), self._loop)
                 fut.result(timeout=10.0)
             except Exception:

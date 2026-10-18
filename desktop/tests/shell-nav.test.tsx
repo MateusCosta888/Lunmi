@@ -34,6 +34,7 @@ function makeFakeBridge() {
       if (type === "approval.get") return { auto_approve: false, mode: "manual", label: "Modo: Manual" };
       if (type === "ui.preferences.get") return { window: null, scale_pct: 100, actions: [] };
       if (type === "memory.list") return { enabled: true, items: [] };
+      if (type === "memory.profile.get") return { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" };
       if (type === "memory.proposals") return { proposals: [] };
       if (type === "memory.options.get") return { options: { enabled: true } };
       return { ok: true };
@@ -52,7 +53,7 @@ function makeFakeBridge() {
 async function renderReady(bridge: ReturnType<typeof makeFakeBridge>) {
   (window as unknown as { lunmi: LunmiBridgeApi }).lunmi = bridge.api;
   render(<App />);
-  await waitFor(() => expect(screen.getByTestId("session-status").textContent).toBe("Ready"));
+  await screen.findByTestId("composer");
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
@@ -144,5 +145,36 @@ describe("Sidebar recolhível (lote B)", () => {
     await renderReady(bridge);
     expect(screen.getAllByRole("navigation")).toHaveLength(1);
     expect(screen.getAllByTestId("nav-collapse-toggle")).toHaveLength(1);
+  });
+
+  it("abre Apps por navegação lazy sem consultar integrações no arranque nem num peer antigo", async () => {
+    const bridge = makeFakeBridge();
+    await renderReady(bridge);
+    expect(bridge.calls.some(call => call.type.startsWith("integrations."))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Apps" }));
+    await screen.findByTestId("apps-panel");
+    expect(screen.getByText(/não disponibiliza a ligação ao Gmail/)).toBeTruthy();
+    expect(bridge.calls.some(call => call.type.startsWith("integrations."))).toBe(false);
+  });
+
+  it("o controle fica fora do vidro, imediatamente acima da casca, e o canto superior esquerdo é o avatar do usuário", async () => {
+    const bridge = makeFakeBridge();
+    await renderReady(bridge);
+    const toggle = screen.getByTestId("nav-collapse-toggle");
+    // Fora do vidro: o botão não mora dentro da camada de vidro do painel esquerdo.
+    expect(toggle.closest(".lunmi-glass")).toBeNull();
+    // Imediatamente acima da casca: a linha do controle precede o vidro esquerdo.
+    const bar = toggle.closest(".lunmi-nav-bar");
+    expect(bar).not.toBeNull();
+    expect(bar!.nextElementSibling?.classList.contains("lunmi-glass")).toBe(true);
+    // O canto superior esquerdo agora é do usuário: só o avatar (no lugar da logo), e ele
+    // abre o modal do perfil. A marca com texto não existe mais ali.
+    expect(document.querySelector(".lunmi-brand-word")).toBeNull();
+    const slot = document.querySelector(".lunmi-brand")!;
+    expect(slot.querySelector("img")).toBeNull();
+    const avatar = screen.getByTestId("profile-button");
+    expect(slot.contains(avatar)).toBe(true);
+    fireEvent.click(avatar);
+    expect(await screen.findByTestId("profile-modal")).toBeTruthy();
   });
 });

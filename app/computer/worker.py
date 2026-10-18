@@ -20,6 +20,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 setattr(sys, "coinit_flags", 0)
 
+# Antes de qualquer consumidor de UIA: o `comtypes` gera wrappers de typelib no disco e, no
+# pacote, isso cai dentro de `resources/` (somente-leitura). Ver `app/computer/com_cache.py`.
+from app.computer.com_cache import use_in_memory_com_modules  # noqa: E402
+
+use_in_memory_com_modules()
+
 
 def check_source(path: Path) -> None:
     manifest = json.loads((ROOT / "ufo.lock.json").read_text(encoding="utf-8"))
@@ -143,7 +149,11 @@ async def serve() -> None:
                         # The approval mode is the user's setting, carried by the request:
                         # the worker never decides it on its own.
                         data = await runtime.run(request["instruction"], request["max_steps"],
-                                                 approval_mode=str(request.get("approval_mode") or ""))
+                                                 approval_mode=str(request.get("approval_mode") or ""),
+                                                 initial_operation=request.get("initial_operation"),
+                                                 task_id=str(request.get("task_id") or ""),
+                                                 attachments=request.get("attachments") or [],
+                                                 allow_actions=request.get("allow_actions", True))
                     elif operation == "fast_path":
                         # FASE 8: a plan resolved by a table, executed with no inference.
                         # Its own outcomes (declined/failed) travel inside `data`, so a
@@ -257,6 +267,9 @@ async def serve() -> None:
                 except Exception:
                     logging.exception("Falha no worker UFO")
                     response = {"ok": False, "error": "UFO falhou; nenhuma próxima ação será iniciada. Consulte logs/worker.log."}
+                finally:
+                    runtime.attachments = []
+                    runtime.initial_result = None
                 output.write(json.dumps(response, ensure_ascii=True) + "\n")
                 output.flush()
             await runtime.close()

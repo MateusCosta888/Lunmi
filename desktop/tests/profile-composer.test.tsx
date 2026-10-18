@@ -1,7 +1,7 @@
 /**
  * Topo, rail, anexos e perfil (`desktop/tests/profile-composer.test.tsx`, 2026-10-15).
  *
- * Cobre os contratos do lote: cápsula LUNMI + modelo real (vazio nunca inventa nome), rail
+ * Cobre os contratos do lote: marca LUNMI + modelo real (vazio nunca inventa nome), rail
  * recolhível sem tocar Parar/rascunho, Anexar antes do seletor com limites do contrato
  * (4/32KiB/64KiB, só no modo Conversar, seleção não envia, limpeza só após aceite, recusa
  * preserva tudo) e o modal de perfil (nome/foto, seam `ui.preferences.set` com `profile`,
@@ -49,6 +49,7 @@ function makeFakeBridge(options: Options = {}) {
       if (type === "ui.preferences.get") return { window: null, scale_pct: 100, actions: [], profile: { name: "Ana", avatar_data_url: "" } };
       if (type === "ui.preferences.set") return { window: null, scale_pct: 100, actions: [], profile: payload.profile ?? { name: "Ana", avatar_data_url: "" } };
       if (type === "memory.list") return { enabled: true, items: [] };
+      if (type === "memory.profile.get") return { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" };
       if (type === "memory.proposals") return { proposals: [] };
       if (type === "memory.options.get") return { options: { enabled: true } };
       return { ok: true };
@@ -77,7 +78,7 @@ function makeFakeBridge(options: Options = {}) {
 async function renderReady(bridge: ReturnType<typeof makeFakeBridge>) {
   (window as unknown as { lunmi: LunmiBridgeApi }).lunmi = bridge.api;
   render(<App />);
-  await waitFor(() => expect(screen.getByTestId("session-status").textContent).toBe("Ready"));
+  await screen.findByTestId("composer");
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
@@ -94,20 +95,28 @@ beforeEach(() => {
   }) as unknown as MediaQueryList);
 });
 
-describe("Topo — cápsula LUNMI + modelo real", () => {
-  it("mostra o modelo real da sessão e nunca o rótulo do provedor", async () => {
+describe("Topo — marca central", () => {
+  it("a marca central mostra só 'Lunmi' (Kinetic Text); o modelo real vive no compositor", async () => {
     const bridge = makeFakeBridge({ model: "llama-3.1-lunmi" });
     await renderReady(bridge);
-    expect(screen.getByTestId("topbar-model").textContent).toBe("llama-3.1-lunmi");
-    expect(screen.getByTestId("brain-pill").textContent).not.toContain("Conexão local");
-    expect(screen.getByTestId("brain-pill").textContent).toContain("LUNMI");
+    // O modelo real e acessível é o seletor à esquerda do compositor.
+    expect(screen.getByTestId("composer-model").textContent).toContain("llama-3.1-lunmi");
+    // A marca central não carrega modelo, provedor, ponto colorido nem separador.
+    const mark = screen.getByTestId("brand-text");
+    expect(mark.getAttribute("data-kinetic-engine")).toBe("magicui-kinetic-text");
+    const letters = Array.from(mark.querySelectorAll(".lunmi-kinetic-letter"), node => node.textContent).join("");
+    expect(letters).toBe("Lunmi");
+    expect(mark.querySelector(".lunmi-kinetic-sr")?.textContent).toBe("Lunmi");
+    expect(mark.textContent).not.toContain("Conexão local");
+    expect(mark.textContent).not.toContain("llama-3.1-lunmi");
+    expect(mark.querySelector("i, .lunmi-capsule-sep")).toBeNull();
   });
 
-  it("modelo vazio é honesto: 'Modelo padrão', sem nome inventado", async () => {
+  it("modelo vazio é honesto no seletor: 'Padrão do provedor', sem nome inventado", async () => {
     const bridge = makeFakeBridge({ model: "" });
     await renderReady(bridge);
-    expect(screen.getByTestId("topbar-model").textContent).toBe("Modelo padrão");
-    expect(screen.getByTestId("brain-pill").getAttribute("title")).toContain("padrão");
+    expect(screen.getByTestId("composer-model").textContent).toContain("Padrão do provedor");
+    expect(screen.getByTestId("brand-text").querySelector(".lunmi-kinetic-sr")?.textContent).toBe("Lunmi");
   });
 });
 
@@ -223,11 +232,17 @@ describe("Anexos no compositor", () => {
   });
 });
 
-describe("Perfil — miniperfil e modal", () => {
-  it("abre pelo rodapé, mostra o nome salvo e salva via ui.preferences com o DTO canônico", async () => {
+describe("Perfil — avatar do topo e modal", () => {
+  it("abre pelo avatar do canto superior esquerdo, expõe o nome salvo e salva via ui.preferences com o DTO canônico", async () => {
     const bridge = makeFakeBridge();
     await renderReady(bridge);
-    expect(screen.getByTestId("profile-button").textContent).toContain("Ana");
+    // O canto superior esquerdo é do usuário: só o avatar, no lugar da logo. Sem nome visível,
+    // o nome vive no rótulo acessível do botão.
+    const slot = document.querySelector(".lunmi-brand")!;
+    expect(slot.querySelector('[data-testid="profile-button"]')).not.toBeNull();
+    expect(slot.querySelector(".lunmi-profile-fallback")).not.toBeNull();
+    expect(slot.querySelector("img")).toBeNull();
+    expect(screen.getByTestId("profile-button").getAttribute("aria-label")).toContain("Ana");
     fireEvent.click(screen.getByTestId("profile-button"));
     await screen.findByTestId("profile-modal");
     const nameInput = screen.getByTestId("profile-name-input") as HTMLInputElement;
@@ -239,7 +254,7 @@ describe("Perfil — miniperfil e modal", () => {
       expect(call?.payload.profile).toEqual({ name: "Ana Beatriz", avatar_data_url: "" });
     });
     await waitFor(() => expect(screen.queryByTestId("profile-modal")).toBeNull());
-    expect(screen.getByTestId("profile-button").textContent).toContain("Ana Beatriz");
+    expect(screen.getByTestId("profile-button").getAttribute("aria-label")).toContain("Ana Beatriz");
   });
 
   it("Escape fecha sem salvar; nome longo demais vira erro visível sem enviar", async () => {
@@ -287,7 +302,7 @@ describe("Perfil — miniperfil e modal", () => {
     fireEvent.click(screen.getByTestId("profile-save"));
     await waitFor(() => expect(screen.getByTestId("profile-error").textContent).toContain("não confirmou"));
     expect(screen.getByTestId("profile-modal")).toBeTruthy();
-    expect(screen.getByTestId("profile-button").textContent).toContain("Ana");
+    expect(screen.getByTestId("profile-button").getAttribute("aria-label")).toContain("Ana");
   });
 
   it("durante a gravação despachada, fechar/Escape/Cancelar ficam travados", async () => {
@@ -313,7 +328,7 @@ describe("Perfil — miniperfil e modal", () => {
     expect(screen.getByTestId("profile-modal")).toBeTruthy();
     await act(async () => { releaseSave(); });
     await waitFor(() => expect(screen.queryByTestId("profile-modal")).toBeNull());
-    expect(screen.getByTestId("profile-button").textContent).toContain("Lia");
+    expect(screen.getByTestId("profile-button").getAttribute("aria-label")).toContain("Lia");
   });
 
   it("falha de persistência mantém o modal aberto com erro, sem fingir salvamento", async () => {
@@ -325,6 +340,7 @@ describe("Perfil — miniperfil e modal", () => {
       if (type === "approval.get") return { auto_approve: false, mode: "manual", label: "Modo: Manual" };
       if (type === "ui.preferences.get") return { window: null, scale_pct: 100, actions: [], profile: { name: "", avatar_data_url: "" } };
       if (type === "memory.list") return { enabled: true, items: [] };
+      if (type === "memory.profile.get") return { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" };
       return { ok: true };
     };
     (bridge.api.sendCommand as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(failing);

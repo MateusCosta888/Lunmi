@@ -63,6 +63,25 @@ def safe_text(text: Any, *, explicit: bool = False, maximum: int = MAX_TEXT) -> 
     return value.strip()
 
 
+def safe_document(text: Any, *, maximum: int = 200_000) -> str:
+    """Valida o documento de perfil livre sem o impor limites de item.
+
+    O texto é devolvido **exatamente** como veio (sem strip nem normalização):
+    parágrafos, listas e espaços fazem parte do que o utilizador escreveu.
+    Só segredos/conteúdo privado e bytes de controlo são recusados.
+    """
+    if not isinstance(text, str):
+        raise MemoryPolicyError()
+    if len(text) > maximum:
+        raise MemoryPolicyError()
+    if any(ord(c) < 32 and c not in "\n\t" for c in text):
+        raise MemoryPolicyError()
+    for candidate in (text, normalized(text)):
+        if _SECRET.search(candidate) or _PRIVATE.search(candidate):
+            raise MemoryPolicyError()
+    return text
+
+
 def timestamp(value: Any) -> str:
     try:
         if not isinstance(value, str) or len(value) > 40:

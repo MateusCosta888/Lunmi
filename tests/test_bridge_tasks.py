@@ -197,7 +197,7 @@ def test_converse_mode_runs_without_computer_use_and_rejects_invalid_mode(tmp_pa
         assert exc_info.value.code == "invalid_payload"
 
         with pytest.raises(protocol.ProtocolError) as exc_info:
-            svc.dispatch(protocol.Envelope(v=1, id="m2", type="chat.send", payload={"text": "oi", "mode": "auto"}))
+            svc.dispatch(protocol.Envelope(v=1, id="m2", type="chat.send", payload={"text": "oi", "mode": "invalid-mode"}))
         assert exc_info.value.code == "invalid_payload"
 
         res = svc.dispatch(
@@ -219,6 +219,38 @@ def test_converse_mode_runs_without_computer_use_and_rejects_invalid_mode(tmp_pa
         assert finished[0]["status"] == "SUCCESS"
         assert finished[0]["scope"] == "conversation"
         assert finished[0]["total_tokens"] == 20
+    finally:
+        svc.close()
+
+
+def test_task_started_precedes_each_user_echo_and_message_ids_are_stable(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    finished_evt = threading.Event()
+
+    def on_emit(t: str, p: dict[str, Any]) -> None:
+        events.append((t, p))
+        if t == "task.finished":
+            finished_evt.set()
+
+    svc = BridgeService(emit=on_emit, sandbox_dir=tmp_path, controller_factory=_TaskFakeController)
+    try:
+        for turn in range(3):
+            finished_evt.clear()
+            result = svc.dispatch(protocol.Envelope(
+                v=1, id=f"turn-{turn}", type="chat.send",
+                payload={"text": f"Pergunta sintética {turn}", "mode": "converse"},
+            ))
+            assert finished_evt.wait(timeout=3.0)
+            task_id = result["task_id"]
+            own = [(kind, payload) for kind, payload in events if payload.get("task_id") == task_id]
+            started = next(index for index, (kind, _) in enumerate(own) if kind == "task.started")
+            user = [(index, payload) for index, (kind, payload) in enumerate(own)
+                    if kind == "chat.message" and payload.get("role") == "user"]
+            assert len(user) == 1 and started < user[0][0]
+            assert user[0][1]["message_id"] == f"{task_id}:user"
+        user_ids = [payload["message_id"] for kind, payload in events
+                    if kind == "chat.message" and payload.get("role") == "user"]
+        assert len(set(user_ids)) == 3
     finally:
         svc.close()
 

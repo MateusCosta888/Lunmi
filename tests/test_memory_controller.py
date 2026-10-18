@@ -56,7 +56,8 @@ def test_m1_restart_provider_switch_conversation_and_local_commands(tmp_path: Pa
         assert second.memory.working.get(second.session_id) == {}
         listed = await second.run('o que você lembra?')
         assert 'prefiro respostas curtas' in listed.message
-        forgotten = await second.run('esquece respostas curtas')
+        # Esquecer pelo chat exige o trecho exato: uma palavra solta não apaga o bloco.
+        forgotten = await second.run('esquece prefiro respostas curtas')
         assert forgotten.message == 'Memória apagada.'
         assert second.memory.recall('respostas curtas') == []
         logs = (tmp_path / 'tasks.jsonl').read_text(encoding='utf-8')
@@ -90,11 +91,18 @@ def test_host_only_injection_worker_never_receives_store_or_profile(tmp_path: Pa
 
 
 @pytest.mark.parametrize('raw', ['{}', '[]', '{bad', '{"message":["done"],"action":{"tool":"write"}}',
-                               '{"message":["done"],"status":"CONTINUE"}',
-                               '{"message":"fine","memory_proposals":[{"text":"x"}]}'])
+                               '{"message":["done"],"status":"CONTINUE"}'])
 def test_malformed_conversation_not_an_action(raw: str) -> None:
     with pytest.raises(BrainError):
         parse_response(raw)
+
+
+@pytest.mark.parametrize('changes', [[{'text': 'x'}], 'nao-lista', [{'kind': 'x', 'text': 'y'}],
+                                     [{'kind': 'fact', 'text': 'y', 'extra': 1}]])
+def test_invalid_memory_metadata_is_fail_soft(changes: object) -> None:
+    # Metadado inválido não destrói uma resposta válida: texto preservado, zero memória.
+    text, parsed = parse_response(json.dumps({'message': 'fine', 'memory_changes': changes}))
+    assert text == 'fine' and parsed == []
 
 
 def test_conversation_json_fenced_plain_and_explicit_commands(tmp_path: Path) -> None:
@@ -147,5 +155,41 @@ def test_conversation_provider_error_is_honest(tmp_path: Path) -> None:
         result = await controller.run('explique', conversation=True)
         assert result.status == 'FAILED' and result.failure_kind == 'PROVIDER_FAILURE'
         assert result.llm_calls == 1 and not result.evidence
+        await controller.close()
+    asyncio.run(scenario())
+
+
+def test_turn_window_gives_ram_continuity_independent_of_history(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        controller = TaskController(settings(tmp_path))
+        controller.engine.start = AsyncMock(side_effect=AssertionError('worker must not start'))
+        controller.brain = FixtureBrain(json.dumps({'message': 'primeira resposta'}))
+        await controller.run('Explique o projeto X', conversation=True)
+        controller.brain.reply = json.dumps({'message': 'segunda resposta'})
+        await controller.run('Continua', conversation=True)
+        joined = json.dumps(controller.brain.calls[1], ensure_ascii=False)
+        assert 'Utilizador (turno anterior): Explique o projeto X' in joined
+        assert 'Lunmi (turno anterior): primeira resposta' in joined
+        assert controller.memory.options()['history'] is False
+        # Anexos nunca entram na janela de turnos.
+        await controller.run('Analise o anexo', conversation=True,
+                             attachments=[{'name': 'a.txt', 'size_bytes': 6, 'text': 'dado.'}])
+        assert all('a.txt' not in f'{user}{answer}' for user, answer in
+                   controller.turns.pairs(controller.session_id))
+        await controller.close()
+    asyncio.run(scenario())
+
+
+def test_auto_learn_off_does_not_create_proposals_from_conversation(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        controller = TaskController(settings(tmp_path))
+        controller.engine.start = AsyncMock(side_effect=AssertionError('worker must not start'))
+        controller.memory.set_options(auto_learn=False)
+        controller.brain = FixtureBrain(json.dumps({'message': 'ok', 'memory_changes': [
+            {'kind': 'fact', 'text': 'uso editor Alpha'}]}))
+        result = await controller.run('No trabalho uso editor Alpha', conversation=True)
+        assert result.status == 'SUCCESS' and not result.memory_error
+        assert controller.memory.proposals() == []
+        assert controller.memory.profile_snapshot().text == ''
         await controller.close()
     asyncio.run(scenario())

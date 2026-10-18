@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -175,14 +176,28 @@ def test_result_proof_resolves_a_pending_enter_without_relabelling_the_operation
     assert proof['results_verified'] is True  # existing consumers keep working
     assert proof['workflow'] == 'spotify_search'
     assert proof['query_length'] == len('Thriller')
+    typed = {'operation': 'set_edit_text', 'handle': 1, 'id': 'field', 'runtime_id': [1, 4],
+             'verified': True, 'length': len('Thriller'),
+             'text_sha256': hashlib.sha256(b'Thriller').hexdigest()}
     pending_enter = {'operation': 'keyboard_input', 'handle': 1, 'id': 'field',
                      'runtime_id': [1, 4], 'submitted': True, 'verified': False,
                      'needs_postcondition': True}
-    assert unresolved_evidence([pending_enter, proof]) == []
+    assert unresolved_evidence([typed, pending_enter, proof]) == []
+    # Same length is not the same submission: the proof is bound to Thriller's digest.
+    other = {**typed, 'length': len('NOT-SAME'),
+             'text_sha256': hashlib.sha256(b'NOT-SAME').hexdigest()}
+    assert unresolved_evidence([other, pending_enter, proof]) == [pending_enter]
     # The contract itself is not loosened: a proof of another operation still cannot
     # resolve the Enter. Only the native verification can.
-    assert unresolved_evidence([pending_enter, {**proof, 'operation': 'spotify_search'}]) == [
+    assert unresolved_evidence([typed, pending_enter, {**proof, 'operation': 'spotify_search'}]) == [
         pending_enter]
+    # A marker supplied by someone else, even in the same window, is not the live
+    # workflow's association. The opaque token was issued for the real proof.
+    foreign = {**proof, 'id': 'library-row', 'runtime_id': [9, 9],
+               'association': 'forged-marker'}
+    assert unresolved_evidence([typed, pending_enter, foreign]) == [pending_enter]
+    no_token = {key: value for key, value in proof.items() if key != 'association'}
+    assert unresolved_evidence([typed, pending_enter, no_token]) == [pending_enter]
 
 
 def runtime(engine):

@@ -6,9 +6,10 @@ Não publique chaves, bancos, logs brutos ou explorações com dados reais em is
 
 ## Fronteiras importantes
 
-- **Desktop:** Executar pode interagir com aplicativos e arquivos. Use sessão controlada e acompanhe confirmações/resultados.
+- **Desktop:** o chat automático pode interagir com aplicativos e arquivos quando o pedido autoriza uma operação. Use sessão controlada e acompanhe confirmações/resultados.
 - **Inferência:** instruções, observações e contexto de memória podem ser enviados ao provedor. Armazenamento local não equivale a inferência privada.
-- **Memória:** SQLite fica em `.local/`; episódios/histórico seguem opções e propostas exigem aceite. Exportações podem conter dados pessoais.
+- **Memória:** SQLite fica na raiz de dados local; o documento de perfil pode ser editado e atualizado por aprendizagem quando ativada. Propostas legadas exigem aceite; episódios/histórico seguem opções próprias. Exportações e cópias de segurança podem conter dados pessoais.
+- **Gmail:** utiliza a conta Composio do próprio utilizador. Credenciais lembradas são cifradas com DPAPI; não são incluídas no repositório. Emails são dados externos não confiáveis. Enviar exige prévia e aprovação manual, mesmo com Autoaprovação. Resultado incerto não autoriza repetição, e aceitação pelo serviço não garante entrega.
 - **Credenciais:** chaves lembradas usam DPAPI. `.env`, se usado, é texto local; proteja-o e não o publique.
 - **Electron:** isolamento de contexto, sandbox, CSP local e preload limitado fazem parte da configuração. Sem shell/filesystem genéricos no renderer.
 - **Recuperação:** reiniciar backend não reenvia automaticamente a tarefa anterior.
@@ -23,7 +24,9 @@ Se uma credencial real for publicada, revogue/rotacione primeiro. Excluir em um 
 
 ## Dependências upstream
 
-Auditoria de 2026-10-15: `npm audit` não apontou advisories. `pip-audit -r requirements.lock --no-deps --disable-pip` apontou seis avisos; o ambiente Python **não é anunciado como livre de vulnerabilidades**.
+Atualização de 2026-10-18: `npm audit` apontou **oito entradas moderadas**, nenhuma alta ou crítica, na árvore de ferramentas de build/empacotamento. A cadeia envolve `electron-builder`, `@electron/get`, `global-agent`, `roarr` e dependentes; não se trata de oito falhas independentes do renderer. A correção automática sugerida muda a versão fixada do empacotador e não foi aplicada neste envio de código. Reavaliar até **2026-11-15** ou antes de gerar nova distribuição. Não usar proxies de build ou dependências não confiáveis.
+
+A auditoria Python (`pip-audit -r requirements.lock --no-deps --disable-pip`), repetida em 2026-10-18, confirmou seis avisos em quatro pacotes; o ambiente Python **não é anunciado como livre de vulnerabilidades**. A tabela abaixo preserva a triagem de alcance registada em 2026-10-15.
 
 | Pacote | Aviso | Alcance analisado nesta versão |
 | --- | --- | --- |

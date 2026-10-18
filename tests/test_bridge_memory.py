@@ -264,3 +264,56 @@ def test_memory_episodes_options_export_import_limit_and_wipe(tmp_path: Path) ->
         assert any("Python e TypeScript" in item["text"] for item in restored["items"])
     finally:
         svc.close()
+
+
+def test_memory_profile_get_save_cas_undo_and_limits(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    svc = BridgeService(
+        emit=lambda t, p: events.append((t, p)),
+        sandbox_dir=tmp_path,
+        controller_factory=_MemoryDummyController,
+    )
+    try:
+        initial = svc.dispatch(protocol.Envelope(v=1, id="pg-1", type="memory.profile.get", payload={}))
+        assert initial == {"enabled": True, "auto_learn": True, "text": "", "revision": 0,
+                           "can_undo": False, "char_count": 0, "max_chars": 8000,
+                           "state": "empty"}
+
+        payload = {"text": "Prefiro respostas curtas.", "base_revision": 0}
+        saved = svc.dispatch(protocol.Envelope(v=1, id="pg-2", type="memory.profile.save",
+                                               payload=payload))
+        assert saved["revision"] == 1 and saved["can_undo"] is True and saved["state"] == "ready"
+        assert saved["char_count"] == len("Prefiro respostas curtas.")
+        assert ("memory.changed", {"reason": "saved", "revision": 1}) in events
+
+        with pytest.raises(protocol.ProtocolError) as stale:
+            svc.dispatch(protocol.Envelope(v=1, id="pg-3", type="memory.profile.save",
+                                           payload=payload))
+        assert stale.value.code == "stale_revision"
+        assert stale.value.details == {"revision": 1, "can_undo": True}
+
+        undone = svc.dispatch(protocol.Envelope(v=1, id="pg-4", type="memory.profile.undo",
+                                                payload={"base_revision": 1}))
+        assert undone["text"] == "" and undone["revision"] == 2 and undone["can_undo"] is False
+        assert undone["state"] == "empty"
+        assert ("memory.changed", {"reason": "undone", "revision": 2}) in events
+
+        with pytest.raises(protocol.ProtocolError) as nothing:
+            svc.dispatch(protocol.Envelope(v=1, id="pg-5", type="memory.profile.undo",
+                                           payload={"base_revision": 2}))
+        assert nothing.value.code == "nothing_to_undo"
+        assert nothing.value.details == {"revision": 2}
+
+        with pytest.raises(protocol.ProtocolError) as too_large:
+            svc.dispatch(protocol.Envelope(v=1, id="pg-6", type="memory.profile.save",
+                                           payload={"text": "x" * 8001, "base_revision": 2}))
+        assert too_large.value.code == "profile_too_large"
+        assert too_large.value.details == {"char_count": 8001, "max_chars": 8000}
+
+        options = svc.dispatch(protocol.Envelope(v=1, id="pg-7", type="memory.options.set",
+                                                 payload={"options": {"auto_learn": False}}))
+        assert options["options"]["auto_learn"] is False
+        after = svc.dispatch(protocol.Envelope(v=1, id="pg-8", type="memory.profile.get", payload={}))
+        assert after["auto_learn"] is False
+    finally:
+        svc.close()

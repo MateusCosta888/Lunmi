@@ -21,24 +21,27 @@ Um assistente de desktop com interface Electron, backend Python e automação as
   <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi no tema Celestial, com navegação recolhida e painel de memória" />
 </p>
 
-> **Em desenvolvimento.** A Lunmi funciona a partir do código-fonte em uma sessão interativa do Windows. Ainda não há instalador assinado, atualização automática ou garantia de automação universal.
+> **Em desenvolvimento.** A Lunmi funciona a partir do código-fonte e tem um instalador alpha Windows x64 para testes. Ainda não há instalador assinado, atualização automática ou garantia de automação universal.
 
 ## O que a Lunmi faz
 
 | Recurso | Comportamento |
 | --- | --- |
-| **Conversar** | Responde com o Brain escolhido, sem executar ferramentas de desktop. |
-| **Executar** | Encaminha tarefas ao fluxo de automação e apresenta o resultado com seu estado de verificação. |
+| **Chat único** | Responde, pede esclarecimento ou utiliza ferramentas conforme o pedido, mantendo autorização e verificação no backend. |
+| **Resposta progressiva** | Mostra texto incremental nos transportes que oferecem streaming real. Transportes sem essa capacidade entregam a resposta completa. |
 | **Brain configurável** | Usa APIs, endpoints compatíveis e CLIs locais suportados. O catálogo depende do provedor conectado. |
-| **Memória local** | Permite consultar, editar, propor, aceitar, excluir, importar e exportar registros. |
+| **Memória local V2** | Documento editável com Guardar/Desfazer, aprendizagem opcional e gestão detalhada de episódios, propostas legadas e importação/exportação. |
+| **Gmail via Composio** | Liga a conta Composio do próprio utilizador para pesquisar, ler e preparar emails. Envio exige uma prévia com aprovação manual. Integração experimental. |
 | **Perfil local** | Nome de tratamento e foto, editáveis na própria janela. A foto não vai ao Brain. |
-| **Anexos de texto** | No modo Conversar: até 4 arquivos UTF-8, 32 KiB por arquivo e 64 KiB no total. |
+| **Anexos de texto** | Até 4 arquivos UTF-8, 32 KiB por arquivo e 64 KiB no total; o turno com anexos não autoriza ações. |
 | **Controle do usuário** | Confirmações, perguntas, cancelamento e indicação de falhas fazem parte da execução. |
 | **Interface adaptável** | Temas Celestial, Claro suave e Red Velvet, laterais com vidro, navegação recolhível e compositor multilinha com seleção de modelo. |
 
 A execução combina caminhos determinísticos para tarefas reconhecidas e agentes UFO² para as demais. Um despacho de ação não prova sucesso: confira o resultado e a evidência apresentados.
 
 ## Requisitos
+
+Os requisitos abaixo são para executar pelo código-fonte. O instalador alpha inclui o runtime Python e as dependências; cada testador configura o seu próprio Brain.
 
 - **Windows 10 ou 11**, com a sessão de desktop aberta e desbloqueada.
 - **Python 3.11**, com Tkinter para o frontend legado opcional.
@@ -78,21 +81,22 @@ Para configuração por ambiente, copie [`.env.example`](.env.example) para `.en
 
 [Guia de instalação e solução de problemas →](docs/GETTING_STARTED.md)
 
-## Dois modos, uma distinção importante
+## Um chat, autorização explícita
 
-**Conversar** não executa ações no computador. **Executar** pode interagir com aplicativos e arquivos conforme a tarefa, as capacidades disponíveis e a política de confirmação.
+Na interface atual não é preciso escolher Conversar ou Executar. Uma pergunta como "Como apago uma pasta?" deve produzir uma explicação; um pedido direto de operação pode utilizar ferramentas. Pedidos ambíguos exigem esclarecimento. Os modos legados continuam no protocolo para compatibilidade.
 
 - Comece com uma tarefa pequena e arquivos próprios de teste.
 - Leia os pedidos de confirmação antes de aceitar.
 - **Parar** solicita o cancelamento da tarefa atual.
 - Reiniciar um backend falhado não repete automaticamente a instrução anterior.
 - A Autoaprovação mantém o comportamento existente: a alteração se destina à próxima tarefa, sem trocar a política de uma tarefa em andamento.
+- O envio de email exige aprovação manual da prévia, mesmo com Autoaprovação ligada. Um resultado incerto não é repetido automaticamente; aceitação pelo Gmail não comprova entrega ao destinatário.
 
 O painel de tarefas recentes mostra a sessão atual; não promete recuperar integralmente conversas anteriores.
 
 ## Memória e privacidade
 
-As memórias ficam em SQLite local. Propostas precisam ser aceitas; episódios e histórico seguem as opções habilitadas. O histórico de conversa começa desligado.
+As memórias ficam em SQLite local. O painel apresenta um documento de texto livre: **O que a Lunmi deve saber sobre ti**. É possível editar e guardar, pedir para lembrar algo no chat e permitir aprendizagem de declarações claras em conversas. As opções **Usar memória** e **Aprender com as conversas** controlam esse comportamento. Propostas legadas continuam sujeitas a aceite; episódios e histórico têm opções próprias. O histórico persistente começa desligado.
 
 **Memória local não significa inferência privada.** Instruções, contexto recuperado e observações necessárias à execução podem ser enviados ao provedor escolhido. Um endpoint local e uma API externa têm fronteiras de privacidade diferentes.
 
@@ -118,16 +122,24 @@ app/
   bridge/       Protocolo JSONL entre Electron e Python
   computer/     Ferramentas Windows e integração UFO²
   core/         Controle da tarefa e política de execução
+  integrations/ Composio OAuth e ferramentas restritas de Gmail
   memory/       Persistência e recuperação de memória
   ui/           Frontend Tkinter legado
 desktop/
   electron/     Processo principal, preload e supervisão do backend
   src/          Interface React, temas e componentes
+  scripts/      Montagem, auditoria e aceite dos pacotes
   tests/        Testes do frontend e do protocolo
-docs/           Guias públicos e imagens selecionadas
+  resources/    Metadados do runtime; binários locais fora do Git
+  release/      Instaladores gerados localmente, fora do Git
+docs/           Guias públicos e recursos de apresentação
 tests/          Regressões do backend
 benchmarks/     Ferramentas locais de medição
 ```
+
+[Índice dos guias →](docs/README.md)
+
+Na cópia completa de trabalho, `docs/LOCAL-INDEX.md` organiza os relatórios por assunto, planos, investigação e evidências. `docs/reports/`, `docs/plans/`, `logs/`, `output/`, `research/` e `Relatorio Final/` conservam o histórico local; esses materiais não são publicados em bloco no repositório. `docs/MAPA-DE-CAMINHOS.tsv` regista a localização anterior e atual dos ficheiros reorganizados.
 
 [Como as partes se conectam →](docs/ARCHITECTURE.md)
 
@@ -150,9 +162,10 @@ Os testes usam fixtures e sandboxes; não certificam qualquer aplicativo externo
 ## Limites atuais
 
 - Automação depende do que os aplicativos expõem por UIA/Win32 e da verificação disponível.
-- Anexos funcionam somente em Conversar com texto/código UTF-8. Imagens, PDF e binários são recusados; anexos e respostas desse turno não viram memória automática.
-- Voz, streaming e navegação web completa não são anunciados como recursos prontos.
-- Não há distribuição empacotada, suporte a macOS/Linux ou certificação geral de múltiplos monitores e DPIs.
+- Anexos aceitam texto/código UTF-8. Imagens, PDF e binários são recusados; anexos e respostas desse turno não viram memória automática.
+- Streaming depende da capacidade do transporte. STT/TTS e navegação web completa não estão implementados.
+- Gmail é experimental: a ligação e a leitura reais foram exercitadas numa conta de testes; o diálogo e as confirmações de envio foram testados com simulações. Envio/entrega reais, todos os formatos MIME e todas as combinações de modelos não estão certificados. Cada utilizador usa a sua conta Composio e Gmail; os limites desses serviços continuam a aplicar-se.
+- A distribuição empacotada está em alpha Windows x64, sem assinatura ou atualização automática. Outra máquina/VM e provedores reais ainda precisam de validação; não há suporte a macOS/Linux ou certificação geral de múltiplos monitores e DPIs.
 - Há dependências upstream legadas; avisos conhecidos e triagem estão em [Segurança](SECURITY.md#dependências-upstream).
 
 ## Créditos e licenças

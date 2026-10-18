@@ -247,6 +247,9 @@ class _RoutingEngine:
     process = None
     worker_ready = True
 
+    def __init__(self, *, distinct_roles: bool = False) -> None:
+        self.distinct_roles = distinct_roles
+
     async def start(self) -> None:
         pass
 
@@ -257,7 +260,12 @@ class _RoutingEngine:
                        approval_mode: str = "manual") -> dict[str, Any]:
         host = await completion([{"role": "user", "content": instruction}], "HostAgent")
         app = await completion([{"role": "user", "content": instruction}], "AgentType.APP")
-        assert "host" in host and "app" in app
+        # One brain may legitimately answer both roles: the role label is the call's
+        # paper, not proof of a second instance. Only the routed case requires the
+        # AppAgent reply to come from the distinct fast brain.
+        assert host and app
+        if self.distinct_roles:
+            assert "host" in host and "app" in app
         return {"status": "SUCCESS", "message": "ok", "actions": 2, "steps": 2,
                 "evidence": [{"operation": "launch", "verified": True}]}
 
@@ -277,7 +285,7 @@ def test_completion_routes_app_agent_to_the_fast_brain(
                             app_model="fast", fast_path=False, logs_path=tmp_path,
                             collect_metrics=False)
         controller = TaskController(settings)
-        controller.engine = _RoutingEngine()  # type: ignore[assignment]
+        controller.engine = _RoutingEngine(distinct_roles=True)  # type: ignore[assignment]
         result = await controller.run("Abra a Calculadora.")
         await controller.close()
         return result
@@ -309,6 +317,9 @@ def test_completion_without_app_pair_keeps_one_brain(tmp_path: Path, monkeypatch
         return result
 
     result = asyncio.run(scenario())
+    assert result.status == "SUCCESS"
+    # One resolved instance answers both calls; the labels are the Host/App role of
+    # each call, not a second brain. The AppAgent selection is the inherited one.
     assert brains == ["codex"]
-    assert [call["brain"] for call in result.prompt_calls] == ["host", "host"]
+    assert [call["brain"] for call in result.prompt_calls] == ["host", "app"]
     assert (result.app_provider, result.app_model) == ("", "")

@@ -49,7 +49,7 @@ def test_capability_without_discovery_is_reported_without_spawning(monkeypatch: 
     listing = asyncio.run(ModelDiscovery().list("claude"))
     assert listing.status is DiscoveryStatus.NOT_SUPPORTED
     assert listing.models == ()
-    assert "manualmente" in listing.detail
+    assert "Catálogo não exposto" in listing.detail and "outro provider" in listing.detail
 
 
 @pytest.mark.parametrize("kind,status", [

@@ -47,9 +47,6 @@ it("navegação mantém botões reais, clique assistivo, Enter nativo e setas se
 });
 
 it("movimento reduzido deixa fundo estático e sem loop RAF", () => {
-  vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
-    clearRect: vi.fn(), setTransform: vi.fn(), beginPath: vi.fn(), arc: vi.fn(), fill: vi.fn(),
-  } as unknown as CanvasRenderingContext2D);
   const raf = vi.spyOn(window, "requestAnimationFrame");
   const { rerender, unmount } = render(<Starfield paused={false} />);
   expect(screen.getByTestId("starfield").dataset.paused).toBe("true");

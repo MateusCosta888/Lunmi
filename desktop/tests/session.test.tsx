@@ -95,6 +95,9 @@ function makeFakeBridge(initialSession: SessionReadyPayload): FakeBridge {
       if (type === "memory.list") {
         return { enabled: true, items: [] };
       }
+      if (type === "memory.profile.get") {
+        return { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" };
+      }
       if (type === "memory.proposals") {
         return { proposals: [] };
       }
@@ -163,14 +166,27 @@ function event(type: string, payload: Record<string, unknown>): Envelope {
 async function renderReadyApp(bridge: FakeBridge): Promise<void> {
   (window as unknown as { lunmi: LunmiBridgeApi }).lunmi = bridge.api;
   render(<App />);
-  await waitFor(() => expect(screen.getByTestId("session-status").textContent).toBe("Ready"));
-  // O `Ready` nasce na mesma atualização que sobe `sessionVersion`, cujo efeito limpa o estado da
-  // conversa. Sem esta volta de macrotarefa, um evento emitido logo depois podia ser apagado por
-  // esse efeito e o teste mediria a corrida, não o comportamento.
+  // Prontidão provada pela UI real, não por um chip: o compositor só existe quando sessão,
+  // controles, memória e fonte estão prontos. O chip saudável "Ready" foi removido.
+  await screen.findByTestId("composer");
+  // A sessão pronta sobe `sessionVersion`, cujo efeito limpa o estado da conversa. Sem esta volta de
+  // macrotarefa, um evento emitido logo depois podia ser apagado por esse efeito e o teste mediria a
+  // corrida, não o comportamento.
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("Shell do renderer — recuperação de sessão (F1 reparo 3)", () => {
+  it("estado saudável não expõe chip 'Ready' nem nó fictício", async () => {
+    const bridge = makeFakeBridge(sessionPayload("sess-healthy"));
+    await renderReadyApp(bridge);
+    // Nenhum indicador permanente no topo saudável; nada escondido só para satisfazer teste.
+    expect(screen.queryByTestId("session-status")).toBeNull();
+    expect(screen.queryByTestId("session-failure-strip")).toBeNull();
+    expect(document.querySelector(".lunmi-session-chip")).toBeNull();
+    expect(screen.getByTestId("composer")).toBeTruthy();
+    expect(screen.getByTestId("brand-text").querySelector(".lunmi-kinetic-sr")?.textContent).toBe("Lunmi");
+  });
+
   it("troca para 'Sessão com falha' e reinicia o backend sem repetir a instrução", async () => {
     const bridge = makeFakeBridge(sessionPayload("sess-1"));
     await renderReadyApp(bridge);
@@ -199,7 +215,8 @@ describe("Shell do renderer — recuperação de sessão (F1 reparo 3)", () => {
 
     fireEvent.click(screen.getByTestId("restart-backend"));
 
-    await waitFor(() => expect(screen.getByTestId("session-status").textContent).toBe("Ready"));
+    // Reinício confirmado pela ausência da faixa de falha; não há mais chip saudável para observar.
+    await waitFor(() => expect(screen.queryByTestId("session-failure-strip")).toBeNull());
     expect(bridge.restartCount()).toBe(1);
     // A sessão nova não carrega o histórico nem reenvia a instrução antiga.
     expect(bridge.calls.filter((call) => call.type === "chat.send")).toHaveLength(1);

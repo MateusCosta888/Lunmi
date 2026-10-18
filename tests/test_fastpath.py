@@ -17,6 +17,7 @@ from app.computer.appcatalog import AppCatalog
 from app.computer.appindex import AppEntry, AppIndex
 from app.computer.windows_tools import WindowsTools
 from app.core.controller import TaskController
+from app.llm import Completion
 from app.settings import Settings
 
 
@@ -186,6 +187,49 @@ def test_a_declined_plan_reaches_the_agent_unchanged() -> None:
     assert engine.run_task_calls == 1
     assert result.plan_source == "deterministic+llm"
     assert result.status == "SUCCESS"
+    # Finding 6: the handoff keeps a cause, the effects already proven (none here)
+    # and the fact that the original goal is still pending.
+    assert result.fast_path_declined["reason"] == "Fechado e verificado."
+    assert result.fast_path_declined["actions"] == 0
+    assert result.fast_path_declined["effects"] == []
+    assert "continua pendente" in result.fast_path_declined["pending"]
+
+
+def test_handoff_context_reaches_the_host_prompt() -> None:
+    class CapturingBrain:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def complete(self, messages: list[dict]) -> Completion:
+            self.messages = messages
+            return Completion('{"status": "FINISH", "comment": "ok"}', 1, 1)
+
+        async def close(self) -> None:
+            pass
+
+    class HandoffEngine(FakeEngine):
+        async def run_task(self, instruction: str, completion, confirm, **kwargs) -> dict:
+            self.run_task_calls += 1
+            await completion([{"role": "user", "content": instruction}], "HostAgent")
+            return {"status": "SUCCESS", "message": "agente", "actions": 1, "steps": 1,
+                    "evidence": [{"operation": "agent", "verified": True}]}
+
+    async def scenario() -> tuple[object, CapturingBrain]:
+        controller = TaskController(Settings(provider="codex", model="account-model",
+                                              collect_metrics=False))
+        brain = CapturingBrain()
+        controller.brain = brain  # type: ignore[assignment]
+        controller.engine = HandoffEngine("declined")  # type: ignore[assignment]
+        result = await controller.run("Feche a Calculadora.")
+        await controller.close()
+        return result, brain
+
+    result, brain = asyncio.run(scenario())
+    assert result.fast_path_declined["reason"]
+    handoff = [message["content"] for message in brain.messages
+               if message.get("role") == "system" and "Fastpath handoff" in str(message.get("content"))]
+    assert handoff and "Fechado e verificado." in handoff[0]
+    assert "continua pendente" in handoff[0]
 
 
 def test_a_failed_plan_is_not_run_twice() -> None:

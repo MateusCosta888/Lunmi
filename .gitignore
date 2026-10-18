@@ -31,6 +31,14 @@
 !/desktop/electron/
 !/desktop/tests/
 !/desktop/licenses/
+# Scripts de empacotamento/verificação: sem eles a entrega não é reproduzível.
+!/desktop/scripts/
+# Rastreabilidade do runtime empacotado (origem/hashes e lock transitivo). O runtime binário
+# e o payload montado continuam fora do controle de versão.
+!/desktop/resources/
+/desktop/resources/*
+!/desktop/resources/RUNTIME-SOURCE.json
+!/desktop/resources/requirements-runtime.lock
 !/desktop/THIRD-PARTY-MOTION.md
 !/desktop/package.json
 !/desktop/package-lock.json
@@ -41,6 +49,7 @@
 
 # Public docs; internal plans, reports, research and evidence remain local.
 /docs/*
+!/docs/README.md
 !/docs/GETTING_STARTED.md
 !/docs/ARCHITECTURE.md
 !/docs/MEMORY.md

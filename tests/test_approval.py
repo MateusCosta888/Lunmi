@@ -282,9 +282,8 @@ def test_a_broken_preference_file_never_widens_what_runs_without_asking(
 def test_the_controller_switches_modes_and_saves_the_choice(tmp_path: Path,
                                                             monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings_module, "ROOT", tmp_path)
-    monkeypatch.setattr("app.core.controller.ROOT", tmp_path)
     from app.core.controller import TaskController
-    controller = TaskController(Settings())
+    controller = TaskController(Settings(state_root=tmp_path))
     assert controller.approval_mode == MANUAL
     controller.set_auto_approve(True)
     assert controller.approval_mode == AUTO and controller.settings.auto_approve is True

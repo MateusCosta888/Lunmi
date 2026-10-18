@@ -481,34 +481,50 @@ def test_each_cli_call_records_spawn_wait_and_total_timing(monkeypatch: pytest.M
 
 
 def test_spawn_timing_measures_the_spawn_and_not_the_whole_round(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`spawn_ms` must stay a small number even when the model round takes seconds."""
+    """`spawn_ms` measures only the spawn, separated from the model wait.
+
+    A controlled `perf_counter` makes the two phases exact instead of relying on
+    `asyncio.sleep` wall delays, whose Windows timer granularity can undershoot
+    the fake delay and make the assertion flaky without any product regression.
+    """
+    import time as real_time
+    from types import SimpleNamespace
+
+    import app.brain.cli.headless as headless
+
     spec = find_spec("claude")
     assert spec is not None
     brain = HeadlessCliBrain(Settings(provider="claude", model="sonnet"), spec, executable="claude")
     reply = '{"type": "result", "subtype": "success", "result": "ok"}\n'
+    now = [1000.0]
+
+    def perf_counter() -> float:
+        return now[0]
+
+    def advance(ms: float) -> None:
+        now[0] += ms / 1000
 
     class SlowHandle(_FakeHandle):
         async def readline(self, timeout: float) -> str:
-            await asyncio.sleep(0.25)  # the model is slow, the spawn is not
+            advance(250)  # the model is slow, the spawn is not
             return await super().readline(timeout)
 
-    handles = [SlowHandle([reply])]
+    handle = SlowHandle([reply])
 
     async def spawn(argv: list[str], **kwargs: object) -> Any:
-        await asyncio.sleep(0.02)
-        return handles[0]
+        advance(20)
+        return handle
 
-    monkeypatch.setattr("app.brain.cli.headless.spawn", spawn)
+    monkeypatch.setattr(headless, "time", SimpleNamespace(perf_counter=perf_counter,
+                                                         monotonic=real_time.monotonic))
+    monkeypatch.setattr(headless, "spawn", spawn)
 
-    async def scenario() -> None:
-        await brain.complete([{"role": "user", "content": "oi"}])
-
-    asyncio.run(scenario())
+    asyncio.run(brain.complete([{"role": "user", "content": "oi"}]))
 
     record = brain.cli_calls[0]
     assert record["total_ms"] >= 250
-    assert record["spawn_ms"] < 150, "spawn_ms was measured at the end of the round instead of at the spawn"
-    assert record["spawn_ms"] >= 15
+    assert record["spawn_ms"] == pytest.approx(20.0), "spawn_ms must be the 20 ms spawn, measured at the spawn"
+    assert record["spawn_ms"] < 150
 
 
 def test_a_failed_or_timed_out_call_still_records_its_outcome(monkeypatch: pytest.MonkeyPatch) -> None:

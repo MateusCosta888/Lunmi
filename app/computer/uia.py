@@ -8,6 +8,7 @@ Source: https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/n
 """
 from __future__ import annotations
 
+import hashlib
 import time
 import re
 from collections import deque
@@ -16,7 +17,7 @@ from typing import Any, Callable
 
 from app.computer.controls import fold
 from app.computer.approval import submit_keys
-from app.computer.verification import covers_dispatch
+from app.computer.verification import covers_dispatch, recovered_dispatch_indices
 
 PATTERNS = ("Invoke", "Value", "Text", "Selection", "SelectionItem", "Toggle",
             "ExpandCollapse", "Scroll", "ScrollItem", "ItemContainer", "VirtualizedItem",
@@ -836,7 +837,7 @@ class UIAEngine:
             if pending and normalized(expected_text) == pending[2]:
                 self.unverified_writes.pop(write_key)
         return {"operation": "uia_verify", "id": identifier, "handle": int(self._window().handle),
-                "runtime_id": list(meta["runtime_id"]),
+                "runtime_id": list(meta["runtime_id"]), "control_type": meta["type"],
                 "property": property_name, "observed": observed, "verified": verified,
                 "expected_text": expected_text, "expected_state": expected_state,
                 "source": source, "verified_by": "independent_live_read"}
@@ -926,6 +927,7 @@ class UIAEngine:
     def _check_pending_dispatch(self, meta: dict[str, Any], operation: str,
                                 recovery_of: int = -1) -> None:
         activation = {"invoke", "default_action", "click_input", "keyboard_input", "expand", "collapse"}
+        recovered = recovered_dispatch_indices(self.evidence)
         for index, action in enumerate(self.evidence):
             if index == recovery_of:
                 continue
@@ -935,7 +937,9 @@ class UIAEngine:
                     and action.get("runtime_id") == list(meta["runtime_id"])
                     and not action.get("recovery")
                     and action.get("needs_postcondition") and not action.get("verified")
-                    and not any(covers_dispatch(action, proof) for proof in self.evidence[index + 1:])):
+                    and index not in recovered
+                    and not any(covers_dispatch(action, proof, history=tuple(self.evidence[:index]))
+                                for proof in self.evidence[index + 1:])):
                 raise UIAError("mutation_unverified", "Ação anterior sem pós-condição; repetição recusada.")
 
     def _menu_recovery(self, element: Any, meta: dict[str, Any], backend: Any) -> dict[str, Any]:
@@ -943,12 +947,14 @@ class UIAEngine:
             return {}
         handle = int(self._window().handle)
         identity = list(meta["runtime_id"])
+        recovered = recovered_dispatch_indices(self.evidence)
         for index, action in enumerate(self.evidence):
             if (action.get("operation") not in {"invoke", "default_action"}
                     or action.get("executed") is not True or action.get("dispatch_uncertain")
                     or action.get("verified") or not action.get("needs_postcondition")
                     or action.get("handle") != handle or action.get("runtime_id") != identity
                     or action.get("before", {}).get("expanded") != 0
+                    or index in recovered
                     or any(covers_dispatch(action, proof) for proof in self.evidence[index + 1:])):
                 continue
             for read_index in range(index + 1, len(self.evidence)):
@@ -1021,7 +1027,9 @@ class UIAEngine:
             if (text, replace) == pending[:2] and before["text"] == pending[2]:
                 self.unverified_writes.pop(write_key)
                 return self._record("set_edit_text", identifier, verified=True, executed=False,
-                                    already_satisfied=True, comparison="exact_content")
+                                    already_satisfied=True, length=len(text),
+                                    text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                                    comparison="exact_content")
             raise UIAError("mutation_unverified", "Escrita anterior sem prova; não repetir nem acrescentar texto.")
         mechanism = backend.writable(element, meta)
         expected = normalized(text) if replace else before["text"] + normalized(text)
@@ -1053,7 +1061,9 @@ class UIAEngine:
         # TextChanged can populate results, validation labels or virtualized rows.
         # Identity checks protect actions, but an old tree cannot prove their absence.
         result = self._record("set_edit_text", identifier, verified=verified,
-                              pattern=mechanism, length=len(text), comparison="exact_content")
+                              pattern=mechanism, length=len(text),
+                              text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                              comparison="exact_content")
         if not verified:
             raise UIAError("verification_failed", "Texto aplicado mas conteúdo não confirmado; não repetir escrita.")
         self.unverified_writes.pop(write_key, None)

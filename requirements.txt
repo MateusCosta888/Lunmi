@@ -26,3 +26,7 @@ langchain==0.3.27
 langchain-community==0.3.31
 art==6.5
 Flask==3.1.2
+
+# Restricted Composio Connect OAuth/MCP client (already pinned in private runtime).
+mcp==1.30.0
+jsonschema==4.26.0

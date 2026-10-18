@@ -30,7 +30,8 @@ def episode_item(result: Any) -> MemoryItem | None:
         raise MemoryPolicyError()
     failure = getattr(result, 'failure_kind', '') or 'none'
     if failure not in {'none', 'PLANNING_FAILURE', 'ACTION_FAILURE', 'VERIFICATION_FAILURE',
-                       'PROVIDER_FAILURE', 'CONFIGURATION', 'TIMEOUT', 'CANCELLED', 'INTERNAL_ERROR'}:
+                       'PROVIDER_FAILURE', 'CONFIGURATION', 'AUTHORIZATION_REFUSED', 'TIMEOUT',
+                       'CANCELLED', 'INTERNAL_ERROR'}:
         raise MemoryPolicyError()
     apps = getattr(result, 'apps', [])
     # Engine evidence titles/paths/content are intentionally never copied to apps.

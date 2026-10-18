@@ -1,0 +1,57 @@
+/*
+ * Kinetic Text styles (`desktop/src/shared/KineticText.css`) — the Magic UI `@magicui/kinetic-text`
+ * effect as authored CSS for this project (no Tailwind). Attribution: desktop/THIRD-PARTY-MOTION.md.
+ *
+ * The upstream component sets `--hover-padding` and `--text-stroke-width` inline; here the same
+ * custom properties are read with the upstream formulas as fallback. Base weight is 300; the
+ * hovered letter reaches 900 with a text stroke, its immediate neighbours step to 600 and the
+ * letters two away to 400, all over a 0.4 s transition.
+ */
+.lunmi-kinetic {
+  display: flex;
+  flex-wrap: wrap;
+  font-weight: 300;
+}
+
+.lunmi-kinetic-letter {
+  will-change: font-weight, -webkit-text-stroke-width, padding;
+  -webkit-text-stroke-color: transparent;
+  -webkit-text-stroke-width: var(--text-stroke-width, calc(1em * 125 / 6000));
+  transition: font-weight 0.4s, -webkit-text-stroke-color 0.4s, padding 0.4s;
+}
+
+.lunmi-kinetic-letter:hover {
+  padding-inline: var(--hover-padding, calc(1em / 12));
+  font-weight: 900;
+  -webkit-text-stroke-color: currentcolor;
+  -webkit-text-stroke-width: calc(var(--text-stroke-width, calc(1em * 125 / 6000)) * 2);
+}
+
+/* The immediate neighbours of the hovered letter step to 600 and open a little. The `:has()`
+   branch covers the previous neighbour; the sibling combinator covers the next one. */
+.lunmi-kinetic-letter:hover + .lunmi-kinetic-letter,
+.lunmi-kinetic-letter:has(+ .lunmi-kinetic-letter:hover) {
+  padding-inline: var(--hover-padding, calc(1em / 12));
+  font-weight: 600;
+}
+
+/* The letters two away step to 400. */
+.lunmi-kinetic-letter:hover + .lunmi-kinetic-letter + .lunmi-kinetic-letter,
+.lunmi-kinetic-letter:has(+ .lunmi-kinetic-letter + .lunmi-kinetic-letter:hover) {
+  font-weight: 400;
+}
+
+.lunmi-kinetic-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lunmi-kinetic-letter { transition: none; }
+}

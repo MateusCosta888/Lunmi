@@ -11,7 +11,35 @@ from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
+# Recursos do produto (código, `vendor/UFO`, ícones): somente leitura no pacote. Dados
+# graváveis do utilizador ficam à parte em USER_DATA_ROOT.
 UFO_REVISION = "a795552d976c4c019d7c2f778a0effb5cef7de6b"
+
+
+def _user_data_root() -> Path:
+    """Raiz de dados graváveis, separada dos recursos somente-leitura do produto.
+
+    `LUNMI_USER_DATA` é definida pelo processo principal do Electron no pacote (pasta por
+    utilizador em `LOCALAPPDATA`); sem ela — código-fonte, `run.bat`, testes — a raiz é o
+    próprio checkout, preservando o comportamento histórico de `.local/`, `logs/` e `output/`.
+    Uma instalação nunca grava dentro de `resources/`, então o pacote sempre define a variável.
+
+    Resolvida em tempo de chamada para que `ROOT` continue sendo o ponto único de redireção
+    em testes e sessões de aceite que o reescrevem.
+    """
+    override = os.getenv("LUNMI_USER_DATA", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return ROOT
+
+
+# Valor resolvido no import (o pacote define a variável antes de o Python arrancar).
+USER_DATA_ROOT = _user_data_root()
+
+
+def _local_dir() -> Path:
+    """Pasta `.local` do escopo atual: estado pessoal do utilizador, fora dos recursos."""
+    return _user_data_root() / ".local"
 
 # Providers que exigem chave de API própria.
 API_KEY_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "openrouter", "nvidia"})
@@ -72,9 +100,7 @@ class Settings:
     # roles" — the current behaviour. Configured via LLM_APP_PROVIDER/LLM_APP_MODEL.
     app_provider: str = ""
     app_model: str = ""
-    # FASE 10: reasoning effort for a CLI brain whose spec declares such a flag (AGY
-    # `--effort`, Kilo `--variant`). Empty means "the CLI's own default". Measured at
-    # ~30x between the extremes of the scale, so it is a user-facing lever.
+    # Explicit effort only at documented destinations; empty preserves the model default.
     effort: str = ""
     api_key: str = field(default="", repr=False)
     base_url: str = ""
@@ -103,8 +129,12 @@ class Settings:
     log_level: str = "INFO"
     log_instruction: bool = False
     ufo_path: Path = ROOT / "vendor" / "UFO"
-    logs_path: Path = ROOT / "logs"
-    output_path: Path = ROOT / "output"
+    logs_path: Path = field(default_factory=lambda: _user_data_root() / "logs")
+    output_path: Path = field(default_factory=lambda: _user_data_root() / "output")
+    # Where task-time machine state lives (`<state_root>/.local`, today the application
+    # index the launcher learns from). A sandboxed bridge points it inside the sandbox, so
+    # a test or acceptance session never reads or rewrites the user's own index.
+    state_root: Path = field(default_factory=_user_data_root)
 
     def validate(self, *, credentials: bool = True, model: bool = True) -> None:
         """Check one configuration. ``model=False`` drops only the model requirement.
@@ -144,9 +174,13 @@ class Settings:
 
     @classmethod
     def load(cls) -> Settings:
-        load_dotenv(ROOT / ".env", override=False)
+        load_dotenv(_user_data_root() / ".env", override=False)
+        if _user_data_root() != ROOT:
+            # Uma instalação pode ter um `.env` próprio por utilizador; o do checkout é a
+            # base de desenvolvimento e não deve desaparecer do caminho.
+            load_dotenv(ROOT / ".env", override=False)
         values: dict[str, str] = {}
-        saved = ROOT / ".local" / "provider.dpapi"
+        saved = _local_dir() / "provider.dpapi"
         if saved.exists():
             try:
                 values = json.loads(_protect(saved.read_bytes(), decrypt=True))
@@ -154,7 +188,7 @@ class Settings:
                 raise ConfigurationError("Configuração salva inválida; reconfigure a API.") from exc
         approval = _load_approval()
         selection: dict[str, str] = {}
-        selected = ROOT / ".local" / "brain-selection.json"
+        selected = _local_dir() / "brain-selection.json"
         if selected.exists():
             try:
                 selection = json.loads(selected.read_text(encoding="utf-8"))
@@ -168,15 +202,15 @@ class Settings:
         # way as the main one — provider+model only, never a secret. An empty file means
         # "reuse the main brain".
         app_selection: dict[str, str] = {}
-        app_selected = ROOT / ".local" / "app-brain.json"
+        app_selected = _local_dir() / "app-brain.json"
         if app_selected.exists():
             try:
                 app_selection = json.loads(app_selected.read_text(encoding="utf-8"))
                 if not isinstance(app_selection, dict) or set(app_selection) != {"provider", "model"} \
                         or any(not isinstance(value, str) for value in app_selection.values()):
                     raise ValueError("invalid app selection")
-                if app_selection["provider"]:
-                    _validate_selection(app_selection["provider"], app_selection["model"])
+                if app_selection["provider"] and app_selection["provider"] not in SUPPORTED_PROVIDERS:
+                    raise ValueError("invalid app provider")
             except (OSError, ValueError) as exc:
                 raise ConfigurationError("A seleção do Brain do AppAgent é inválida; reconfigure-a.") from exc
         # Explicit environment/.env overrides the UI-saved settings.
@@ -214,7 +248,7 @@ class Settings:
                 log_level=os.getenv("LOG_LEVEL", "INFO"),
                 log_instruction=os.getenv("LOG_INSTRUCTIONS", "false").lower() == "true",
                 ufo_path=Path(os.getenv("UFO_PATH", str(ROOT / "vendor" / "UFO"))).resolve(),
-                output_path=Path(os.getenv("OUTPUT_DIRECTORY", str(ROOT / "output"))).resolve(),
+                output_path=Path(os.getenv("OUTPUT_DIRECTORY", str(_user_data_root() / "output"))).resolve(),
             )
         except ValueError as exc:
             raise ConfigurationError("Valores numéricos inválidos no .env.") from exc
@@ -231,7 +265,7 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 def _approval_path() -> Path:
-    return ROOT / ".local" / "approval.json"
+    return _local_dir() / "approval.json"
 
 
 def _load_approval() -> bool:
@@ -265,10 +299,15 @@ def _validate_selection(provider: str, model: str) -> None:
         raise ConfigurationError("Escolha um cérebro e modelo válidos.")
 
 
+def selection_path() -> Path:
+    """Where the nonsecret main selection is remembered (read back after apply)."""
+    return _local_dir() / "brain-selection.json"
+
+
 def save_selection(provider: str, model: str) -> None:
     """Remember only nonsecret provider/model; never change DPAPI credentials."""
     _validate_selection(provider, model)
-    path = ROOT / ".local" / "brain-selection.json"
+    path = selection_path()
     path.parent.mkdir(exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps({"provider": provider, "model": model.strip()}, ensure_ascii=False),
@@ -277,24 +316,20 @@ def save_selection(provider: str, model: str) -> None:
 
 
 def app_selection_path() -> Path:
-    return ROOT / ".local" / "app-brain.json"
+    return _local_dir() / "app-brain.json"
 
 
 def save_app_selection(provider: str, model: str) -> None:
-    """Remember the optional AppAgent brain pair; an empty provider removes it.
-
-    The AppAgent brain is optional: clearing the selection deletes the file instead of
-    leaving a half-configured pair behind, and the next task falls back to the main brain
-    exactly as if it had never been configured.
-    """
+    """Remember declared AppAgent fields; only both empty means full inheritance."""
     path = app_selection_path()
     provider = str(provider or "").strip().lower()
     model = str(model or "").strip()
-    if not provider:
+    if not provider and not model:
         if path.exists():
             path.unlink()
         return
-    _validate_selection(provider, model)
+    if provider and provider not in SUPPORTED_PROVIDERS:
+        raise ConfigurationError("Escolha um cérebro válido para o AppAgent.")
     path.parent.mkdir(exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps({"provider": provider, "model": model}, ensure_ascii=False),
@@ -306,7 +341,7 @@ def save_provider(provider: str, model: str, api_key: str, base_url: str) -> Non
     if provider in CLI_PROVIDERS:
         settings = Settings(provider=provider, model=model.strip())
         settings.validate()
-        path = ROOT / ".local" / "provider.dpapi"
+        path = _local_dir() / "provider.dpapi"
         path.parent.mkdir(exist_ok=True)
         temporary = path.with_suffix(".tmp")
         payload = json.dumps({"provider": provider, "model": settings.model, "api_key": "", "base_url": ""}).encode()
@@ -315,7 +350,7 @@ def save_provider(provider: str, model: str, api_key: str, base_url: str) -> Non
         return
     settings = Settings(provider=provider, model=model.strip(), api_key=api_key.strip(), base_url=base_url.strip())
     settings.validate()
-    path = ROOT / ".local" / "provider.dpapi"
+    path = _local_dir() / "provider.dpapi"
     path.parent.mkdir(exist_ok=True)
     temporary = path.with_suffix(".tmp")
     payload = json.dumps({"provider": settings.provider, "model": settings.model,

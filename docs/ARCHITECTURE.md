@@ -11,12 +11,14 @@ Bridge Python
     │
 TaskController ─── MemoryManager / SQLite
     │
-    ├── Conversar → Brain → resposta sem ferramentas
+    ├── Chat automático → Brain → texto ou decisão de ferramenta validada
     │
-    └── Executar → caminho determinístico ou UFO²
+    ├── Operação Windows → caminho determinístico ou UFO²
                        │ HostAgent / AppAgent
                        │ UIA / Win32 / filesystem
-                       └ resultado + verificação
+    │                  └ resultado + verificação
+    └── Email → integração Gmail restrita → Composio da própria conta
+                       └ leitura não confiável / prévia manual de envio
 ```
 
 ## Interface e comunicação
@@ -35,9 +37,13 @@ TaskController ─── MemoryManager / SQLite
 
 O app exclui sua própria árvore de processos da seleção de alvos. Autorização, despacho e verificação são conceitos separados. Uma operação incerta não deve virar repetição silenciosa.
 
+Streaming usa os eventos públicos do IPC existente, com identidades de sessão, tarefa e resposta. Texto incremental, texto estável e resultados verificados são conceitos separados; raciocínio interno não é publicado. O suporte pertence a cada transporte, sem simular streaming nos restantes. Não há sistema de voz neste lote.
+
+`app/integrations` mantém OAuth e ferramentas Gmail limitadas. O modelo não escolhe arbitrariamente a conta ligada. Conteúdo de email é dado externo não confiável, não autorização. Rascunhos pendentes ficam em RAM; enviar exige confirmação manual e não é repetido automaticamente após resultado incerto.
+
 ## Memória e dados
 
-`app/memory` fornece SQLite, busca FTS5, propostas, episódios e histórico opt-in. Perfil, contexto de trabalho e episódios têm papéis diferentes. O contexto é limitado; conteúdo recuperado pode acompanhar chamadas ao provedor de IA.
+`app/memory` mantém o documento canónico de perfil em SQLite, um índice FTS derivado, revisão para edição concorrente e um nível de Desfazer. Propostas legadas, episódios e histórico opt-in permanecem na gestão detalhada. Perfil, janela de turnos em RAM e episódios têm papéis diferentes. O contexto é limitado; conteúdo recuperado pode acompanhar chamadas ao provedor de IA.
 
 O frontend usa essa API, sem abrir SQLite. Importação e operações destrutivas mantêm confirmação e validação no backend.
 

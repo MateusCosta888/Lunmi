@@ -17,6 +17,7 @@
 import { ChildProcessWithoutNullStreams, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { IntegrationAuthGate, isComposioAuthUrl } from "./integration-auth";
 import {
   COMMAND_TYPES,
   Envelope,
@@ -52,12 +53,45 @@ export const RENDERER_FORBIDDEN_COMMANDS = new Set<string>([
   "session.hello",
   "app.shutdown",
   "fs.read",
+  "integrations.browser.failed",
 ]);
 
-export function resolvePythonExecutable(repoRoot: string): string {
+export const DEFAULT_COMMAND_TIMEOUT_MS = 30000;
+
+/**
+ * Comandos que esperam o provider têm prazo maior que o padrão. Cada valor fica acima da
+ * espera correspondente em `app/bridge/service.py` (30/45/95/30 s), para que o backend
+ * responda — com resultado ou erro tipado — antes do main desistir. Com 30 s fixos, um
+ * `brain.verify` ou `brain.probe` lento virava `timeout` aqui enquanto o Python ainda
+ * trabalhava, e a resposta real chegava a uma promessa já descartada.
+ */
+export const COMMAND_TIMEOUT_MS: Readonly<Record<string, number>> = Object.freeze({
+  "brain.list": 35000,
+  "brain.verify": 50000,
+  "brain.probe": 100000,
+  "brain.set": 35000,
+});
+
+export function commandTimeoutMs(type: string): number {
+  return COMMAND_TIMEOUT_MS[type] ?? DEFAULT_COMMAND_TIMEOUT_MS;
+}
+
+export function resolvePythonExecutable(repoRoot: string, resourcesRoot?: string | null): string {
   const envPy = process.env.LUNMI_PYTHON;
   if (envPy && fs.existsSync(envPy)) {
     return envPy;
+  }
+  // Runtime Python privado do pacote: nada de depender de um Python instalado na máquina
+  // do testador. O instalador copia `resources/python` (CPython portável + dependências).
+  if (resourcesRoot) {
+    const bundled = path.join(resourcesRoot, "python", "python.exe");
+    if (fs.existsSync(bundled)) {
+      return bundled;
+    }
+    // Pacote sem o runtime privado é defeito de build: devolver o caminho ausente faz o
+    // spawn falhar com o caminho nomeado (backend_spawn_failed) em vez de usar o Python da
+    // máquina do testador por engano. Em desenvolvimento `resourcesRoot` é `null`.
+    return bundled;
   }
   const winVenv = path.join(repoRoot, ".venv", "Scripts", "python.exe");
   if (fs.existsSync(winVenv)) {
@@ -72,6 +106,10 @@ export function resolvePythonExecutable(repoRoot: string): string {
 
 export interface BackendSupervisorOptions {
   repoRoot: string;
+  /** Raiz dos recursos do pacote (runtime Python privado). Ausente em desenvolvimento. */
+  resourcesRoot?: string | null;
+  /** Raiz de dados graváveis do utilizador; vira `LUNMI_USER_DATA` no processo Python. */
+  userDataRoot?: string | null;
   clientVersion: string;
   sandboxDir?: string | null;
   handshakeOnly?: boolean;
@@ -82,6 +120,8 @@ export interface BackendSupervisorOptions {
   pythonArgs?: string[];
   getHostPids: () => number[];
   onEvent: (envelope: Envelope) => void;
+  /** Private OAuth URL, handled by main only; never forwarded to renderer. */
+  onIntegrationAuthOpen?: (url: string) => Promise<void>;
 }
 
 export class PythonBackendSupervisor {
@@ -95,6 +135,7 @@ export class PythonBackendSupervisor {
   private failure: SessionFailurePayload | null = null;
   private readonly failedChildren = new WeakSet<ChildProcessWithoutNullStreams>();
   private readonly options: BackendSupervisorOptions;
+  private readonly integrationAuth = new IntegrationAuthGate();
 
   constructor(options: BackendSupervisorOptions) {
     this.options = options;
@@ -150,6 +191,7 @@ export class PythonBackendSupervisor {
   }
 
   private async _doStartAndHandshake(): Promise<SessionReadyPayload> {
+    this.integrationAuth.clear();
     this.stopping = false;
     this.failure = null;
     this.spawnProcess();
@@ -191,7 +233,7 @@ export class PythonBackendSupervisor {
     const pythonExe =
       typeof configuredExe === "function"
         ? configuredExe()
-        : configuredExe ?? resolvePythonExecutable(this.options.repoRoot);
+        : configuredExe ?? resolvePythonExecutable(this.options.repoRoot, this.options.resourcesRoot ?? null);
     const args = this.options.pythonArgs
       ? [...this.options.pythonArgs]
       : ["-u", "-m", "app.bridge.server"];
@@ -210,7 +252,15 @@ export class PythonBackendSupervisor {
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
       PYTHONIOENCODING: "utf-8",
+      // Nunca escrever `__pycache__` dentro dos recursos instalados (somente-leitura no
+      // pacote por utilizador) e manter a saída de texto determinística.
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONUTF8: "1",
     };
+    if (this.options.userDataRoot) {
+      // O backend grava `.local/`, `logs/` e `output/` aqui, não na pasta instalada.
+      childEnv.LUNMI_USER_DATA = this.options.userDataRoot;
+    }
 
     let child: ChildProcessWithoutNullStreams;
     try {
@@ -262,6 +312,7 @@ export class PythonBackendSupervisor {
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
+      if (this.proc !== child || this.failedChildren.has(child)) return;
       const outcomes = this.framer.feedOutcomes(chunk);
       for (const item of outcomes) {
         if (item.error) {
@@ -381,13 +432,35 @@ export class PythonBackendSupervisor {
       return;
     }
 
+    if (env.type === "integrations.changed") this.integrationAuth.observe(env.payload);
+    if (env.type === "integrations.browser.open") {
+      const fail = () => {
+        if (!this.integrationAuth.isCurrent(env.payload)) return;
+        this.integrationAuth.clear();
+        if (this.isRunning) {
+          void this._sendInternalCommand("integrations.browser.failed", { flow_id: env.payload.flow_id }).catch(() => undefined);
+        }
+      };
+      if (this.integrationAuth.isCurrent(env.payload) && !isComposioAuthUrl(env.payload.url)) {
+        fail();
+        return;
+      }
+      if (this.integrationAuth.accept(env.payload)) {
+        void Promise.resolve().then(() => {
+          if (!this.integrationAuth.isCurrent(env.payload)) return;
+          if (!this.options.onIntegrationAuthOpen) throw new Error("Browser unavailable");
+          return this.options.onIntegrationAuthOpen(env.payload.url as string);
+        }).catch(fail);
+      }
+      return;
+    }
     this.options.onEvent(env);
   }
 
   public sendRendererCommand(
     type: string,
     payload: Record<string, unknown> = {},
-    timeoutMs = 30000
+    timeoutMs = commandTimeoutMs(type)
   ): Promise<Record<string, unknown>> {
     if (RENDERER_FORBIDDEN_COMMANDS.has(type)) {
       return Promise.reject(
@@ -404,18 +477,26 @@ export class PythonBackendSupervisor {
         sanitizedPayload[k] = v;
       }
     }
-    return this._sendInternalCommand(type, sanitizedPayload, timeoutMs);
+    if (type === "integrations.connect" && this.readyPayload) {
+      this.integrationAuth.arm(this.readyPayload.session_id);
+    } else if (type === "integrations.cancel" || type === "integrations.disconnect") {
+      this.integrationAuth.clear();
+    }
+    return this._sendInternalCommand(type, sanitizedPayload, timeoutMs).catch((error: unknown) => {
+      if (type === "integrations.connect") this.integrationAuth.clear();
+      throw error;
+    });
   }
 
   public _sendInternalCommand(
     type: string,
     payload: Record<string, unknown> = {},
-    timeoutMs = 30000
+    timeoutMs = commandTimeoutMs(type)
   ): Promise<Record<string, unknown>> {
     if (!this.proc || this.proc.exitCode !== null) {
       return Promise.reject(new Error("backend_not_running: Processo Python não está em execução."));
     }
-    if (!COMMAND_TYPES.includes(type as (typeof COMMAND_TYPES)[number])) {
+    if (type !== "integrations.browser.failed" && !COMMAND_TYPES.includes(type as (typeof COMMAND_TYPES)[number])) {
       return Promise.reject(new Error(`unknown_command: Comando não permitido: ${type}`));
     }
     if (!isPlainObject(payload)) {
@@ -449,6 +530,7 @@ export class PythonBackendSupervisor {
   }
 
   public async shutdown(): Promise<{ status: string; session_id: string }> {
+    this.integrationAuth.clear();
     this.stopping = true;
     if (!this.proc || this.proc.exitCode !== null) {
       this.proc = null;

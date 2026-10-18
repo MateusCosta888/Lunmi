@@ -5,6 +5,7 @@
     "max_import_bytes": 4194304,
     "max_chat_text_chars": 8000,
     "max_memory_text_chars": 800,
+    "max_profile_chars": 8000,
     "max_id_chars": 128,
     "max_type_chars": 64,
     "max_host_pids": 64
@@ -20,10 +21,17 @@
     "brain": false,
     "file_read": false,
     "web_search": false,
-    "browser_use": false
+    "browser_use": false,
+    "auto": false,
+    "integrations": false
   },
   "commands": [
     "session.hello",
+    "integrations.get",
+    "integrations.connect",
+    "integrations.cancel",
+    "integrations.select",
+    "integrations.disconnect",
     "chat.send",
     "task.cancel",
     "task.confirm",
@@ -49,6 +57,9 @@
     "memory.wipe",
     "memory.options.get",
     "memory.options.set",
+    "memory.profile.get",
+    "memory.profile.save",
+    "memory.profile.undo",
     "ui.preferences.get",
     "ui.preferences.set",
     "app.shutdown"
@@ -58,6 +69,15 @@
     "command.error"
   ],
   "events": [
+    "integrations.changed",
+    "response.started",
+    "response.text.delta",
+    "response.text.stable",
+    "operation.started",
+    "operation.finished",
+    "response.completed",
+    "response.error",
+    "response.cancelled",
     "session.ready",
     "chat.message",
     "task.started",
@@ -79,7 +99,9 @@
       "payload": {
         "client": "electron",
         "client_version": "0.1.0",
-        "host_pids": [1234]
+        "host_pids": [
+          1234
+        ]
       }
     },
     "ready_event": {
@@ -97,13 +119,16 @@
           "brain": false,
           "file_read": false,
           "web_search": false,
-          "browser_use": false
+          "browser_use": false,
+          "auto": false,
+          "integrations": false
         },
         "limits": {
           "max_line_bytes": 5242880,
           "max_import_bytes": 4194304,
           "max_chat_text_chars": 8000,
           "max_memory_text_chars": 800,
+          "max_profile_chars": 8000,
           "max_id_chars": 128,
           "max_type_chars": 64,
           "max_host_pids": 64

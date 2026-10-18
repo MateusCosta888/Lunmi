@@ -22,14 +22,16 @@ def test_schema_restart_fts_and_working(tmp_path: Path) -> None:
     memory = MemoryManager(path)
     item_id = memory.remember(MemoryItem(kind='preference', text='Prefiro explicações concisas em português.'))
     memory.working.set({'objective': 'example'}, 'session')
-    assert memory._store.db.execute('PRAGMA user_version').fetchone()[0] == 1
+    # Schema 2: documento de perfil livre (o histórico de conversas/episódios mantém-se).
+    assert memory._store.db.execute('PRAGMA user_version').fetchone()[0] == 2
     assert memory.recall('explicacoes?!')[0].id == item_id
     assert memory.recall('" OR NOT : * ;') == []
     memory.close()
     memory = MemoryManager(path)
     assert memory.recall('portugues')[0].id == item_id
     assert memory.working.get('session') == {}
-    assert memory.options() == {'enabled': True, 'episodes': True, 'proposals': True, 'history': False}
+    assert memory.options() == {'enabled': True, 'episodes': True, 'proposals': True,
+                                'history': False, 'auto_learn': True}
 
 
 @pytest.mark.parametrize('text', [
@@ -69,8 +71,13 @@ def test_edit_delete_fts_tombstone_import_no_resurrection(memory: MemoryManager)
     assert memory.recall('Rust')[0].id == item_id
     memory.delete(item_id)
     assert memory.recall('Rust') == []
-    assert memory.import_data(old) == 0
-    assert memory.list() == []
+    # Importar um export ANTERIOR não ressuscita o texto esquecido; o texto antigo
+    # (pré-edição) é conteúdo distinto e pode voltar como merge explícito.
+    assert memory.import_data(old) == 1
+    assert memory.recall('Rust') == []
+    assert memory.recall('Python')
+    assert [item.text for item in memory.list()] == ['Uso Python em projetos.']
+    # O esquecimento deixa apenas um marcador sem conteúdo.
     assert memory.list(status='deleted')[0].text == '[deleted]'
 
 

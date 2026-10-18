@@ -647,8 +647,10 @@ def test_normal_popup_no_effect_allows_one_explicit_alternative_with_new_proof(o
     with pytest.raises(UIAError, match="mutation_unverified"):
         instance.action(identifier(instance, "Help"), "Help", "click_input")
     assert len(backend.atomics) == 1
-    positive = {"operation": "uia_verify", "handle": 10, "runtime_id": [99],
-                "property": "name", "observed": "About", "verified": True}
+    positive = {"operation": "uia_verify", "handle": 10,
+                "runtime_id": instance.evidence[0]["runtime_id"],
+                "control_type": "MenuItem", "property": "expanded", "expected_state": 1,
+                "observed": 1, "verified": True}
     instance.evidence.append(positive)
     assert unresolved_evidence(instance.evidence) == []
     assert not negative["verified"]
@@ -708,8 +710,10 @@ def test_menu_container_escape_remains_an_isolated_recovery(kind):
 def test_a_completed_popup_recovery_cannot_mask_a_later_attempt_in_the_same_ledger():
     instance, backend, item, negative = _pending_popup()
     instance.action(identifier(instance, "Help"), "Help", "click_input")
-    instance.evidence.append({"operation": "uia_verify", "handle": 10, "runtime_id": [99],
-                              "property": "name", "observed": "About", "verified": True})
+    instance.evidence.append({"operation": "uia_verify", "handle": 10,
+                              "runtime_id": instance.evidence[0]["runtime_id"],
+                              "control_type": "MenuItem", "property": "expanded",
+                              "expected_state": 1, "observed": 1, "verified": True})
     instance.observe()
     instance.action(identifier(instance, "Help"), "Help", "invoke")
     native_index = len(instance.evidence) - 1

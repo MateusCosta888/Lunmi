@@ -23,6 +23,7 @@ MAX_IMPORT_BYTES = 4 * 1024 * 1024          # 4 MiB (preserva teto de importaç�
 MAX_LINE_BYTES = 5 * 1024 * 1024            # 5 MiB por frame JSONL (acomoda importação de 4 MiB + envelope JSON)
 MAX_CHAT_TEXT_CHARS = 8000                  # Teto de mensagem de chat no protocolo (controller valida instrução em 4000)
 MAX_MEMORY_TEXT_CHARS = 800                 # Teto de texto de memória (paridade com app/memory/policy.py)
+MAX_PROFILE_CHARS = 8000                    # Teto do documento de perfil livre (aditivo v2)
 MAX_ID_CHARS = 128                          # Teto para identificadores de correlação
 MAX_TYPE_CHARS = 64                         # Teto para o nome do comando/evento
 MAX_HOST_PIDS = 64                          # Teto de PIDs da árvore do host enviados pelo processo pai confiável
@@ -69,8 +70,16 @@ UNSUPPORTED_ATTACHMENT_MIMES: frozenset[str] = frozenset({
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_.]*$")
 
+PRIVATE_COMMAND_TYPES = frozenset({'integrations.browser.failed'})
+
 COMMAND_TYPES: frozenset[str] = frozenset({
     "session.hello",
+    "integrations.get",
+    "integrations.connect",
+    "integrations.cancel",
+    "integrations.select",
+    "integrations.disconnect",
+
     "chat.send",
     "task.cancel",
     "task.confirm",
@@ -99,6 +108,9 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "memory.wipe",
     "memory.options.get",
     "memory.options.set",
+    "memory.profile.get",
+    "memory.profile.save",
+    "memory.profile.undo",
     "ui.preferences.get",
     "ui.preferences.set",
     "app.shutdown",
@@ -110,6 +122,15 @@ RESPONSE_TYPES: frozenset[str] = frozenset({
 })
 
 EVENT_TYPES: frozenset[str] = frozenset({
+    "integrations.changed",
+    "response.started",
+    "response.text.delta",
+    "response.text.stable",
+    "operation.started",
+    "operation.finished",
+    "response.completed",
+    "response.error",
+    "response.cancelled",
     "session.ready",
     "chat.message",
     "task.started",
@@ -128,11 +149,13 @@ EVENT_TYPES: frozenset[str] = frozenset({
 class ProtocolError(ValueError):
     """Erro público e tipado do protocolo IPC (nunca expõe traceback interno)."""
 
-    def __init__(self, code: str, message: str, *, request_id: str = "unknown") -> None:
+    def __init__(self, code: str, message: str, *, request_id: str = "unknown",
+                 details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.public_message = message
         self.request_id = request_id or "unknown"
+        self.details = details
 
 
 @dataclass(frozen=True)
@@ -196,8 +219,10 @@ def capabilities_for_commands(
     return {
         "converse": has_chat,
         "execute": has_exec_controls,
+        "auto": has_exec_controls,
         "memory": has_memory,
         "brain": has_brain,
+        "integrations": {'integrations.connect', 'integrations.disconnect', 'integrations.select', 'integrations.get', 'integrations.cancel'} <= cmds,
         # Aditiva: `false` numa sessão mínima e `true` só quando o serviço realmente registra
         # `fs.read`. Um cliente v1 lê as seis chaves que conhece e ignora esta.
         "file_read": "fs.read" in cmds,

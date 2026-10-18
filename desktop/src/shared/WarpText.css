@@ -1,0 +1,46 @@
+/*
+ * WarpText styles (`desktop/src/shared/WarpText.css`) — adapted from the React Bits
+ * `WarpText.css` registry item for the Lunmi header. The upstream `min-height: 220px`
+ * showcase sizing is intentionally dropped; the caller sets an explicit header size.
+ */
+.lunmi-warp {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: inherit;
+}
+
+.lunmi-warp canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The readable DOM label doubles as the fallback: visible until the WebGL texture paints,
+   and permanently so when WebGL is unavailable or reduced transparency is requested. */
+.lunmi-warp .lunmi-warp-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* Live canvas: the label stays in the DOM for assistive tech but is visually hidden, so the
+   mark is never read twice (the canvas is aria-hidden). */
+.lunmi-warp[data-mode="canvas"] .lunmi-warp-label {
+  position: absolute;
+  inset: auto;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

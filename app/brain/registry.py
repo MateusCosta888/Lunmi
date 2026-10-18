@@ -83,7 +83,7 @@ def _load_defaults() -> None:
         return
     _LOADED = True
     # Imported here so the registry stays import-cheap and cycle-free.
-    from app.brain.api_brain import API_CAPABILITIES, ApiBrain
+    from app.brain.api_brain import ApiBrain, api_capabilities
     from app.brain.cli import process as cli_process
     from app.brain.cli.catalog import find_spec
     from app.brain.cli.headless import HeadlessCliBrain
@@ -106,13 +106,13 @@ def _load_defaults() -> None:
     for provider_id in sorted(API_KEY_PROVIDERS):
         register(BrainDescriptor(provider_id, LABELS.get(provider_id, provider_id),
                                  BrainKind.MODEL_API, BrainLocation.CLOUD_API, factory=api,
-                                 capabilities=API_CAPABILITIES))
+                                 capabilities=api_capabilities(provider_id)))
 
     for provider_id in sorted(LOCAL_ENDPOINT_PROVIDERS):
         register(BrainDescriptor(provider_id, LABELS.get(provider_id, provider_id),
                                  BrainKind.MODEL_API, BrainLocation.LOCAL_ENDPOINT, factory=api,
                                  requires_api_key=provider_id == "custom",
-                                 capabilities=API_CAPABILITIES))
+                                 capabilities=api_capabilities(provider_id)))
 
     # Codex keeps its dedicated app-server adapter; the rest share one adapter.
     register(BrainDescriptor("codex", LABELS["codex"], BrainKind.AGENT_RUNTIME,

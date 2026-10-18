@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 from app.core.controller import unresolved_evidence
@@ -17,12 +19,22 @@ def test_preconditions_and_window_selection_do_not_prove_a_dispatch() -> None:
 
 
 def test_submission_requires_proof_outside_the_submitted_field() -> None:
+    from app.computer.verification import issue_association
+    query = "same"
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()
+    typed = {"operation": "set_edit_text", "handle": 10, "id": "old", "runtime_id": [1, 2],
+             "verified": True, "length": len(query), "text_sha256": digest}
     action = {"operation": "keyboard_input", "handle": 10, "id": "old", "runtime_id": [1, 2],
               "submitted": True, "verified": False, "needs_postcondition": True}
-    proof = {"operation": "uia_verify", "handle": 10, "id": "new", "runtime_id": [1, 2],
-             "property": "text", "verified": True}
-    assert unresolved_evidence([action, proof]) == [action]
-    assert unresolved_evidence([action, {**proof, "runtime_id": [3, 4]}]) == []
+    proof = {"operation": "uia_verify", "handle": 10, "id": "new", "runtime_id": [3, 4],
+             "property": "text", "verified": True, "results_verified": True,
+             "workflow": "spotify_search", "query_length": len(query), "query_sha256": digest}
+    proof["association"] = issue_association(proof, digest)
+    assert unresolved_evidence([typed, action, proof]) == []
+    # A different live control with only a verified read is not an association.
+    assert unresolved_evidence([typed, action, {**proof, "association": ""}]) == [action]
+    # A marker is not a token issued by the live workflow, even in this window.
+    assert unresolved_evidence([typed, action, {**proof, "association": "forged"}]) == [action]
     window_read = {"operation": "verify_window", "handle": 10, "verified": True,
                    "expected_text": "Michael Jackson", "control_type": "Edit"}
     assert unresolved_evidence([action, window_read]) == [action]
@@ -57,15 +69,24 @@ def test_later_foreground_read_can_resolve_a_failed_foreground_goal() -> None:
     assert unresolved_evidence([failed, {"operation": "verify_window", "handle": 10, "verified": True}]) == [failed]
 
 
-@pytest.mark.parametrize("invalid", ["none", "negative_index", "bad_index", "inverted", "read_index", "identity", "handle", "early", "one_dispatch", "uncertain_only", "unassociated"])
+@pytest.mark.parametrize("invalid", ["none", "negative_index", "bad_index", "inverted", "read_index", "identity", "handle", "early", "one_dispatch", "uncertain_only", "unassociated", "label_only"])
 def test_only_proven_associated_popup_recovery_retires_a_negative_read(invalid):
     native = {"operation": "invoke", "handle": 10, "runtime_id": [1], "executed": True,
               "verified": False, "needs_postcondition": True, "before": {"expanded": 0}}
     negative = {"operation": "uia_verify", "handle": 10, "runtime_id": [1], "property": "expanded",
                 "expected_state": 1, "observed": 0, "verified": False}
     click = {**native, "operation": "click_input", "recovery_of": 0, "recovery_read": 1}
-    positive = {"operation": "uia_verify", "handle": 10, "runtime_id": [2], "property": "name", "verified": True}
+    positive = {"operation": "uia_verify", "handle": 10, "runtime_id": [1],
+                "control_type": "MenuItem", "property": "expanded", "expected_state": 1,
+                "observed": 1, "verified": True}
     evidence = [native, negative, click, positive]
+    if invalid not in {"none", "one_dispatch"}:
+        # These cases break the recovery record; give them an unrelated positive
+        # read so a legitimate same-control retry cannot mask the invalid link.
+        positive.clear()
+        positive.update({"operation": "uia_verify", "handle": 10, "runtime_id": [2],
+                         "control_type": "Pane", "property": "name", "observed": "About",
+                         "expected_text": "About", "verified": True})
     if invalid == "negative_index":
         click["recovery_of"] = -1
     elif invalid == "bad_index":
@@ -88,6 +109,11 @@ def test_only_proven_associated_popup_recovery_retires_a_negative_read(invalid):
         evidence.pop()
     elif invalid == "unassociated":
         click.pop("recovery_of")
+    elif invalid == "label_only":
+        positive.clear()
+        positive.update({"operation": "uia_verify", "handle": 10, "runtime_id": [2],
+                         "control_type": "Pane", "property": "name", "observed": "About",
+                         "expected_text": "About", "verified": True})
     pending = unresolved_evidence(evidence)
     if invalid == "none":
         assert pending == []

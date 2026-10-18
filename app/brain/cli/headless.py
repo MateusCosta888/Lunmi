@@ -7,9 +7,12 @@ and no credential is ever read from the CLI's own storage.
 from __future__ import annotations
 
 import json
+import asyncio
+import contextlib
 import os
 import re
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from app.brain.cli.process import (
@@ -25,7 +28,9 @@ from app.brain.contracts import (
     BrainError,
     BrainEvent,
     BrainHealth,
+    Capability,
     ErrorKind,
+    EventKind,
     HealthStatus,
     ModelInfo,
     events_for,
@@ -147,6 +152,7 @@ class HeadlessCliBrain:
         self.cli_calls: list[dict[str, Any]] = []
         self._call_started = 0.0
         self._first_byte_ms: float | None = None
+        self._first_text_ms: float | None = None
 
     # -- argv -----------------------------------------------------------------
     def inference_argv(self) -> list[str]:
@@ -201,6 +207,7 @@ class HeadlessCliBrain:
         started = time.perf_counter()
         self._call_started = started
         self._first_byte_ms = None
+        self._first_text_ms = None
         prompt = render_prompt(messages)
         # FASE 4: only a spec that declared a *verified* multi-turn protocol reuses the
         # process; every other CLI keeps the one-shot path below, unchanged.
@@ -208,7 +215,8 @@ class HeadlessCliBrain:
             return await self._complete_session(prompt, started)
         return await self._complete_once(prompt, started)
 
-    async def _complete_once(self, prompt: str, started: float) -> Completion:
+    async def _complete_once(self, prompt: str, started: float, *,
+                             on_text: Callable[[str], Awaitable[None]] | None = None) -> Completion:
         """One process per call: the behaviour every catalogued CLI has today."""
         handle: CliProcess | None = None
         spawn_ms = 0.0
@@ -220,6 +228,8 @@ class HeadlessCliBrain:
             if not prompt.strip():
                 raise BrainError(ErrorKind.CONFIGURATION, "Nada a enviar ao agente local.")
             argv = self.inference_argv()
+            if on_text is not None:
+                argv[argv.index("--output-format") + 1] = "stream-json"
             if not self.spec.prompt_on_stdin:
                 argv.append(prompt)  # e.g. AGY: "-p" already added, prompt right after it
             # Catch it here, before spawning: an argv-only CLI hits the Windows
@@ -245,7 +255,7 @@ class HeadlessCliBrain:
             spawn_ms = (time.perf_counter() - spawn_started) * 1000
             self._process = handle
             try:
-                stdout = await self._exchange(handle, prompt)
+                stdout = await self._exchange(handle, prompt, on_text=on_text) if on_text else await self._exchange(handle, prompt)
             finally:
                 await handle.stop()
                 self._process = None
@@ -277,15 +287,21 @@ class HeadlessCliBrain:
                                "argv_utf16_units": argv_utf16_units, "prompt_budget_chars": prompt_budget_chars,
                                "spawn_ms": spawn_ms, "session_reused": session_reused,
                                "first_byte_ms": first_byte_ms, "total_ms": total_ms,
+                               "first_text_ms": self._first_text_ms,
                                "exit_code": exit_code})
         del self.cli_calls[:-32]
 
-    async def _exchange(self, handle: CliProcess, prompt: str) -> str:
+    async def _exchange(self, handle: CliProcess, prompt: str, *,
+                        on_text: Callable[[str], Awaitable[None]] | None = None) -> str:
         if self.spec.prompt_on_stdin:
             await handle.write(prompt)
             await handle.close_input()
         deadline = time.monotonic() + max(self.spec.startup_timeout, self.settings.timeout_seconds)
         chunks: list[str] = []
+        conversation_id = None
+        terminal: dict[str, Any] | None = None
+        streamed = ""
+        stream_bytes = 0
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -297,7 +313,49 @@ class HeadlessCliBrain:
             if self._first_byte_ms is None and self._call_started:
                 # Time to the first byte of output: the CLI's own cold start.
                 self._first_byte_ms = (time.perf_counter() - self._call_started) * 1000
-            chunks.append(line)
+            if on_text is None:
+                chunks.append(line)
+                continue
+            # Official AGY headless protocol: ACTIVE/DONE text_delta are append-only.
+            stream_bytes += len(line.encode("utf-8"))
+            if stream_bytes > 262_144:
+                raise BrainError(ErrorKind.TRANSPORT, "O stream do agente excedeu 256 KiB.")
+            try:
+                event = json.loads(line)
+                if not isinstance(event, dict):
+                    raise ValueError
+                kind = event.get("event")
+                if kind == "init":
+                    if conversation_id is not None:
+                        raise ValueError
+                    conversation_id = event["conversation_id"]
+                    if not isinstance(conversation_id, str):
+                        raise ValueError
+                elif kind == "step_update":
+                    step = event["step_update"]
+                    if terminal is not None or conversation_id is None or step.get("conversation_id") != conversation_id:
+                        raise ValueError
+                    if step.get("step_type") == "agent_response":
+                        delta = step.get("text_delta", "")
+                        if not isinstance(delta, str) or step.get("state") not in {"ACTIVE", "DONE"}:
+                            raise ValueError
+                        if delta:
+                            if self._first_text_ms is None:
+                                self._first_text_ms = (time.perf_counter() - self._call_started) * 1000
+                            streamed += delta
+                            await on_text(delta)
+                elif kind == "result":
+                    if terminal is not None or conversation_id is None:
+                        raise ValueError
+                    terminal = event["result"]
+                    if not isinstance(terminal, dict) or terminal.get("conversation_id") != conversation_id:
+                        raise ValueError
+                    if terminal.get("status") != "SUCCESS":
+                        raise BrainError(ErrorKind.PROVIDER_UNAVAILABLE, "O agente não concluiu a resposta.")
+                elif not isinstance(kind, str):
+                    raise ValueError
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                raise BrainError(ErrorKind.MALFORMED_RESPONSE, "Evento incremental do agente inválido.") from exc
         code = await handle.wait(30)
         stdout = "".join(chunks)
         if code != 0:
@@ -306,6 +364,12 @@ class HeadlessCliBrain:
                 raise BrainError(ErrorKind.PROCESS_CRASHED,
                                  "O agente local terminou com erro sem mensagem.", detail=f"exit={code}")
             raise classify_failure(message)
+        if on_text is not None:
+            if terminal is None or not isinstance(terminal.get("response"), str):
+                raise BrainError(ErrorKind.MALFORMED_RESPONSE, "O agente terminou sem resultado final.")
+            if streamed and terminal["response"] != streamed:
+                raise BrainError(ErrorKind.MALFORMED_RESPONSE, "O resultado final não coincide com o texto incremental.")
+            return json.dumps(terminal)
         return stdout
 
     # -- FASE 4: session scoped to the task ------------------------------------
@@ -423,6 +487,46 @@ class HeadlessCliBrain:
 
     def events(self, completion: Completion) -> list[BrainEvent]:
         return events_for(self.provider_id, completion)
+
+    async def stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[BrainEvent]:
+        incremental = self.capabilities.supports(Capability.STREAMING)
+        first = self.events(Completion(""))[0]
+        yield BrainEvent(first.kind, {**first.data, "streaming": incremental})
+        if not incremental:
+            for event in self.events(await self.complete(messages))[1:]:
+                yield event
+            return
+        if self._closed:
+            raise BrainError(ErrorKind.PROVIDER_UNAVAILABLE, "Este provider já foi encerrado.")
+        self._call_started = time.perf_counter()
+        self._first_byte_ms = None
+        self._first_text_ms = None
+        queue: asyncio.Queue[str | Completion | Exception] = asyncio.Queue(maxsize=64)
+
+        async def produce() -> None:
+            try:
+                result = await self._complete_once(render_prompt(messages), self._call_started, on_text=queue.put)
+                await queue.put(result)
+            except Exception as exc:
+                await queue.put(exc)
+
+        producer = asyncio.create_task(produce())
+        try:
+            while True:
+                value = await queue.get()
+                if isinstance(value, Exception):
+                    raise value
+                if isinstance(value, str):
+                    yield BrainEvent(EventKind.TEXT_DELTA, {"text": value})
+                else:
+                    await producer
+                    for event in self.events(value)[1:]:
+                        yield event
+                    return
+        finally:
+            producer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await producer
 
     async def models(self) -> list[ModelInfo]:
         argv = self.models_argv()

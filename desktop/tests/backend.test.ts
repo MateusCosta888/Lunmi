@@ -12,10 +12,19 @@ import { describe, expect, it } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { PythonBackendSupervisor } from "../electron/backend";
+import { PythonBackendSupervisor, commandTimeoutMs, DEFAULT_COMMAND_TIMEOUT_MS } from "../electron/backend";
 import type { Envelope } from "../src/shared/protocol";
 
 const repoRoot = path.resolve(__dirname, "..", "..");
+
+it("dá aos comandos que esperam o provider mais prazo que a espera do backend", () => {
+  // Esperas de app/bridge/service.py: list 30 s, verify 45 s, probe 95 s, set 30 s.
+  expect(commandTimeoutMs("brain.list")).toBeGreaterThan(30000);
+  expect(commandTimeoutMs("brain.verify")).toBeGreaterThan(45000);
+  expect(commandTimeoutMs("brain.probe")).toBeGreaterThan(95000);
+  expect(commandTimeoutMs("brain.set")).toBeGreaterThan(30000);
+  expect(commandTimeoutMs("task.cancel")).toBe(DEFAULT_COMMAND_TIMEOUT_MS);
+});
 
 it("recusa leitura direta de arquivo pelo renderer antes de iniciar o backend", async () => {
   const supervisor = new PythonBackendSupervisor({

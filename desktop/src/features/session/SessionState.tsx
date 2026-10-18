@@ -1,12 +1,13 @@
 /**
  * Estado da sessão no shell (`desktop/src/features/session/SessionState.tsx`).
  *
- * - No estado saudável há apenas uma cápsula compacta no topo ("Ready"); nenhuma faixa
- * permanente substitui o cabeçalho. Os detalhes da sessão vivem em Configurações.
- * - Quando o backend já pronto morre, a falha continua explícita: faixa com `role="alert"`,
- *   mensagem e código reais, e **reiniciar backend** — que abre sessão nova sem repetir a
- *   instrução anterior. Uma sessão morta nunca pode continuar parecendo "Ready": o chip
- *   compacta só existe para os estados de conexão vivos.
+ * O chip saudável "Ready" foi removido por pedido do usuário (2026-10-16): nenhum indicador
+ * permanente ocupa o topo no estado saudável, e nenhum nó invisível existe só para satisfazer
+ * teste. Os detalhes reais da sessão (id, pid, capacidades) continuam em Configurações.
+ *
+ * A falha real continua explícita e recuperável: quando o backend já pronto morre, a faixa
+ * `role="alert"` mostra mensagem e código reais e oferece **reiniciar backend** — que abre sessão
+ * nova sem repetir a instrução anterior. Uma sessão morta nunca pode continuar parecendo saudável.
  */
 import React from "react";
 import { TOKENS } from "../../shared/theme";
@@ -19,18 +20,6 @@ export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
   failed: "Sessão com falha",
   restarting: "Reiniciando…",
 };
-
-export function SessionStatusChip({ status }: { status: SessionStatus }): React.ReactElement | null {
-  if (status === "failed") {
-    return null;
-  }
-  return (
-    <span className="lunmi-session-chip" data-status={status} role="status" aria-label="Estado da sessão">
-      <i aria-hidden="true" />
-      <span data-testid="session-status">{SESSION_STATUS_LABEL[status]}</span>
-    </span>
-  );
-}
 
 export interface SessionFailureStripProps {
   failure: SessionFailureDto | null;

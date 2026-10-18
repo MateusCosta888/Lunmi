@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from app.llm import Completion
@@ -190,6 +191,13 @@ class Brain(Protocol):
     async def complete(self, messages: list[dict[str, Any]]) -> Completion:
         """Answer with text. The caller owns planning, tools and desktop control."""
 
+    def stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[BrainEvent]:
+        """Yield model text, never internal reasoning; COMPLETED carries the final Completion.
+
+        Transport deltas may contain the response JSON. The controller validates and
+        extracts public text before forwarding anything to the UI or future speech.
+        """
+
     def events(self, completion: Completion) -> list[BrainEvent]:
         """Normalize a finished response into stream events (text + usage)."""
 
@@ -205,7 +213,7 @@ class Brain(Protocol):
 
 def events_for(provider_id: str, completion: Completion) -> list[BrainEvent]:
     """Shared normalization: a non-streaming reply becomes start/text/usage/complete."""
-    events = [BrainEvent(EventKind.STARTED, {"provider": provider_id})]
+    events = [BrainEvent(EventKind.STARTED, {"provider": provider_id, "streaming": False})]
     if completion.text:
         events.append(BrainEvent(EventKind.TEXT_COMPLETED, {"text": completion.text}))
     usage = Usage.of_completion(completion)
@@ -218,5 +226,5 @@ def events_for(provider_id: str, completion: Completion) -> list[BrainEvent]:
             "total_tokens": usage.total_tokens,
             "cost_usd": usage.cost_usd,
         }))
-    events.append(BrainEvent(EventKind.COMPLETED, {}))
+    events.append(BrainEvent(EventKind.COMPLETED, {"completion": completion}))
     return events

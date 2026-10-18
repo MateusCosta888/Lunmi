@@ -15,9 +15,11 @@ import type {
   ChatMode,
   ConfirmRequestDto,
   InputRequestDto,
+  PublicResponseDto,
   TaskResultDto,
   TaskStateDto,
 } from "../../shared/types";
+import { ResponseStream, upsertMessage } from "./responseStream";
 
 /** Limite prático do campo de escrita: o controller recusa instrução acima de 4000 caracteres. */
 export const MAX_COMPOSER_CHARS = 4000;
@@ -92,6 +94,7 @@ export function useChatTask(
   const [lastError, setLastError] = useState<string | null>(null);
   const [memoryVersion, setMemoryVersion] = useState(0);
   const taskRef = useRef<TaskStateDto | null>(null);
+  const stopStreamRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     taskRef.current = task;
@@ -99,6 +102,7 @@ export function useChatTask(
 
   // Uma sessão nova (hello ou restart) zera o histórico: nada é reexecutado automaticamente.
   useEffect(() => {
+    taskRef.current = null;
     setMessages([]);
     setRecentTasks([]);
     setTask(null);
@@ -106,28 +110,63 @@ export function useChatTask(
     setInputRequest(null);
     setSubmitting(false);
     setLastError(null);
-  }, [sessionVersion]);
+  }, [session?.session_id, sessionVersion]);
 
   useEffect(() => {
     const api = getBridgeApi();
     if (!api) {
       return;
     }
+    let stream: ResponseStream | null = null;
+    let frame = 0;
+    let pending: ChatMessageDto[] = [];
+    const flush = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (!pending.length) return;
+      const updates = pending;
+      pending = [];
+      setMessages(previous => updates.reduce(upsertMessage, previous));
+    };
+    const stage = (message: ChatMessageDto) => {
+      pending = upsertMessage(pending, message);
+      if (!frame) frame = requestAnimationFrame(flush);
+    };
+    stopStreamRef.current = () => {
+      for (const message of stream?.stop() ?? []) stage(message);
+      flush();
+    };
     const unsubscribe = api.onEvent((event) => {
       const payload = (event.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.session_id === "string" && payload.session_id !== session?.session_id) return;
+      if (event.type.startsWith("response.") || event.type.startsWith("operation.")) {
+        if (payload.task_id !== taskRef.current?.task_id) return;
+        const message = stream?.accept(event.type, payload as unknown as PublicResponseDto);
+        if (message) stage(message);
+        if (event.type === "response.completed" || event.type === "response.error" || event.type === "response.cancelled") flush();
+        return;
+      }
       switch (event.type) {
         case "chat.message": {
           const message = payload as unknown as ChatMessageDto;
           if (typeof message.text !== "string") {
             return;
           }
-          setMessages((prev) => [...prev, message]);
+          if (message.task_id && taskRef.current && message.task_id !== taskRef.current.task_id) return;
+          const accepted = stream?.legacy(message) ?? (stream && message.role === "assistant" ? null : message);
+          if (accepted) {
+            flush();
+            setMessages(previous => upsertMessage(previous, accepted));
+          }
           return;
         }
         case "task.started": {
           const taskId = String(payload.task_id ?? "");
-          const mode = (payload.mode === "converse" ? "converse" : "execute") as ChatMode;
-          setTask({
+          const mode: ChatMode = payload.mode === "auto" ? "auto" : payload.mode === "converse" ? "converse" : "execute";
+          for (const message of stream?.stop("interrupted") ?? []) stage(message);
+          flush();
+          stream = new ResponseStream(session?.session_id ?? "", taskId);
+          const started: TaskStateDto = {
             task_id: taskId,
             mode,
             instruction: String(payload.instruction ?? ""),
@@ -135,7 +174,9 @@ export function useChatTask(
             progress: "",
             result: null,
             error: null,
-          });
+          };
+          taskRef.current = started;
+          setTask(started);
           setConfirmRequest(null);
           setInputRequest(null);
           setLastError(null);
@@ -144,24 +185,29 @@ export function useChatTask(
         case "task.progress": {
           const taskId = String(payload.task_id ?? "");
           setTask((prev) =>
-            prev && (prev.task_id === taskId || taskId === "")
+            prev && prev.task_id === taskId
               ? { ...prev, progress: String(payload.state ?? "") }
               : prev
           );
           return;
         }
         case "task.need_confirm": {
+          if (payload.task_id !== taskRef.current?.task_id) return;
           setConfirmRequest(payload as unknown as ConfirmRequestDto);
           setTask((prev) => initialState(prev, "awaiting_confirm", String(payload.request_id)));
           return;
         }
         case "task.need_input": {
+          if (payload.task_id !== taskRef.current?.task_id) return;
           setInputRequest(payload as unknown as InputRequestDto);
           setTask((prev) => initialState(prev, "awaiting_input", String(payload.request_id)));
           return;
         }
         case "task.finished": {
           const result = payload as unknown as TaskResultDto;
+          if (result.task_id !== taskRef.current?.task_id) return;
+          for (const message of stream?.stop("interrupted") ?? []) stage(message);
+          flush();
           const phase =
             result.status === "SUCCESS"
               ? "finished"
@@ -175,6 +221,8 @@ export function useChatTask(
           return;
         }
         case "task.cancelled": {
+          if (payload.task_id !== taskRef.current?.task_id) return;
+          stopStreamRef.current?.();
           const result = (payload.result ?? null) as TaskResultDto | null;
           setTask((prev) => (prev ? { ...prev, phase: "cancelled", result } : prev));
           setConfirmRequest(null);
@@ -186,9 +234,14 @@ export function useChatTask(
           const code = String(payload.code ?? "");
           // Falha de sessão é tratada pelo useSession (banner + restart); aqui não é erro de chat.
           if (BACKEND_FAILURE_CODES.has(code)) {
+            for (const message of stream?.stop("interrupted") ?? []) stage(message);
+            flush();
             setSubmitting(false);
             return;
           }
+          if (payload.task_id !== taskRef.current?.task_id) return;
+          for (const message of stream?.stop("interrupted") ?? []) stage(message);
+          flush();
           setLastError(String(payload.message ?? "Falha ao executar a tarefa."));
           setTask((prev) => (prev ? { ...prev, phase: "failed", progress: "" } : prev));
           setSubmitting(false);
@@ -204,8 +257,11 @@ export function useChatTask(
     });
     return () => {
       unsubscribe();
+      if (frame) cancelAnimationFrame(frame);
+      pending = [];
+      stopStreamRef.current = null;
     };
-  }, []);
+  }, [session?.session_id, sessionVersion]);
 
   useEffect(() => {
     if (!task) return;
@@ -226,9 +282,11 @@ export function useChatTask(
         return { accepted: false, error: message };
       }
       // Capacidade anunciada é capacidade real: se a sessão não anunciou o modo, ele não vai.
-      if (session && session.capabilities[mode] === false) {
+      if (mode === "auto" ? session?.capabilities.auto !== true : session && session.capabilities[mode] === false) {
         const message =
-          mode === "converse"
+          mode === "auto"
+            ? "O chat automático não foi anunciado por esta sessão."
+            : mode === "converse"
             ? "O modo Conversar não foi anunciado por esta sessão."
             : "O modo Executar não foi anunciado por esta sessão."
         ;
@@ -244,6 +302,7 @@ export function useChatTask(
           payload.attachments = attachments;
         }
         await sendCommand("chat.send", payload);
+        setSubmitting(false);
         return { accepted: true };
       } catch (err) {
         // Recusa antes de qualquer aceite: o texto continua na tela e nada é reexecutado.
@@ -261,6 +320,8 @@ export function useChatTask(
     if (!current) {
       return;
     }
+    // Invalidate public text before awaiting IPC, including callbacks already queued for paint.
+    stopStreamRef.current?.();
     try {
       await sendCommand("task.cancel", { task_id: current.task_id });
     } catch (err) {

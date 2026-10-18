@@ -1,14 +1,14 @@
 /* Lunmi adaptations of Aceternity and React Bits; attribution in THIRD-PARTY-MOTION.md. */
-.lunmi-cosmos { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
-  background: radial-gradient(ellipse at 78% 8%, color-mix(in srgb, var(--lunmi-accent) 13%, transparent), transparent 64%),
-    radial-gradient(ellipse at 15% 85%, color-mix(in srgb, var(--lunmi-bg-card-subtle) 90%, transparent), transparent 68%), var(--lunmi-bg-window); }
-.lunmi-cosmos canvas { width: 100%; height: 100%; display: block; opacity: .18; }
-.lunmi-cosmos-shade { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, color-mix(in srgb, var(--lunmi-bg-window) 25%, transparent), transparent 85%); }
+.lunmi-cosmos { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; background: var(--lunmi-depth-canvas); }
+.lunmi-cosmos canvas { width: 100%; height: 100%; display: block; }
 .lunmi-main > section:not(.lunmi-conversation) { background-color: transparent !important; }
 .lunmi-rubber-nav { position: relative; isolation: isolate; }
-.lunmi-rubber-thumb { position: absolute; inset: 0; background: var(--lunmi-surface-hover); pointer-events: none; z-index: -1; clip-path: inset(0 0 100% 0 round 8px); }
+.lunmi-rubber-thumb { position: absolute; inset: 0; background: var(--lunmi-accent); pointer-events: none; z-index: -1; clip-path: inset(0 0 100% 0 round 8px); }
 .lunmi-rubber-nav .lunmi-nav-item { border-radius: 8px; }
-.lunmi-rubber-nav .lunmi-nav-item[aria-current="page"] { background: transparent; }
+.lunmi-rubber-nav .lunmi-nav-item[aria-current="page"] { background: transparent; color: var(--lunmi-on-accent); }
+.lunmi-rubber-nav .lunmi-nav-item[aria-current="page"] .lunmi-nav-icon { color: var(--lunmi-on-accent); }
+.lunmi-rubber-nav .lunmi-nav-item[aria-current="page"]:active { background: color-mix(in srgb, var(--lunmi-accent-pressed) 62%, transparent); }
+.lunmi-rubber-nav .lunmi-nav-item[aria-current="page"]:focus-visible { outline-color: var(--lunmi-on-accent); }
 .lunmi-rubber-nav .lunmi-nav-item:hover:not([aria-current="page"]) { background: color-mix(in srgb, var(--lunmi-surface-hover) 45%, transparent); }
 .lunmi-rubber-nav .lunmi-nav-item:focus-visible { outline-offset: -2px; }
 .lunmi-thought-line { align-self: flex-start; max-width: 100%; margin: 4px 0 10px; color: var(--lunmi-text-secondary); font-size: 13px; }

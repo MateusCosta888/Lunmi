@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, TextIO, Awaitable, Callable
+from typing import Any, Iterable, Mapping, TextIO, Awaitable, Callable
 
 import psutil
 
@@ -40,6 +40,40 @@ WORKER_LINE_LIMIT_BYTES = 8 * 1024 * 1024
 WORKER_LARGE_LINE_BYTES = 256 * 1024
 
 
+# Keys the executor never receives: the worker runs actions, not the cérebro, so provider
+# credentials and chat configuration are removed from the child environment.
+WORKER_DROPPED_ENV = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY")
+
+
+def build_worker_env(
+    settings: Settings, *, host_pids: Iterable[int] = (), environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Ambiente do processo worker: paths por utilizador, host/pids e nada de credenciais.
+
+    `PYTHONDONTWRITEBYTECODE` entra aqui de propósito: o worker importa `vendor/UFO` e as
+    dependências de `resources/python`, então sem a flag o cache de bytecode era escrito
+    dentro dos recursos instalados — pasta que o produto trata como somente-leitura (e que
+    ficava com restos depois de desinstalar). Mesmo ajuste do backend, em
+    `desktop/electron/backend.ts`.
+    """
+    env = dict(os.environ if environ is None else environ)
+    for name in WORKER_DROPPED_ENV:
+        env.pop(name, None)
+    env["UFO_PATH"] = str(settings.ufo_path)
+    # Windows venv launchers can sit between this controller and the worker.
+    env["UFO_CONTROLLER_PID"] = str(os.getpid())
+    if host_pids:
+        env["UFO_ASSISTANT_PIDS"] = ",".join(str(pid) for pid in sorted(host_pids))
+    env["OUTPUT_DIRECTORY"] = str(settings.output_path)
+    # The worker reads the application index the controller keeps; both must use the same
+    # state root, or a sandboxed session would search the user's own index.
+    env["LUNMI_STATE_ROOT"] = str(settings.state_root)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
 class ComputerError(RuntimeError):
     pass
 
@@ -64,6 +98,7 @@ class UFOEngine:
         self._boot = asyncio.Lock()
         self._ready = False
         self.startup_time_ms = 0.0
+        self.operation_states: list[dict[str, Any]] = []
 
     def set_host_pids(self, pids: set[int] | list[int] | tuple[int, ...]) -> None:
         """Update the live host UI process tree (Electron main/renderer/GPU/utility PIDs)."""
@@ -88,17 +123,7 @@ class UFOEngine:
         started = asyncio.get_running_loop().time()
         self.settings.logs_path.mkdir(exist_ok=True)
         self._stderr = (self.settings.logs_path / "worker.log").open("a", encoding="utf-8")
-        env = os.environ.copy()
-        # The executor never needs provider credentials or chat configuration.
-        for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"):
-            env.pop(name, None)
-        env["UFO_PATH"] = str(self.settings.ufo_path)
-        # Windows venv launchers can sit between this controller and the worker.
-        env["UFO_CONTROLLER_PID"] = str(os.getpid())
-        if self.host_pids:
-            env["UFO_ASSISTANT_PIDS"] = ",".join(str(pid) for pid in sorted(self.host_pids))
-        env["OUTPUT_DIRECTORY"] = str(self.settings.output_path)
-        env["PYTHONIOENCODING"] = "utf-8"
+        env = build_worker_env(self.settings, host_pids=self.host_pids)
         try:
             self.process = await asyncio.create_subprocess_exec(
                 sys.executable, "-u", str(ROOT / "app" / "computer" / "worker.py"),
@@ -212,7 +237,10 @@ class UFOEngine:
 
     async def run_task(self, instruction: str, completion: CompletionFn,
                        confirm: Callable[[str], Awaitable[bool]], *,
-                       approval_mode: str = "manual") -> dict[str, Any]:
+                       approval_mode: str = "manual", initial_operation: dict[str, Any] | None = None,
+                       task_id: str = "", attachments: list[dict[str, Any]] | None = None,
+                       operation_callback: Callable[[str, dict[str, Any]], None] | None = None,
+                       allow_actions: bool = True) -> dict[str, Any]:
         async with self._lock:
             await self.start()
             process = self.process
@@ -224,12 +252,26 @@ class UFOEngine:
                 await writer.drain()
             # The mode travels with the task, not with the process: the user may switch it
             # in the chat between tasks and nothing has to be restarted for it to apply.
+            self.operation_states = []
             await send({"operation": "run_task", "instruction": instruction,
                         "max_steps": self.settings.max_steps, "approval_mode": approval_mode,
-                        "host_pids": sorted(self.host_pids)})
+                        "host_pids": sorted(self.host_pids), "task_id": task_id,
+                        "initial_operation": initial_operation, "attachments": attachments or [],
+                        "allow_actions": allow_actions})
             while True:
                 reply = await self._read()
-                if reply.get("event") == "llm":
+                if reply.get("event") in {"operation.started", "operation.finished"}:
+                    fields = {key: reply[key] for key in ("operation_id", "state", "verified",
+                                                          "tool", "category", "failure_reason")
+                              if key in reply}
+                    identifier = fields.get("operation_id")
+                    if isinstance(identifier, str) and isinstance(fields.get("state"), str):
+                        self.operation_states = [item for item in self.operation_states
+                                                 if item.get("operation_id") != identifier] + [fields]
+                        if operation_callback:
+                            operation_callback(str(reply["event"]), fields)
+                    await send({})
+                elif reply.get("event") == "llm":
                     try:
                         await send({"text": await completion(reply["messages"], str(reply.get("agent") or ""))})
                     except Exception as exc:

@@ -10,10 +10,10 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function bridge(memory: () => Promise<unknown> = async () => ({ enabled: true, items: [] }), theme = "celestial") {
+function bridge(memory: () => Promise<unknown> = async () => ({ enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" }), theme = "celestial") {
   const payload = { session_id: "startup-test", capabilities: { brain: true, memory: true, converse: true, execute: true } } as SessionReadyPayload;
   const sendCommand = vi.fn(async (type: string) => {
-    if (type === "memory.list") return memory();
+    if (type === "memory.profile.get") return memory();
     if (type === "brain.get") return { current: {}, providers: [] };
     if (type === "approval.get") return { auto_approve: false };
     if (type === "ui.preferences.get") return { actions: [], theme };
@@ -32,13 +32,13 @@ it("aguarda memória real e não envia Ready nem tarefas antes dos dados", async
   let resolve!: (data: unknown) => void;
   const fake = bridge(() => new Promise(r => { resolve = r; }));
   render(<App />);
-  await waitFor(() => expect(fake.sendCommand).toHaveBeenCalledWith("memory.list", {}));
+  await waitFor(() => expect(fake.sendCommand).toHaveBeenCalledWith("memory.profile.get", {}));
   expect(screen.getByTestId("startup-screen")).toBeTruthy();
   expect(screen.queryByTestId("composer")).toBeNull();
   expect(fake.api.notifyRendererReady).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Repetir animação" })).toBeNull();
   expect(fake.api.hello).toHaveBeenCalledTimes(1);
-  resolve({ enabled: true, items: [] });
+  resolve({ enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" });
   await screen.findByTestId("composer");
   expect(screen.queryByTestId("startup-screen")).toBeNull();
   await waitFor(() => expect(fake.api.notifyRendererReady).toHaveBeenCalledTimes(1));
@@ -70,7 +70,7 @@ it("depois da sequência continua aguardando o carregamento real", async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(INTRO_DURATION_MS + 2000); });
   expect(screen.getByTestId("startup-screen")).toBeTruthy();
   expect(screen.queryByTestId("composer")).toBeNull();
-  await act(async () => { resolve({ enabled: true, items: [] }); });
+  await act(async () => { resolve({ enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" }); });
   await act(async () => { await vi.advanceTimersByTimeAsync(260); });
   expect(screen.getByTestId("composer")).toBeTruthy();
 });
@@ -92,7 +92,7 @@ it("falha de dados mantém a entrada e permite recarregar sem reiniciar Python",
   let fail = true;
   const fake = bridge(async () => {
     if (fail) throw new Error("sensitive backend detail");
-    return { enabled: true, items: [] };
+    return { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" };
   });
   render(<App />);
   await screen.findByRole("alert");
@@ -117,7 +117,7 @@ it("falha do handshake oferece reinício explícito, sem replay de instruções"
 
 it("retry não usa memória da tentativa anterior para liberar os controles", async () => {
   let first = true, resolve!: (value: unknown) => void;
-  const fake = bridge(async () => first ? { enabled: true, items: [] } : new Promise(r => { resolve = r; }));
+  const fake = bridge(async () => first ? { enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" } : new Promise(r => { resolve = r; }));
   const original = fake.sendCommand.getMockImplementation()!;
   fake.sendCommand.mockImplementation(async type => {
     if (first && type === "brain.get") throw new Error("controls failed");
@@ -130,7 +130,7 @@ it("retry não usa memória da tentativa anterior para liberar os controles", as
   await waitFor(() => expect(resolve).toBeTypeOf("function"));
   expect(screen.queryByTestId("composer")).toBeNull();
   expect(fake.api.notifyRendererReady).not.toHaveBeenCalled();
-  resolve({ enabled: true, items: [] });
+  resolve({ enabled: true, auto_learn: true, text: "", revision: 0, can_undo: false, char_count: 0, max_chars: 8000, state: "empty" });
   await screen.findByTestId("composer");
 });
 

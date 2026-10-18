@@ -1,18 +1,34 @@
 /* Soft extrusion/inset depth from the supplied Lunmi reference, expressed through theme materials. */
 .lunmi-composer { padding-top: 12px; }
 .lunmi-composer-surface { position: relative; isolation: isolate; display: flex; flex-direction: column; gap: 14px;
-  padding: 18px; border: 1px solid var(--lunmi-depth-rim); border-radius: 22px; background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-raised); }
+  padding: 18px; border: 1px solid var(--lunmi-depth-rim); border-radius: 22px; background: color-mix(in srgb, var(--lunmi-bg-card) 92%, transparent); box-shadow: var(--lunmi-depth-raised); }
+/* Mecanismo bento (MagicBento/React Bits adaptado): contorno com brilho, spotlight e onda finita.
+   As camadas ficam atrás do conteúdo (z-index -1) e a área de texto tem poço sólido próprio —
+   a luz não passa por baixo do que se lê. ::before = contorno + onda; ::after = spotlight. */
+.lunmi-composer-surface::before { content: ""; position: absolute; inset: 0; box-sizing: border-box; padding: 1px; border-radius: inherit; pointer-events: none; z-index: -1;
+  background:
+    radial-gradient(circle at var(--bento-wx, -999px) var(--bento-wy, -999px),
+      transparent calc(var(--bento-wr, 0px) - 110px),
+      rgba(var(--lunmi-depth-glow), calc(.55 * var(--lunmi-bento-ring, 1) * var(--bento-wa, 0) * .10)) calc(var(--bento-wr, 0px) - 80px),
+      rgba(var(--lunmi-depth-glow), calc(.55 * var(--lunmi-bento-ring, 1) * var(--bento-wa, 0) * .32)) calc(var(--bento-wr, 0px) - 52px),
+      rgba(var(--lunmi-depth-glow), calc(.55 * var(--lunmi-bento-ring, 1) * var(--bento-wa, 0) * .68)) calc(var(--bento-wr, 0px) - 28px),
+      rgba(var(--lunmi-depth-glow), calc(.55 * var(--lunmi-bento-ring, 1) * var(--bento-wa, 0))) calc(var(--bento-wr, 0px) - 3px),
+      rgba(var(--lunmi-depth-glow), 0) var(--bento-wr, 0px)),
+    radial-gradient(var(--bento-border-size, 420px) circle at var(--bento-x, -999px) var(--bento-y, -999px),
+      rgba(var(--lunmi-depth-glow), calc(.5 * var(--lunmi-bento-ring, 1) * var(--bento-near, 0))), transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
 .lunmi-composer-surface::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
-  background: radial-gradient(440px circle at var(--spot-x, 50%) var(--spot-y, 50%), var(--lunmi-depth-spotlight), transparent 66%); opacity: 0; transition: opacity 200ms ease; }
-.lunmi-composer-surface:hover::after, .lunmi-composer-surface:focus-within::after { opacity: 1; }
+  background: radial-gradient(var(--bento-spot-size, 430px) circle at var(--bento-x, 50%) var(--bento-y, 50%),
+    rgba(var(--lunmi-depth-glow), calc(.17 * var(--lunmi-bento-spot, 1) * var(--bento-hot, 0))), transparent 70%); }
 .lunmi-composer-surface:focus-within { outline: none; border-color: var(--lunmi-depth-rim); }
 .lunmi-composer-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px; }
 .lunmi-composer-label { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--lunmi-text-secondary); }
 .lunmi-composer-label svg { color: var(--lunmi-accent); }
 .lunmi-composer-presence { display: flex; align-items: center; gap: 7px; color: var(--lunmi-text-muted); font-size: 11px; }
 .lunmi-composer-presence i { width: 5px; height: 5px; border-radius: 50%; background: var(--lunmi-warning); flex-shrink: 0; }
-.lunmi-composer-presence[data-ready="true"] i { background: var(--lunmi-success); }
-.lunmi-input-well { padding: 14px 16px 10px; border-radius: 14px; border: 1px solid var(--lunmi-depth-rim); background: var(--lunmi-bg-input); box-shadow: var(--lunmi-depth-inset); }
+.lunmi-composer-presence[data-ready="true"] i { background: var(--lunmi-depth-ready-dot); }
+.lunmi-input-well { padding: 14px 16px 10px; border-radius: 14px; border: 1px solid var(--lunmi-depth-rim); background: color-mix(in srgb, var(--lunmi-bg-input) 94%, transparent); box-shadow: var(--lunmi-depth-inset); }
 .lunmi-input-well:focus-within { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
 .lunmi-composer-input { padding: 0; min-height: 64px; max-height: min(176px, 24vh); font-size: 15px; line-height: 1.6; background: transparent; border: 0; outline: none; box-shadow: none; }
 .lunmi-composer-input:focus-visible { outline: none; }
@@ -21,6 +37,16 @@
 .lunmi-composer-actions { gap: 12px; }
 .lunmi-model-trigger { min-height: 38px; padding: 8px 12px; border: 1px solid var(--lunmi-depth-rim); border-radius: 12px; background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-control); }
 .lunmi-model-trigger:active:not(:disabled) { box-shadow: var(--lunmi-depth-pressed); }
+/* Autoaprovação: botão de estado no compositor (aria-pressed), não um switch. O rótulo visível
+   carrega o estado ("ligada"/"desligada") e casa com o nome acessível. */
+.lunmi-auto-approve { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 8px 14px;
+  border: 1px solid var(--lunmi-border-subtle); border-radius: 999px; background: var(--lunmi-bg-card);
+  color: var(--lunmi-text-secondary); font-size: 12.5px; cursor: pointer; flex-shrink: 0; }
+.lunmi-auto-approve svg { color: var(--lunmi-text-muted); transition: color 140ms ease; }
+.lunmi-auto-approve-state { color: var(--lunmi-text-muted); }
+.lunmi-auto-approve[aria-pressed="true"] { border-color: color-mix(in srgb, var(--lunmi-accent) 55%, var(--lunmi-border-subtle));
+  background: color-mix(in srgb, var(--lunmi-accent) 9%, var(--lunmi-bg-card)); color: var(--lunmi-text-primary); }
+.lunmi-auto-approve[aria-pressed="true"] svg, .lunmi-auto-approve[aria-pressed="true"] .lunmi-auto-approve-state { color: inherit; }
 .lunmi-model-menu { background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-raised); border-color: var(--lunmi-border-subtle); }
 .lunmi-mode { padding: 3px; border-radius: 12px; background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-inset); }
 .lunmi-mode-option { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 12px; border-radius: 9px; }
@@ -72,4 +98,4 @@
   .lunmi-composer-heading { font-size: 11px; }
 }
 @media (max-width: 500px) { .lunmi-theme-grid { grid-template-columns: 1fr; } .lunmi-composer-label { font-size: 11px; } .lunmi-mode-option { padding-inline: 8px; } }
-@media (prefers-reduced-motion: reduce) { .lunmi-composer-surface::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .lunmi-composer-surface::before, .lunmi-composer-surface::after { display: none; } }

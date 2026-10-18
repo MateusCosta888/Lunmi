@@ -18,6 +18,10 @@ MAX_REPEATED_FAILURES = 3
 # round that carries no action cannot accomplish anything, so the streak is capped
 # well above the few rounds a real task may spend observing before acting.
 MAX_IDLE_BATCHES = 5
+# Read-only rounds that keep the same pending postcondition and the same evidence are
+# not progress, even when the IDs are regenerated. The first read establishes the
+# signature; three identical repeats after it (four batches measured) are a dead end.
+MAX_STALLED_READS = 3
 
 
 def is_action(command: Any) -> bool:
@@ -64,14 +68,23 @@ class NoProgressGuard:
     """
 
     def __init__(self, limit: int = MAX_REPEATED_FAILURES,
-                 idle_limit: int = MAX_IDLE_BATCHES) -> None:
+                 idle_limit: int = MAX_IDLE_BATCHES,
+                 stalled_limit: int = MAX_STALLED_READS) -> None:
         self.limit = limit
         self.idle_limit = idle_limit
+        self.stalled_limit = stalled_limit
         self._signature: tuple[str, str] | None = None
         self._streak = 0
         self._idle = 0
         self._evidence_seen = 0
+        self._stalled = 0
+        self._last_evidence_signature: object = None
         self._failures: dict[tuple[str, str], int] = {}
+
+    @property
+    def stalled(self) -> bool:
+        """True once the read-only evidence has repeated without resolving pending work."""
+        return self._stalled >= self.stalled_limit
 
     def before_batch(self, signature: tuple[str, str] | None, *, idle: bool = False) -> bool:
         """True when this batch is repeating a known dead end.
@@ -80,24 +93,40 @@ class NoProgressGuard:
         at all. A successful action clears the failure streak in ``after_batch``.
         """
         if idle:
-            return self._idle >= self.idle_limit
-        return signature is not None and self._failures.get(signature, 0) >= self.limit
+            return self._idle >= self.idle_limit or self.stalled
+        return (signature is not None and self._failures.get(signature, 0) >= self.limit) \
+            or self.stalled
+
+    def _note_stall(self, *, read_only: bool, pending: bool,
+                    evidence_signature: object) -> None:
+        if read_only and pending and evidence_signature == self._last_evidence_signature:
+            self._stalled += 1
+        else:
+            self._stalled = 0
+        self._last_evidence_signature = evidence_signature
 
     def after_batch(self, signature: tuple[str, str] | None, *, failed: bool,
-                    evidence_count: int, idle: bool = False) -> None:
-        """Record one batch. Only identical failures, or empty rounds, count as waste."""
+                    evidence_count: int, idle: bool = False, read_only: bool = False,
+                    pending: bool = False, evidence_signature: object = None) -> None:
+        """Record one batch. Only identical failures, empty or stalled reads count as waste."""
         if idle:
             grew = evidence_count != self._evidence_seen
             self._idle = 0 if grew else self._idle + 1
             self._signature, self._streak, self._evidence_seen = None, 0, evidence_count
+            self._note_stall(read_only=read_only, pending=pending,
+                             evidence_signature=evidence_signature)
             return
         self._idle = 0
         if signature is None or not failed:
             if signature is not None:
                 self._failures.pop(signature, None)
             self._signature, self._streak, self._evidence_seen = None, 0, evidence_count
+            self._note_stall(read_only=read_only, pending=pending,
+                             evidence_signature=evidence_signature)
             return
         self._streak = self._failures.get(signature, 0) + 1
         self._failures[signature] = self._streak
         self._signature = signature
         self._evidence_seen = evidence_count
+        self._note_stall(read_only=read_only, pending=pending,
+                         evidence_signature=evidence_signature)
