@@ -43,6 +43,22 @@ No checkout, o aplicativo cria dados em `.local/`, `logs/` e `output/`. A instal
 
 A ligação não dá autorização para enviar qualquer mensagem. A Autoaprovação não elimina a confirmação manual de email. Não repita um envio com resultado incerto sem consultar primeiro a pasta Enviados. Os limites e a disponibilidade dependem também do Composio e do Gmail. O estado da ligação e as credenciais são locais; não os anexe a issues.
 
+## Node e segundo plano
+
+Em **Configurações → Segundo plano**, a opção de continuar ao fechar mantém a sessão em execução. O Node substitui o antigo orb flutuante e pode ficar no canto superior esquerdo ou direito. Escolha mostrar/ocultar, recolhimento automático, indicação de atividade e um atalho livre no sistema. Um conflito de atalho ou uma falha de gravação mantém a configuração anterior.
+
+Clicar no Node abre o mini chat com a mesma conversa e rascunho. Escape recolhe sem cancelar a tarefa. Pedidos de confirmação abrem a principal; não podem ser aprovados no mini chat. Durante `running`, o Node fica passivo, mesmo com atividade desligada. Se não conseguir ignorar input com segurança, é ocultado. A bandeja continua a permitir restaurar a principal ou sair.
+
+Desligar apenas o Node não termina a aplicação. Com residência ligada, fechar continua a esconder para a bandeja. Desligar residência faz o X terminar. As preferências são locais; a migração preserva a antiga posição do companion, embora o Node use os dois cantos superiores.
+
+## Voz: reprodução experimental, sem microfone
+
+O botão de voz no compositor oferece ativação, fala automática opcional, teste, ouvir a última resposta elegível e parar. Parar voz não cancela uma tarefa Windows. A fala usa apenas texto público elegível e templates de resultados verificados; não lê raciocínio interno nem transforma uma operação incerta em sucesso.
+
+O runtime de áudio é separado do Python principal. A resolução padrão procura `<state_root>/.local/voice/runtime/Scripts/python.exe` e modelos em `<state_root>/.local/voice/models/supertonic-3/`. O worker usa Supertonic1.3.1 com download automático desligado. Esses pacotes, pesos e ambiente preparado **não estão incluídos no Git nem são criados pelo launcher**. Esta entrega não oferece instalador automático de voz: sem preparação externa validada, o estado esperado é indisponível, sem impedir o chat. As licenças do SDK, pesos e dependências devem ser revistas antes de distribuir esse runtime.
+
+A captura de microfone/STT ainda não foi integrada. Ativar saída de voz não inicia gravação. A validação do Node foi feita num Windows com um monitor a100% DPI; outros DPI, múltiplos monitores e sessões prolongadas exigem validação adicional.
+
 ## Solução de problemas
 
 | Sintoma | Confira |

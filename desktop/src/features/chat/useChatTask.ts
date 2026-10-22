@@ -1,39 +1,48 @@
 /**
- * Estado de conversa e tarefa do renderer (`desktop/src/features/chat/useChatTask.ts`, F2a).
+ * Estado de conversa e tarefa do renderer (`desktop/src/features/chat/useChatTask.ts`, F2a / BG2).
  *
- * O hook é a única fonte de verdade do chat: o backend Python já emite `chat.message` para o
- * usuário e para a assistente, então o renderer nunca inventa histórico nem duplica bolhas — ele
- * apenas ordena os eventos reais. Nada aqui declara paridade: cada campo vem do
- * `TaskResultDto` publicado pela ponte.
+ * A conversa tem um único dono: a projeção pública em RAM do processo principal, alimentada pelos
+ * eventos reais da ponte e publicada como snapshot + deltas por cursor. A janela principal e o
+ * mini chat aplicam os mesmos deltas; nenhum dos dois inventa histórico nem abre sessão.
+ *
+ * Compatibilidade: com um preload antigo sem `window.lunmiPresence`, o hook reduz os mesmos
+ * envelopes com `applyChatEvent` — a mesma função pura, não um segundo parser nem um segundo
+ * dispatch. Nesse caminho o texto continua agrupado por frame (um rAF), como antes.
+ *
+ * Ações do utilizador (Parar, aprovar, responder) reconciliam a vista imediatamente; a decisão
+ * real continua a chegar do backend com o mesmo `request_id`/`task_id`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionReadyPayload } from "../../shared/protocol";
 import type { SendCommandFn } from "../../shared/ipc/client";
 import { describeError, getBridgeApi, toBridgeError } from "../../shared/ipc/client";
+import { getCachedPresenceSnapshot, getPresenceApi, rememberPresenceSnapshot } from "../../shared/ipc/presence";
 import type {
   ChatMessageDto,
   ChatMode,
+  ChatProjectionDeltaDto,
   ConfirmRequestDto,
   InputRequestDto,
-  PublicResponseDto,
-  TaskResultDto,
   TaskStateDto,
 } from "../../shared/types";
-import { ResponseStream, upsertMessage } from "./responseStream";
+import {
+  acknowledgeChatRequest,
+  applyChatDelta,
+  applyChatEvent,
+  chatStateFromDto,
+  createChatProjection,
+  markChatStreamCancelled,
+  type ChatEventLike,
+  type ChatProjectionState,
+} from "../../shared/chatProjection";
 
 /** Limite prático do campo de escrita: o controller recusa instrução acima de 4000 caracteres. */
 export const MAX_COMPOSER_CHARS = 4000;
 
-const BACKEND_FAILURE_CODES = new Set<string>([
-  "backend_exited",
-  "backend_spawn_failed",
-  "backend_pipe_error",
-]);
-
 /**
  * Resultado de um envio. O campo `accepted` é o que autoriza a UI a limpar o rascunho: uma
  * recusa (`task_busy`, `reconfiguring`, capacidade ausente, ponte fora) preserva o texto digitado.
- * Nada aqui reexecuta nem restaura uma instrução que já foi aceita.
+ * Nada aqui reexecuta nem restaura uma instrução que já foi aceite.
  */
 export interface SendOutcome {
   accepted: boolean;
@@ -66,207 +75,197 @@ export interface ChatTaskState {
   dismissError: () => void;
 }
 
-function initialState(task: TaskStateDto | null, phase: TaskStateDto["phase"], requestId: string): TaskStateDto | null {
-  if (!task) {
-    return task;
-  }
-  return { ...task, phase, pending_request_id: requestId };
-}
-
-function resumeIfPending(task: TaskStateDto | null, taskId: string | undefined, requestId: string): TaskStateDto | null {
-  // A continuação pode terminar ou perguntar de novo antes de command.result chegar.
-  return task && task.task_id === taskId && task.pending_request_id === requestId
-    && (task.phase === "awaiting_confirm" || task.phase === "awaiting_input")
-    ? { ...task, phase: "running", pending_request_id: undefined } : task;
-}
-
 export function useChatTask(
   sendCommand: SendCommandFn,
   session: SessionReadyPayload | null,
   sessionVersion: number
 ): ChatTaskState {
-  const [messages, setMessages] = useState<ChatMessageDto[]>([]);
-  const [recentTasks, setRecentTasks] = useState<TaskStateDto[]>([]);
-  const [task, setTask] = useState<TaskStateDto | null>(null);
-  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequestDto | null>(null);
-  const [inputRequest, setInputRequest] = useState<InputRequestDto | null>(null);
+  const [projection, setProjection] = useState<ChatProjectionState>(() => {
+    // Abrir o mini a meio de uma sessão não deve mostrar um frame vazio: o snapshot público já
+    // lido por outra vista serve de base; a hidratação a seguir confirma-o.
+    const cached = getCachedPresenceSnapshot();
+    return cached ? chatStateFromDto(cached.chat) : createChatProjection(session?.session_id ?? "");
+  });
   const [submitting, setSubmitting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [memoryVersion, setMemoryVersion] = useState(0);
   const taskRef = useRef<TaskStateDto | null>(null);
-  const stopStreamRef = useRef<(() => void) | null>(null);
+  const liveStateRef = useRef<ChatProjectionState>(projection);
+  const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    taskRef.current = task;
-  }, [task]);
+    taskRef.current = projection.task;
+  }, [projection.task]);
 
-  // Uma sessão nova (hello ou restart) zera o histórico: nada é reexecutado automaticamente.
+  const cancelPendingFrame = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+  }, []);
+
+  /** Aplica já: ações do utilizador e mudanças estruturais não esperam frame. */
+  const commitLocal = useCallback(
+    (next: ChatProjectionState) => {
+      liveStateRef.current = next;
+      cancelPendingFrame();
+      setProjection(next);
+    },
+    [cancelPendingFrame]
+  );
+
+  // Sessão diferente zera a vista local antes do snapshot; nada é reexecutado automaticamente.
+  // A sessão só chega depois do cache, por isso a comparação evita apagar uma conversa válida
+  // no primeiro render (null → sessão atual).
   useEffect(() => {
+    const nextId = session?.session_id ?? "";
+    const current = liveStateRef.current.sessionId;
+    if (!nextId || nextId === current) return;
+    const fresh = createChatProjection(nextId);
     taskRef.current = null;
-    setMessages([]);
-    setRecentTasks([]);
-    setTask(null);
-    setConfirmRequest(null);
-    setInputRequest(null);
+    liveStateRef.current = fresh;
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    setProjection(fresh);
     setSubmitting(false);
     setLastError(null);
   }, [session?.session_id, sessionVersion]);
 
+  // Projeção do main: subscrever primeiro, obter snapshot com watermark, descartar os eventos já
+  // representados e aplicar só os posteriores. O main já agrupa deltas; aqui é imediato.
+  useEffect(() => {
+    const api = getPresenceApi();
+    if (!api?.snapshot) {
+      return;
+    }
+    let cancelled = false;
+    let watermark = -1;
+    // Só os deltas chegados antes do snapshot são guardados; depois dele aplicam-se já.
+    // Um snapshot tardio é sempre mais velho que o que já se aplicou: cada delta traz cursor e
+    // sessão, por isso a redução pura descarta duplicados, velhos e sessões alheias.
+    let buffered: ChatProjectionDeltaDto[] = [];
+    const apply = (delta: ChatProjectionDeltaDto) => {
+      const next = applyChatDelta(liveStateRef.current, delta);
+      liveStateRef.current = next;
+      setProjection(next);
+    };
+    const off = api.onEvent((event) => {
+      if (event.type !== "chat") return;
+      const delta = event.delta;
+      if (watermark < 0) {
+        buffered.push(delta);
+        return;
+      }
+      watermark = Math.max(watermark, delta.cursor);
+      apply(delta);
+    });
+    void api
+      .snapshot()
+      .then((snapshot) => {
+        if (cancelled) return;
+        rememberPresenceSnapshot(snapshot);
+        const chat = snapshot.chat;
+        const base = chatStateFromDto(chat);
+        liveStateRef.current = base;
+        setProjection(base);
+        watermark = chat.cursor;
+        const replay = buffered.sort((left, right) => left.cursor - right.cursor);
+        buffered = [];
+        for (const delta of replay) {
+          if (delta.cursor <= watermark) continue;
+          watermark = delta.cursor;
+          apply(delta);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Hidratação falhou: sair do estado de acumulação em vez de crescer buffered para
+        // sempre. Os deltas seguintes aplicam-se já e o erro fica visível; sem polling.
+        buffered = [];
+        watermark = liveStateRef.current.cursor;
+        setLastError("Não foi possível sincronizar a conversa. As mensagens novas continuam a aparecer.");
+      });
+    return () => {
+      cancelled = true;
+      off();
+    };
+    // Uma única subscrição: a sessão reinicia por delta `reset` do main; re-subscribir em cada
+    // mudança de sessão perdia deltas emitidos entre o evento e a nova subscrição.
+  }, []);
+
+  // Um único listener dos envelopes: memória sempre; chat só quando não há projeção do main
+  // (peer antigo), reduzido pela mesma função pura e com o agrupamento por frame de sempre.
   useEffect(() => {
     const api = getBridgeApi();
     if (!api) {
       return;
     }
-    let stream: ResponseStream | null = null;
-    let frame = 0;
-    let pending: ChatMessageDto[] = [];
+    if (getPresenceApi()?.snapshot) {
+      return api.onEvent((event) => {
+        if (event.type === "memory.changed") setMemoryVersion((value) => value + 1);
+      });
+    }
+    let local = createChatProjection(session?.session_id ?? "");
+    liveStateRef.current = local;
+    setProjection(local);
     const flush = () => {
-      if (frame) cancelAnimationFrame(frame);
-      frame = 0;
-      if (!pending.length) return;
-      const updates = pending;
-      pending = [];
-      setMessages(previous => updates.reduce(upsertMessage, previous));
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      setProjection(local);
     };
-    const stage = (message: ChatMessageDto) => {
-      pending = upsertMessage(pending, message);
-      if (!frame) frame = requestAnimationFrame(flush);
+    const stage = () => {
+      if (frameRef.current !== null) return;
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+        setProjection(local);
+      });
     };
-    stopStreamRef.current = () => {
-      for (const message of stream?.stop() ?? []) stage(message);
-      flush();
-    };
-    const unsubscribe = api.onEvent((event) => {
-      const payload = (event.payload ?? {}) as Record<string, unknown>;
-      if (typeof payload.session_id === "string" && payload.session_id !== session?.session_id) return;
-      if (event.type.startsWith("response.") || event.type.startsWith("operation.")) {
-        if (payload.task_id !== taskRef.current?.task_id) return;
-        const message = stream?.accept(event.type, payload as unknown as PublicResponseDto);
-        if (message) stage(message);
-        if (event.type === "response.completed" || event.type === "response.error" || event.type === "response.cancelled") flush();
+    const off = api.onEvent((event) => {
+      if (event.type === "memory.changed") {
+        setMemoryVersion((value) => value + 1);
         return;
       }
-      switch (event.type) {
-        case "chat.message": {
-          const message = payload as unknown as ChatMessageDto;
-          if (typeof message.text !== "string") {
-            return;
-          }
-          if (message.task_id && taskRef.current && message.task_id !== taskRef.current.task_id) return;
-          const accepted = stream?.legacy(message) ?? (stream && message.role === "assistant" ? null : message);
-          if (accepted) {
-            flush();
-            setMessages(previous => upsertMessage(previous, accepted));
-          }
-          return;
-        }
-        case "task.started": {
-          const taskId = String(payload.task_id ?? "");
-          const mode: ChatMode = payload.mode === "auto" ? "auto" : payload.mode === "converse" ? "converse" : "execute";
-          for (const message of stream?.stop("interrupted") ?? []) stage(message);
-          flush();
-          stream = new ResponseStream(session?.session_id ?? "", taskId);
-          const started: TaskStateDto = {
-            task_id: taskId,
-            mode,
-            instruction: String(payload.instruction ?? ""),
-            phase: "running",
-            progress: "",
-            result: null,
-            error: null,
-          };
-          taskRef.current = started;
-          setTask(started);
-          setConfirmRequest(null);
-          setInputRequest(null);
-          setLastError(null);
-          return;
-        }
-        case "task.progress": {
-          const taskId = String(payload.task_id ?? "");
-          setTask((prev) =>
-            prev && prev.task_id === taskId
-              ? { ...prev, progress: String(payload.state ?? "") }
-              : prev
-          );
-          return;
-        }
-        case "task.need_confirm": {
-          if (payload.task_id !== taskRef.current?.task_id) return;
-          setConfirmRequest(payload as unknown as ConfirmRequestDto);
-          setTask((prev) => initialState(prev, "awaiting_confirm", String(payload.request_id)));
-          return;
-        }
-        case "task.need_input": {
-          if (payload.task_id !== taskRef.current?.task_id) return;
-          setInputRequest(payload as unknown as InputRequestDto);
-          setTask((prev) => initialState(prev, "awaiting_input", String(payload.request_id)));
-          return;
-        }
-        case "task.finished": {
-          const result = payload as unknown as TaskResultDto;
-          if (result.task_id !== taskRef.current?.task_id) return;
-          for (const message of stream?.stop("interrupted") ?? []) stage(message);
-          flush();
-          const phase =
-            result.status === "SUCCESS"
-              ? "finished"
-              : result.status === "CANCELLED"
-                ? "cancelled"
-                : "failed";
-          setTask((prev) => (prev ? { ...prev, phase, result, progress: "" } : prev));
-          setConfirmRequest(null);
-          setInputRequest(null);
-          setSubmitting(false);
-          return;
-        }
-        case "task.cancelled": {
-          if (payload.task_id !== taskRef.current?.task_id) return;
-          stopStreamRef.current?.();
-          const result = (payload.result ?? null) as TaskResultDto | null;
-          setTask((prev) => (prev ? { ...prev, phase: "cancelled", result } : prev));
-          setConfirmRequest(null);
-          setInputRequest(null);
-          setSubmitting(false);
-          return;
-        }
-        case "task.error": {
-          const code = String(payload.code ?? "");
-          // Falha de sessão é tratada pelo useSession (banner + restart); aqui não é erro de chat.
-          if (BACKEND_FAILURE_CODES.has(code)) {
-            for (const message of stream?.stop("interrupted") ?? []) stage(message);
-            flush();
-            setSubmitting(false);
-            return;
-          }
-          if (payload.task_id !== taskRef.current?.task_id) return;
-          for (const message of stream?.stop("interrupted") ?? []) stage(message);
-          flush();
-          setLastError(String(payload.message ?? "Falha ao executar a tarefa."));
-          setTask((prev) => (prev ? { ...prev, phase: "failed", progress: "" } : prev));
-          setSubmitting(false);
-          return;
-        }
-        case "memory.changed": {
-          setMemoryVersion((v) => v + 1);
-          return;
-        }
-        default:
-          return;
-      }
+      const outcome = applyChatEvent(local, event as unknown as ChatEventLike);
+      if (!outcome) return;
+      local = outcome.state;
+      liveStateRef.current = outcome.state;
+      const delta = outcome.delta;
+      const structural =
+        delta.task !== undefined ||
+        delta.confirm !== undefined ||
+        delta.input !== undefined ||
+        delta.recent_tasks !== undefined;
+      const terminal =
+        event.type === "chat.message" ||
+        event.type === "response.completed" ||
+        event.type === "response.error" ||
+        event.type === "response.cancelled" ||
+        event.type === "task.finished" ||
+        event.type === "task.cancelled" ||
+        event.type === "task.error";
+      if (structural || terminal) flush();
+      else stage();
     });
     return () => {
-      unsubscribe();
-      if (frame) cancelAnimationFrame(frame);
-      pending = [];
-      stopStreamRef.current = null;
+      off();
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
     };
   }, [session?.session_id, sessionVersion]);
 
+  // O texto de erro de uma tarefa falhada continua visível uma vez, sem duplicar o evento.
   useEffect(() => {
-    if (!task) return;
-    setRecentTasks(previous => [task, ...previous.filter(item => item.task_id !== task.task_id)].slice(0, 6));
-  }, [task]);
+    const task = projection.task;
+    if (task && task.phase === "failed" && task.error) {
+      setLastError(task.error);
+    }
+  }, [projection.task?.task_id, projection.task?.phase, projection.task?.error, projection.task]);
 
   const send = useCallback(
     async (mode: ChatMode, text: string, attachments?: ChatAttachmentPayload[]): Promise<SendOutcome> => {
@@ -288,8 +287,7 @@ export function useChatTask(
             ? "O chat automático não foi anunciado por esta sessão."
             : mode === "converse"
             ? "O modo Conversar não foi anunciado por esta sessão."
-            : "O modo Executar não foi anunciado por esta sessão."
-        ;
+            : "O modo Executar não foi anunciado por esta sessão.";
         setLastError(message);
         return { accepted: false, error: message };
       }
@@ -320,14 +318,14 @@ export function useChatTask(
     if (!current) {
       return;
     }
-    // Invalidate public text before awaiting IPC, including callbacks already queued for paint.
-    stopStreamRef.current?.();
+    // Invalida o texto em curso antes de esperar o IPC; deltas tardios não voltam a entrar.
+    commitLocal(markChatStreamCancelled(liveStateRef.current));
     try {
       await sendCommand("task.cancel", { task_id: current.task_id });
     } catch (err) {
       setLastError(describeError(err));
     }
-  }, [sendCommand]);
+  }, [commitLocal, sendCommand]);
 
   const approve = useCallback(
     async (requestId: string, approved: boolean) => {
@@ -338,13 +336,12 @@ export function useChatTask(
           approved,
           task_id: current?.task_id ?? "",
         });
-        setConfirmRequest(prev => prev?.request_id === requestId ? null : prev);
-        setTask(prev => resumeIfPending(prev, current?.task_id, requestId));
+        commitLocal(acknowledgeChatRequest(liveStateRef.current, current?.task_id, requestId));
       } catch (err) {
         setLastError(describeError(err));
       }
     },
-    [sendCommand]
+    [commitLocal, sendCommand]
   );
 
   const answerChoice = useCallback(
@@ -360,13 +357,12 @@ export function useChatTask(
       }
       try {
         await sendCommand("task.answer", payload);
-        setInputRequest(prev => prev?.request_id === requestId ? null : prev);
-        setTask(prev => resumeIfPending(prev, current?.task_id, requestId));
+        commitLocal(acknowledgeChatRequest(liveStateRef.current, current?.task_id, requestId));
       } catch (err) {
         setLastError(describeError(err));
       }
     },
-    [sendCommand]
+    [commitLocal, sendCommand]
   );
 
   const answerLocation = useCallback(
@@ -379,18 +375,18 @@ export function useChatTask(
           path,
           task_id: current?.task_id ?? "",
         });
-        setInputRequest(prev => prev?.request_id === requestId ? null : prev);
-        setTask(prev => resumeIfPending(prev, current?.task_id, requestId));
+        commitLocal(acknowledgeChatRequest(liveStateRef.current, current?.task_id, requestId));
       } catch (err) {
         setLastError(describeError(err));
       }
     },
-    [sendCommand]
+    [commitLocal, sendCommand]
   );
 
   const dismissError = useCallback(() => setLastError(null), []);
 
   const busy = useMemo(() => {
+    const task = projection.task;
     if (!task) {
       return false;
     }
@@ -399,14 +395,14 @@ export function useChatTask(
       task.phase === "awaiting_confirm" ||
       task.phase === "awaiting_input"
     );
-  }, [task]);
+  }, [projection.task]);
 
   return {
-    messages,
-    recentTasks,
-    task,
-    confirmRequest,
-    inputRequest,
+    messages: projection.messages,
+    recentTasks: projection.recentTasks,
+    task: projection.task,
+    confirmRequest: projection.confirm,
+    inputRequest: projection.input,
     busy,
     submitting,
     lastError,

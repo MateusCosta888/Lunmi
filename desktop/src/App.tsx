@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getBridgeApi, makeSendCommand, type SendCommandFn } from "./shared/ipc/client";
+import { usePresenceDraft } from "./shared/ipc/presence";
 import { useSession } from "./shared/ipc/useSession";
 import { Icon } from "./shared/ui";
 import type { ApprovalDto, BrainGetDto, BrainStateDto, MemoryProfileDto, UiPreferencesDto } from "./shared/types";
@@ -50,7 +51,9 @@ export function App(): React.ReactElement {
   // Rascunho do perfil vive aqui (não no módulo): sobrevive à troca de aba, é por sessão e
   // morre com a app — wipe/esquecer nunca o ressuscita.
   const [memoryDraft, setMemoryDraft] = useState<{ sessionId: string } & MemoryProfileDraft | null>(null);
-  const [draft, setDraft] = useState("");
+  // BACKGROUND V1: rascunho partilhado com o mini pelo main (mesma assinatura de setter; nunca
+  // persistido; snapshot tardio não reverte edição mais nova).
+  const [draft, setDraft] = usePresenceDraft();
   const [shellError, setShellError] = useState("");
   // Resultado final de uma troca de cérebro que demorou mais que a resposta do comando:
   // o backend publica o estado em `brain.updated` e é aqui que ele fica visível.
@@ -118,6 +121,12 @@ export function App(): React.ReactElement {
     const api = getBridgeApi();
     if (!api) return;
     const unsubscribe = api.onEvent((event) => {
+      // BACKGROUND V1: o main pede uma rota (definições do companheiro ou volta ao chat).
+      if (event.type === "shell.route") {
+        const view = (event.payload as { view?: unknown }).view;
+        if (view === "preferences" || view === "chat") setView(view);
+        return;
+      }
       if (event.type !== "brain.updated") return;
       const payload = event.payload as unknown as BrainStateDto;
       // O estado publicado é autoritativo: aplica-o sem esperar outra navegação/consulta.

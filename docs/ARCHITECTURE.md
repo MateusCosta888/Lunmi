@@ -23,6 +23,12 @@ TaskController ─── MemoryManager / SQLite
 
 ## Interface e comunicação
 
+O modo residente reutiliza a bridge e a sessão da janela principal. `desktop/electron/chat-projection.ts` mantém a projeção canónica em RAM, incluindo o parser de streaming; principal e companion recebem snapshots/deltas por sessão e cursor. O companion não monta outro App/useSession nem cria outra conversa. Rascunho e mensagens são partilhados, sem persistência adicional de conversa pelo Node.
+
+`desktop/electron/companion.ts` e `desktop/src/shared/node.ts` implementam a janela única do Node: arco/círculo → cápsula → mini chat. A shape Win32 é a autoridade de desenho e input; o renderer só desenha o conteúdo da superfície assentada. O main deriva estados reais, gere foco, passividade, atalho, migração/preferências e timer de conclusão. A allowlist do mini mantém `chat.send`, `task.cancel`, `voice.get` e `voice.stop`; confirmações pertencem à principal.
+
+`app/voice/manager.py` supervisiona um worker externo com protocolo JSONL, gerações e cancelamento. A bridge observa resultados elegíveis sem alterar o TaskController. `eligibility.py`/`filter.py` limitam o texto falado; `worker_main.py` carrega o runtime de áudio separado e sintetiza/reproduz localmente. A fala não instala modelos e não é um segundo Brain. Preferências próprias, último texto apenas em RAM, sem captura de microfone. Indisponibilidade do runtime não impede a execução normal do chat.
+
 - `desktop/src` contém componentes, navegação, formulários, temas e estado de apresentação.
 - O renderer não recebe Node.js, shell, filesystem ou IPC bruto. O preload oferece uma API limitada.
 - `desktop/electron` supervisiona o Python, valida a origem de comandos e controla diálogos nativos.

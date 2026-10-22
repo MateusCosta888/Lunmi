@@ -36,6 +36,9 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 | **Anexos de texto** | Até 4 arquivos UTF-8, 32 KiB por arquivo e 64 KiB no total; o turno com anexos não autoriza ações. |
 | **Controle do usuário** | Confirmações, perguntas, cancelamento e indicação de falhas fazem parte da execução. |
 | **Interface adaptável** | Temas Celestial, Claro suave e Red Velvet, laterais com vidro, navegação recolhível e compositor multilinha com seleção de modelo. |
+| **Lunmi Node** | Ao fechar a principal, pode continuar na bandeja com um Node num canto superior. Abre um mini chat sincronizado e mostra atividade/atenção. Fica passivo durante tarefas para não intercetar cliques. |
+| **Saída de voz local** | Controlos para testar, ouvir a última resposta elegível e parar a fala. Requer runtime e modelos preparados separadamente; começa desligada. Captura de microfone ainda não está disponível. |
+| **GalaxyOrb** | Presença visual persistente na conversa principal, preservada quando chegam mensagens. |
 
 A execução combina caminhos determinísticos para tarefas reconhecidas e agentes UFO² para as demais. Um despacho de ação não prova sucesso: confira o resultado e a evidência apresentados.
 
@@ -93,6 +96,10 @@ Na interface atual não é preciso escolher Conversar ou Executar. Uma pergunta 
 - O envio de email exige aprovação manual da prévia, mesmo com Autoaprovação ligada. Um resultado incerto não é repetido automaticamente; aceitação pelo Gmail não comprova entrega ao destinatário.
 
 O painel de tarefas recentes mostra a sessão atual; não promete recuperar integralmente conversas anteriores.
+
+Em **Configurações → Segundo plano**, escolha se fechar a janela mantém a Lunmi em execução. O Node tem opções de canto, visibilidade, recolhimento, atividade e atalho. **Sair** na bandeja termina a aplicação. O mini chat partilha a conversa atual; confirmações sensíveis são abertas na principal. Durante uma tarefa em execução, o Node não aceita interação nem rouba o foco; use a bandeja para restaurar a principal se precisar intervir.
+
+A saída de voz é opcional e experimental. O checkout não inclui os modelos nem instala um runtime de áudio automaticamente. Sem esses recursos, a interface indica indisponibilidade e o chat continua a funcionar. Não há escuta, gravação de microfone ou STT nesta versão. Veja [os limites da voz e do modo residente](docs/GETTING_STARTED.md#node-e-segundo-plano).
 
 ## Memória e privacidade
 

@@ -74,6 +74,12 @@ export const COMMAND_TYPES = [
   "memory.profile.undo",
   "ui.preferences.get",
   "ui.preferences.set",
+  /** VOICE V1 (aditivo): saída de voz opcional; ver `.agents/VOICE-V1-OUTPUT-CONTRACT.md`. */
+  "voice.get",
+  "voice.set",
+  "voice.test",
+  "voice.speak_last",
+  "voice.stop",
   "app.shutdown",
 ] as const;
 
@@ -103,6 +109,8 @@ export const EVENT_TYPES = [
   "task.error",
   "brain.updated",
   "memory.changed",
+  /** VOICE V1: estado público de voz; nunca carrega texto de conversa. */
+  "voice.state",
   "log.append",
 ] as const;
 

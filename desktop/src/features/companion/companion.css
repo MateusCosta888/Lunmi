@@ -1,0 +1,59 @@
+/* Companheiro residente (`desktop/src/features/companion/companion.css`) — BACKGROUND V1.
+   Só tokens de tema; mini 380×480 DIP (constantes partilhadas em shared/presence.ts).
+   O fundo opaco global vive em styles.css; aqui a janela companheira fica transparente pelo
+   data-companion definido na entrada, sem tocar nas regras da janela principal.
+   NODE V1: o par orb/mini foi substituído pelo objecto contínuo (`NodeSurface` + `node.css`);
+   o caminho morto do `OrbSurface` e as suas regras saíram com ele. O `GalaxyOrb` do chat
+   principal não é tocado. */
+
+html[data-companion="companion"],
+html[data-companion="companion"] body { background: transparent; }
+
+.lunmi-mini { position: fixed; inset: 0; display: flex; flex-direction: column; min-height: 0;
+  width: 380px; height: 480px; max-width: 100vw; max-height: 100vh; margin: auto; overflow: hidden;
+  border: 1px solid var(--lunmi-border-subtle); border-radius: 16px;
+  background: var(--lunmi-bg-card); color: var(--lunmi-text-primary);
+  font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif; font-size: 14px;
+  box-shadow: var(--lunmi-depth-raised); }
+
+.lunmi-mini-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--lunmi-border-hairline); flex: 0 0 auto; }
+.lunmi-mini-head strong { letter-spacing: .08em; font-size: 13px; }
+.lunmi-mini-head-actions { display: flex; gap: 4px; }
+/* Alvos de 44px (N3): os botões de ícone são pequenos mas tocáveis. */
+.lunmi-mini-icon-button { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 8px;
+  background: transparent; color: var(--lunmi-text-secondary); font-size: 15px; cursor: pointer; }
+.lunmi-mini-icon-button:hover { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
+.lunmi-mini-icon-button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+
+/* A pendência fica FIXADA fora da lista (N3): continua acessível sem scroll e sem puxar o
+   leitor que se afastou do fundo. */
+.lunmi-mini-pending-dock { flex: 0 0 auto; padding: 8px 12px 0; }
+
+.lunmi-mini-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+  gap: 8px; padding: 12px; }
+.lunmi-mini-empty { margin: auto 0; color: var(--lunmi-text-muted); text-align: center; }
+.lunmi-mini-bubble { margin: 0; max-width: 86%; padding: 8px 11px; border-radius: 12px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere; align-self: flex-start;
+  background: var(--lunmi-bg-card-subtle); border: 1px solid var(--lunmi-border-hairline); }
+.lunmi-mini-bubble[data-role="user"] { align-self: flex-end; background: var(--lunmi-bg-user); border-color: var(--lunmi-border-on-user); }
+.lunmi-mini-phase { margin: 0; color: var(--lunmi-text-muted); font-size: 12px; }
+.lunmi-mini-pending { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--lunmi-warning); border-radius: 10px; color: var(--lunmi-text-secondary); font-size: 12px; }
+.lunmi-mini-error { margin: 0 12px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-error);
+  color: var(--lunmi-error); font-size: 12px; }
+
+.lunmi-mini-composer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px;
+  border-top: 1px solid var(--lunmi-border-hairline); }
+.lunmi-mini-composer textarea { resize: none; min-height: 44px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--lunmi-border-subtle); background: var(--lunmi-bg-input);
+  color: var(--lunmi-text-primary); font: inherit; }
+.lunmi-mini-composer textarea:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 1px; }
+.lunmi-mini-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.lunmi-mini-button { min-height: 44px; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--lunmi-accent);
+  background: var(--lunmi-accent); color: var(--lunmi-on-accent); font: inherit; font-size: 14px; cursor: pointer; }
+.lunmi-mini-button:hover:not(:disabled) { background: var(--lunmi-accent-hover); border-color: var(--lunmi-accent-hover); }
+.lunmi-mini-button:disabled { opacity: .5; cursor: not-allowed; }
+.lunmi-mini-button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-mini-quiet { border-color: var(--lunmi-border-subtle); background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); }
+.lunmi-mini-quiet:hover:not(:disabled) { background: var(--lunmi-surface-hover); border-color: var(--lunmi-border-subtle); color: var(--lunmi-text-primary); }

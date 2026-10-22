@@ -10,10 +10,11 @@
  * principal, não da página.
  */
 import React, { useCallback, useEffect, useState } from "react";
+import { useNodePreferences, useResidentOption } from "../../shared/ipc/presence";
 import { TOKENS, THEMES, getTheme } from "../../shared/theme";
 import { Icon } from "../../shared/ui";
 import { describeError, type SendCommandFn } from "../../shared/ipc/client";
-import type { ApprovalDto, QuickActionDto, UiPreferencesDto } from "../../shared/types";
+import type { ApprovalDto, NodePreferencesDto, QuickActionDto, UiPreferencesDto } from "../../shared/types";
 import type { SessionReadyPayload } from "../../shared/protocol";
 
 export interface PreferencesPanelProps {
@@ -25,6 +26,151 @@ export interface PreferencesPanelProps {
 export const MAX_ACTIONS = 8;
 export const LABEL_MAX = 40;
 export const DRAFT_MAX = 200;
+
+/**
+ * Opção residente do BACKGROUND V1 (`Continuar em segundo plano ao fechar`).
+ * Só aparece quando a ponte do companheiro existe (`available`); falha mantém o valor anterior
+ * com mensagem honesta. Persistida pelo main em `.local/desktop-presence.json` — nunca no schema
+ * fechado `lunmi-ui.json`.
+ */
+function ResidentCard(): React.ReactElement | null {
+  const { resident, available, busy, setResident } = useResidentOption();
+  const [error, setError] = useState<string | null>(null);
+  if (!available) return null;
+  const apply = async (next: boolean) => {
+    setError(null);
+    const saved = await setResident(next);
+    if (!saved) setError("Não foi possível guardar a preferência de segundo plano. O valor anterior mantém-se.");
+  };
+  return (
+    <div style={cardStyle} data-testid="resident-card">
+      <h3 style={subHeadingStyle}>Segundo plano</h3>
+      <label
+        htmlFor="resident-toggle"
+        style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}
+      >
+        <input
+          id="resident-toggle"
+          data-testid="resident-toggle"
+          type="checkbox"
+          checked={resident}
+          disabled={busy}
+          onChange={() => void apply(!resident)}
+        />
+        <span>
+          Continuar em segundo plano ao fechar
+          <br />
+          <span style={{ color: TOKENS.textMuted, fontSize: "12px" }} data-testid="resident-scope">
+            {resident
+              ? "Fechar (X) esconde a janela e mantém a Lunmi em segundo plano; «Sair» na bandeja termina a aplicação."
+              : "Fechar (X) termina a Lunmi, como antes."}
+          </span>
+        </span>
+      </label>
+      {error && <p role="alert" style={errorStyle} data-testid="resident-error">{error}</p>}
+    </div>
+  );
+}
+
+const NODE_ERROR_TEXT: Record<string, string> = {
+  invalid_payload: "Os valores enviados são inválidos; nada foi gravado e os valores anteriores mantêm-se.",
+  io_error: "Não foi possível gravar no disco. Os valores anteriores mantêm-se.",
+  shortcut_conflict: "Esse atalho já está a ser usado por outra aplicação; o atalho anterior conserva-se.",
+  shortcut_unavailable: "Esse atalho não pode ser registado neste sistema; o atalho anterior conserva-se.",
+};
+
+/**
+ * Preferências do Lunmi Node (contrato `.agents/LUNMI-NODE-V1-CONTRACT.md`).
+ * Consome apenas o hook/DTO do Codador; sem estado otimista: os controlos refletem sempre as
+ * preferências canónicas devolvidas pelo main. Aparece só quando a ponte expõe `setNodePreferences`.
+ */
+function NodeCard(): React.ReactElement | null {
+  const { preferences, available, busy, error, setNodePreferences } = useNodePreferences();
+  const { resident } = useResidentOption();
+  const [shortcutDraft, setShortcutDraft] = useState("");
+  if (!available || !preferences) return null;
+  const apply = (patch: Partial<NodePreferencesDto>) => { void setNodePreferences(patch); };
+  const semantics = !resident
+    ? "Com «Continuar em segundo plano» desligado, Fechar (X) termina a Lunmi e o Node não aparece."
+    : preferences.enabled
+      ? "Fechar (X) esconde a janela e mostra o Node no canto escolhido; «Sair» na bandeja termina a aplicação."
+      : "Fechar (X) esconde para a bandeja sem Node; abre de novo pela bandeja. O Node desligado nunca termina a sessão.";
+  return (
+    <div style={cardStyle} data-testid="node-card">
+      <h3 style={subHeadingStyle}>Lunmi Node</h3>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
+        <input type="checkbox" data-testid="node-enabled" checked={preferences.enabled} disabled={busy}
+          onChange={() => apply({ enabled: !preferences.enabled })} />
+        <span>
+          Mostrar o Node quando a janela está fechada
+          <br />
+          <span style={{ color: TOKENS.textMuted, fontSize: "12px" }}>
+            Um pequeno objeto preto num canto superior, sempre disponível; não desliga nem termina a Lunmi.
+          </span>
+        </span>
+      </label>
+
+      <div role="radiogroup" aria-label="Canto do Node" style={{ display: "flex", gap: "14px", margin: "10px 0 0", fontSize: "13px" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <input type="radio" name="node-side" data-testid="node-side-left" value="left"
+            checked={preferences.side === "left"} disabled={busy || !preferences.enabled}
+            onChange={() => apply({ side: "left" })} />
+          Canto superior esquerdo
+        </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <input type="radio" name="node-side" data-testid="node-side-right" value="right"
+            checked={preferences.side === "right"} disabled={busy || !preferences.enabled}
+            onChange={() => apply({ side: "right" })} />
+          Canto superior direito
+        </label>
+      </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", marginTop: "10px" }}>
+        <input type="checkbox" data-testid="node-auto-dock" checked={preferences.auto_dock} disabled={busy}
+          onChange={() => apply({ auto_dock: !preferences.auto_dock })} />
+        Recolher automaticamente para a borda
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", marginTop: "6px" }}>
+        <input type="checkbox" data-testid="node-show-activity" checked={preferences.show_activity} disabled={busy}
+          onChange={() => apply({ show_activity: !preferences.show_activity })} />
+        Mostrar atividade no Node
+        <span style={{ color: TOKENS.textMuted, fontSize: "12px" }}>
+          — confirmações pendentes e erros continuam visíveis mesmo desligado.
+        </span>
+      </label>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
+        <label htmlFor="node-shortcut-input" style={{ fontSize: "12px", color: TOKENS.textMuted }}>Atalho</label>
+        <input
+          id="node-shortcut-input"
+          data-testid="node-shortcut-input"
+          type="text"
+          value={shortcutDraft || preferences.shortcut || ""}
+          placeholder="ex.: Ctrl+Alt+Space"
+          disabled={busy}
+          onChange={event => setShortcutDraft(event.target.value)}
+          style={{ ...controlStyle, width: "200px" }}
+        />
+        <button type="button" data-testid="node-shortcut-apply" style={secondaryButtonStyle} disabled={busy || !shortcutDraft.trim()}
+          onClick={() => { apply({ shortcut: shortcutDraft.trim() }); setShortcutDraft(""); }}>
+          Definir atalho
+        </button>
+        {preferences.shortcut && (
+          <button type="button" data-testid="node-shortcut-clear" style={secondaryButtonStyle} disabled={busy}
+            onClick={() => { setShortcutDraft(""); apply({ shortcut: null }); }}>
+            Remover atalho
+          </button>
+        )}
+      </div>
+      <p style={{ margin: "6px 0 0", color: TOKENS.textMuted, fontSize: "12px" }}>
+        O atalho abre e recolhe o chat do Node. Se outro programa já o usar, o teu atalho anterior fica intacto.
+      </p>
+
+      <p style={{ margin: "10px 0 0", fontSize: "12px", color: TOKENS.textSecondary }} data-testid="node-semantics">{semantics}</p>
+      {error && <p role="alert" style={errorStyle} data-testid="node-error">{NODE_ERROR_TEXT[error] ?? "A preferência não foi guardada; os valores anteriores mantêm-se."}</p>}
+    </div>
+  );
+}
 
 export function PreferencesPanel({ sendCommand, session, onThemeChanged }: PreferencesPanelProps): React.ReactElement {
   const [approval, setApproval] = useState<ApprovalDto | null>(null);
@@ -190,9 +336,12 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
         )}
       </div>
 
+      <ResidentCard />
+
+      <NodeCard />
+
       <div style={cardStyle} data-testid="approval-card">
-        <h3 style={subHeadingStyle}>Autoaprovação</h3>
-        <label
+        <h3 style={subHeadingStyle}>Autoaprovação</h3>        <label
           htmlFor="auto-approve"
           style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}
         >

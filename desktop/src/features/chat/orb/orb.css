@@ -1,0 +1,32 @@
+.lunmi-conversation-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.lunmi-conversation-body[data-has-messages="false"] { justify-content: center; }
+.lunmi-conversation-face { display: flex; flex-direction: column; align-items: center; flex: 0 0 auto; padding-top: 12px; }
+.lunmi-conversation-body[data-has-messages="false"] > .lunmi-message-list { flex: 0 0 auto !important; padding: 0 !important; }
+.lunmi-conversation-face .lunmi-welcome { margin: 0; padding: 0 20px 6px; }
+.lunmi-conversation-face .lunmi-welcome h1 { margin: 4px 0 6px; line-height: 1.25; }
+.lunmi-conversation-face .lunmi-welcome p { margin: 4px 0 0; line-height: 1.5; }
+.lunmi-conversation > .lunmi-composer { flex-shrink: 0; }
+.lunmi-galaxy-orb { position: relative; width: min(272px, 85%); aspect-ratio: 1; flex: 0 0 auto; isolation: isolate; }
+.lunmi-conversation-body[data-has-messages="true"] .lunmi-conversation-face { padding-top: 0; }
+.lunmi-conversation-body[data-has-messages="true"] .lunmi-galaxy-orb { width: min(224px, 85%); }
+.lunmi-galaxy-orb canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; }
+.lunmi-galaxy-orb::before { content: ""; position: absolute; inset: 7%; border-radius: 50%; background: radial-gradient(circle, rgba(120,134,255,.20), rgba(72,92,210,.12) 42%, rgba(67,52,150,0) 72%); filter: blur(32px); z-index: -2; pointer-events: none; }
+.lunmi-galaxy-orb::after { content: ""; position: absolute; inset: 1.8%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle at 31% 24%, rgba(255,255,255,.22), rgba(255,255,255,.07) 9%, rgba(255,255,255,0) 22%), radial-gradient(circle at 70% 75%, rgba(74,106,216,.12), rgba(74,106,216,0) 28%), radial-gradient(circle, rgba(255,255,255,0) 55%, rgba(255,255,255,.05) 72%, rgba(255,255,255,.08) 82%, rgba(255,255,255,.16));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), inset 0 8px 18px rgba(255,255,255,.035), inset 0 -22px 32px rgba(4,7,20,.24), inset 0 -42px 60px rgba(4,7,20,.20), 0 0 36px rgba(114,147,255,.06); }
+.lunmi-galaxy-orb[data-unavailable="true"] { display: grid; place-items: center; }
+.lunmi-galaxy-orb[data-unavailable="true"]::before, .lunmi-galaxy-orb[data-unavailable="true"]::after { display: none; }
+@media (max-height: 650px) {
+  .lunmi-galaxy-orb { width: 160px; }
+  .lunmi-conversation-body[data-has-messages="true"] .lunmi-galaxy-orb { width: 128px; }
+  .lunmi-conversation-face { padding-top: 0; }
+  .lunmi-conversation-face .lunmi-welcome p { display: none; }
+  .lunmi-conversation-face .lunmi-welcome h1 { font-size: 23px; }
+  /* Preserve space for the persistent face and history without removing controls. */
+  .lunmi-conversation .lunmi-composer-surface { padding: 10px 12px; gap: 8px; }
+  .lunmi-conversation .lunmi-input-well { padding: 8px 12px; }
+  .lunmi-conversation .lunmi-composer-input { max-height: 80px; }
+  .lunmi-conversation .lunmi-composer-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .lunmi-conversation .lunmi-composer-toolbar > .lunmi-model-picker { flex: 0 1 140px; }
+  .lunmi-conversation .lunmi-composer-actions { width: auto; margin-left: auto; }
+}

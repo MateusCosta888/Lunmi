@@ -16,9 +16,11 @@ import type { AttachmentDto, ChatMode } from "../../shared/types";
 import type { ChatAttachmentPayload, ChatTaskState } from "./useChatTask";
 import { MAX_COMPOSER_CHARS } from "./useChatTask";
 import { TaskPanel } from "../task/TaskPanel";
-import { BrandMark, Icon } from "../../shared/ui";
+import { Icon } from "../../shared/ui";
+import { GalaxyOrb } from "./orb/GalaxyOrb";
 import { AttachmentsBar } from "./Attachments";
 import { ThoughtLine } from "./ThoughtLine";
+import { VoiceControls } from "../voice/VoiceControls";
 import { useBentoSurface } from "../../shared/bento";
 
 export interface ChatPanelProps {
@@ -171,7 +173,17 @@ export function ChatPanel({
         minHeight: 0,
       }}
     >
+      <div className="lunmi-conversation-body" data-has-messages={chat.messages.length > 0}>
+        <div className="lunmi-conversation-face">
+          <GalaxyOrb />
+          {chat.messages.length === 0 && (
+            <div className="lunmi-welcome"><h1>Como posso ajudar?</h1>
+              <p>Converse, organize uma ideia ou descreva uma tarefa.<br />Você controla o que a Lunmi faz no Windows.</p>
+            </div>
+          )}
+        </div>
       <div
+        className="lunmi-message-list"
         data-testid="chat-messages"
         style={{
           flex: "1 1 auto",
@@ -183,11 +195,6 @@ export function ChatPanel({
           padding: "18px 20px",
         }}
       >
-        {chat.messages.length === 0 && (
-          <div className="lunmi-welcome"><BrandMark size={52} /><h1>Como posso ajudar?</h1>
-            <p>Converse, organize uma ideia ou descreva uma tarefa.<br />Você controla o que a Lunmi faz no Windows.</p>
-          </div>
-        )}
         {chat.messages.map((message, index) => (
           <div
             key={message.message_id ?? `${message.task_id ?? "msg"}-${index}`}
@@ -208,6 +215,7 @@ export function ChatPanel({
         {chat.task && <ThoughtLine key={chat.task.task_id} task={chat.task} />}
         {chat.task && !chat.busy && <TaskPanel chat={chat} />}
         <div ref={listEndRef} />
+      </div>
       </div>
 
       {chat.confirmRequest && (
@@ -379,6 +387,7 @@ export function ChatPanel({
                 <span className="lunmi-auto-approve-state">{autoApprove.enabled ? "ligada" : "desligada"}</span>
               </button>
             )}
+            <VoiceControls sessionId={session?.session_id} />
             <div className="lunmi-composer-actions">
           {!automatic && <div role="radiogroup" aria-label="Modo" className="lunmi-mode">
             {(["execute", "converse"] as ChatMode[]).map(option => {

@@ -56,6 +56,8 @@ from app.settings import (
     Settings,
 )
 from app.ui import ui_preferences
+from app.voice.eligibility import speakable_reply
+from app.voice.manager import VoiceError, VoiceManager
 
 LOCATION_TIMEOUT_SECONDS = 45.0
 # Quanto a thread lenta do comando `brain.set` espera o commit na thread do loop antes de
@@ -207,6 +209,7 @@ class BridgeService:
         discovery: ModelDiscovery | None = None,
         trusted_root_pid: int | None = None,
         session_id: str | None = None,
+        voice: VoiceManager | None = None,
     ) -> None:
         self._emit = emit
         self.session_id = session_id or 'sess-' + uuid.uuid4().hex[:16]
@@ -254,6 +257,15 @@ class BridgeService:
             ModelDiscovery() if self.sandbox_dir is not None else get_discovery()
         )
 
+        # VOICE V1: gestor leve — não importa NumPy/ORT/sounddevice na bridge e não arranca
+        # nenhum processo antes do primeiro pedido de fala. Sandbox herdado de `root_dir`.
+        self.voice = voice if voice is not None else VoiceManager(
+            emit=self._emit_voice,
+            root_dir=self.root_dir,
+            state_root=self.settings.state_root,
+            session_id=self.session_id,
+        )
+
         # Antes de criar o controlador (que pode importar pywinauto/UIA): wrappers COM gerados em
         # memória, para nada ser escrito em `resources/` do pacote. Ver `app/computer/com_cache.py`.
         use_in_memory_com_modules()
@@ -287,6 +299,11 @@ class BridgeService:
         self._lock = threading.RLock()
         if self.integrations.path.exists():
             self._loop.call_soon_threadsafe(self.integrations.resume)
+
+    def _emit_voice(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        self._emit("voice.state", dict(payload))
 
     def _integration_emit(self, kind: str, payload: dict[str, Any]) -> None:
         self._emit(kind, {**payload, 'session_id': self.session_id})
@@ -607,6 +624,16 @@ class BridgeService:
             return self._handle_ui_preferences_get()
         if cmd == "ui.preferences.set":
             return self._handle_ui_preferences_set(payload)
+        if cmd == "voice.get":
+            return self._handle_voice_get(payload)
+        if cmd == "voice.set":
+            return self._handle_voice_set(payload)
+        if cmd == "voice.test":
+            return self._handle_voice_test(payload)
+        if cmd == "voice.speak_last":
+            return self._handle_voice_speak_last(payload)
+        if cmd == "voice.stop":
+            return self._handle_voice_stop(payload)
         if cmd == "app.shutdown":
             self.close()
             return {"status": "shutting_down"}
@@ -757,13 +784,16 @@ class BridgeService:
                 failure_kind="INTERNAL_ERROR",
             )
             self._emit("task.finished", public_task_result_dto(fallback))
+            # Uma falha interna limpa o último texto falável: nunca se lê uma resposta antiga.
+            self._observe_voice(fallback, attachments=bool(attachments), verified_prefix='')
             return fallback
 
         dto = public_task_result_dto(res)
+        # Provenance before speech: a file's content or the agent's own summary is never
+        # marked verified just because *some* evidence was attached. A fala só usa o template.
+        speech = (verified_speech_prefix(res.evidence, scope=res.scope, status=res.status)
+                  if res.status == 'SUCCESS' else '')
         if res.status == 'SUCCESS':
-            # Provenance before speech: a file's content or the agent's own summary is
-            # never marked verified just because *some* evidence was attached.
-            speech = verified_speech_prefix(res.evidence, scope=res.scope, status=res.status)
             response.finish(res.message, res.status, verified_result=bool(speech),
                             verified_prefix=speech)
         elif res.failure_kind == 'AUTHORIZATION_REFUSED':
@@ -786,6 +816,8 @@ class BridgeService:
         self._emit("task.finished", dto)
         if res.scope != "conversation":
             self._emit("memory.changed", {"reason": "task_finished"})
+        # Fala depois da resposta final: uma única decisão backend serve auto e manual.
+        self._observe_voice(res, attachments=bool(attachments), verified_prefix=speech)
         return res
 
     def _handle_task_cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1719,6 +1751,65 @@ class BridgeService:
         self.prefs = parsed
         return self._prefs_dto()
 
+    # ---------------------------------------------------------------- voz (V1) --
+    @staticmethod
+    def _voice_empty_payload(payload: dict[str, Any]) -> None:
+        if payload:
+            raise protocol.ProtocolError(
+                "invalid_payload", "Este comando de voz não aceita campos."
+            )
+
+    def _handle_voice_get(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_empty_payload(payload)
+        return self.voice.snapshot()
+
+    def _handle_voice_set(self, payload: dict[str, Any]) -> dict[str, Any]:
+        unknown = set(payload) - {"enabled", "auto_speak"}
+        if unknown or not payload:
+            raise protocol.ProtocolError(
+                "invalid_payload", "Use apenas 'enabled' e/ou 'auto_speak' em voice.set."
+            )
+        for key in ("enabled", "auto_speak"):
+            if key in payload and type(payload[key]) is not bool:
+                raise protocol.ProtocolError(
+                    "invalid_payload", f"Campo '{key}' deve ser booleano."
+                )
+        try:
+            return self.voice.set(enabled=payload.get("enabled"),
+                                  auto_speak=payload.get("auto_speak"))
+        except VoiceError as exc:
+            # Preferência que não grava não muda o estado: erro tipado e público.
+            raise protocol.ProtocolError("io_error", str(exc)) from None
+
+    def _handle_voice_test(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_empty_payload(payload)
+        return self.voice.test()
+
+    def _handle_voice_speak_last(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_empty_payload(payload)
+        return self.voice.speak_last()
+
+    def _handle_voice_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_empty_payload(payload)
+        return self.voice.stop()
+
+    def _observe_voice(self, result: TaskResult, *, attachments: bool,
+                       verified_prefix: str) -> None:
+        """Entrega a decisão de fala ao gestor; voz nunca altera o resultado da tarefa."""
+        try:
+            text = speakable_reply(
+                message=result.message,
+                status=result.status,
+                scope=result.scope,
+                verified_prefix=verified_prefix,
+                attachments=attachments,
+                evidence_count=len(result.evidence or []),
+                operations=result.operation_states or (),
+            )
+            self.voice.observe_reply(text)
+        except Exception:
+            return
+
     # ----------------------------------------------------------- encerramento --
     def close(self) -> None:
         with self._lock:
@@ -1727,6 +1818,10 @@ class BridgeService:
             self._closed = True
             pending_reconfig = self._reconfig_future
         self._deny_all_pending_questions()
+        try:
+            self.voice.close()
+        except Exception:
+            pass
         # Um commit de cérebro em voo termina (ou falha) antes de fechar: encerrar no meio
         # deixaria o controlador com brain/engine trocados pela metade.
         if pending_reconfig is not None and not pending_reconfig.done():

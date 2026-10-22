@@ -379,9 +379,235 @@ export interface TaskStateDto {
   error: string | null;
 }
 
+/**
+ * VOICE V1 — saída de voz. Contrato: `.agents/VOICE-V1-OUTPUT-CONTRACT.md`.
+ * Nenhum destes DTOs carrega texto de conversa, caminho, modelo ou segredo; `capture_supported`
+ * é sempre `false` nesta entrega (zero captura de microfone).
+ */
+export type VoiceStateName =
+  | "disabled"
+  | "loading"
+  | "ready"
+  | "synthesizing"
+  | "playing"
+  | "error";
+
+export interface VoiceStateDto {
+  enabled: boolean;
+  auto_speak: boolean;
+  available: boolean;
+  state: VoiceStateName;
+  generation: number;
+  can_speak_last: boolean;
+  capture_supported: false;
+  message: string;
+}
+
+/** Evento `voice.state`: o DTO acima + `session_id`, sem mais nenhum campo. */
+export interface VoiceStateEventDto extends VoiceStateDto {
+  session_id: string;
+}
+
+/** Resultado imediato de `voice.test`, `voice.speak_last` e `voice.stop`. */
+export interface VoiceCommandAckDto {
+  accepted: boolean;
+  generation: number;
+  state: VoiceStateName;
+  reason: "" | "disabled" | "unavailable" | "no_last_response";
+}
+
+export interface VoiceSetPayload {
+  enabled?: boolean;
+  auto_speak?: boolean;
+}
+
 export type { SessionReadyPayload };
 
 /** Composio Connect identity is public; tokens never cross IPC. */
 export type GmailConnectionState = 'disconnected' | 'connecting' | 'composio_connected' | 'gmail_connecting' | 'select_account' | 'connected' | 'reauth_required' | 'unavailable' | 'error';
 export interface GmailAccountDto { id: string; email: string }
 export interface IntegrationsDto { gmail: { state: GmailConnectionState; account: GmailAccountDto | null; accounts: GmailAccountDto[]; flow_id: string | null; epoch: number; error: string | null } }
+
+/**
+ * BACKGROUND V1 — presença residente, orb e mini chat. Contrato: `.agents/BACKGROUND-V1-CONTRACT.md`.
+ *
+ * Nada aqui carrega segredo, caminho, URL ou código: só o estado público da mesma sessão que a
+ * janela principal já mostra. O mini não tem autoridade extra sobre a tarefa.
+ */
+export type PresenceMode = "hidden" | "orb" | "mini";
+
+/** Ações fechadas do companheiro; nenhuma recebe janela-alvo, path, URL ou método arbitrário. */
+export type PresenceAction =
+  | "show-main"
+  | "show-settings"
+  | "toggle-mini"
+  | "hide-mini"
+  | "stop-voice"
+  | "quit"
+  // LUNMI NODE V1 (N1): ações do Node, aceites apenas a partir da janela companheira.
+  | "node-reveal"
+  | "node-open"
+  | "node-close"
+  | "node-dock";
+
+/**
+ * LUNMI NODE V1 — superfície única do companheiro (`.agents/LUNMI-NODE-V1-CONTRACT.md`).
+ * `hidden` não tem rect; as restantes vivem dentro do envelope fixo de 420×520 DIP.
+ */
+export type NodeSurface = "hidden" | "docked" | "revealed" | "pill" | "chat" | "attention";
+
+export type NodeSide = "left" | "right";
+
+/** Estados de negócio da tarefa (N2). Em N1 o snapshot publica `status: null`. */
+export type NodeStatus =
+  | "idle"
+  | "working"
+  | "needs_confirm"
+  | "needs_input"
+  | "done"
+  | "not_verified"
+  | "cancelled"
+  | "failed"
+  | "offline";
+
+/** Tom visual derivado do status pelo main; a UI nunca o inventa. */
+export type NodeTone = "neutral" | "working" | "needs" | "success" | "error" | "offline";
+
+/** Preferências do Node (N1). Distintas de `resident`: desligar o Node não mata a sessão. */
+export interface NodePreferencesDto {
+  /** Node visível. `false` esconde para a bandeja; o backend e a principal continuam vivos. */
+  enabled: boolean;
+  /** E = `left`, D = `right`. */
+  side: NodeSide;
+  /** Recolhe sozinho depois da histerese de 600 ms fora do círculo revelado. */
+  auto_dock: boolean;
+  /** Autoriza o Node a mostrar atividade (N2). Não inventa progresso. */
+  show_activity: boolean;
+  /** Acelerador Electron (`"Control+Shift+L"`); `null` = sem atalho. */
+  shortcut: string | null;
+}
+
+export interface NodeTransitionDto {
+  id: number;
+  from: NodeSurface;
+  to: NodeSurface;
+  duration_ms: number;
+}
+
+/** Estado público do Node. `v` versiona o DTO; ids de transição são monotónicos. */
+export interface NodeStateDto {
+  v: 1;
+  enabled: boolean;
+  side: NodeSide;
+  /** Destino atual: durante um morph já é a superfície de chegada. */
+  surface: NodeSurface;
+  /** O conteúdo novo só entra em `settled`; em `transitioning` mantém-se o anterior. */
+  phase: "settled" | "transitioning";
+  transition_id: number;
+  transition: NodeTransitionDto | null;
+  status: NodeStatus | null;
+  tone: NodeTone;
+  session_id: string | null;
+}
+
+export interface NodePreferencesResultDto {
+  ok: boolean;
+  preferences: NodePreferencesDto;
+  error?: "invalid_payload" | "io_error" | "shortcut_conflict" | "shortcut_unavailable";
+}
+
+/** Preferência própria do recurso residente (`.local/desktop-presence.json`), não o schema fechado de `lunmi-ui.json`. */
+export interface PresencePreferencesDto {
+  resident: boolean;
+  /** Âncora do canto superior esquerdo do orb legado em DIP; `null` = canto inferior direito. */
+  companion: [number, number] | null;
+  /** N1: preferências do Node, migradas de um ficheiro antigo sem apagar `companion`. */
+  node?: NodePreferencesDto;
+}
+
+/** Projeção pública da conversa: uma conversa, duas vistas. `cursor` é monotónico por sessão. */
+export interface ChatProjectionDto {
+  session_id: string;
+  cursor: number;
+  messages: ChatMessageDto[];
+  recent_tasks: TaskStateDto[];
+  task: TaskStateDto | null;
+  confirm: ConfirmRequestDto | null;
+  input: InputRequestDto | null;
+}
+
+/**
+ * Mudança incremental da projeção. Só os campos presentes mudam; mensagens são upsert por
+ * `message_id` (nunca um segundo histórico). `reset` descarta a projeção anterior (sessão nova).
+ */
+export interface ChatProjectionDeltaDto {
+  session_id: string;
+  cursor: number;
+  reset?: boolean;
+  messages?: ChatMessageDto[];
+  recent_tasks?: TaskStateDto[];
+  task?: TaskStateDto | null;
+  confirm?: ConfirmRequestDto | null;
+  input?: InputRequestDto | null;
+}
+
+export interface PresenceSnapshotDto {
+  /** Legado derivado de `node.surface` enquanto existir renderer antigo. */
+  mode: PresenceMode;
+  resident: boolean;
+  session: SessionReadyPayload | null;
+  chat: ChatProjectionDto;
+  draft: string;
+  /** Tema público aplicado pela principal (`celestial`, `light`, `redvelvet`…). */
+  theme: string;
+  /** Último `voice.state` público; `null` até haver um. Abrir o mini durante a fala não perde o estado. */
+  voice: VoiceStateEventDto | null;
+  /** N1: estado único do Node. Ausente num peer antigo (preload/main anteriores). */
+  node?: NodeStateDto;
+  /** N1: preferências completas do Node para a UI de definições. */
+  node_preferences?: NodePreferencesDto;
+}
+
+export interface PresenceActionResultDto {
+  ok: boolean;
+  mode: PresenceMode;
+  resident: boolean;
+  error?: string;
+}
+
+/** Canal `lunmi:presence-event` (main -> renderer), separado dos envelopes da ponte. */
+export type PresenceEventDto =
+  | { type: "mode"; mode: PresenceMode }
+  | { type: "chat"; delta: ChatProjectionDeltaDto }
+  | { type: "draft"; text: string }
+  | { type: "session"; session: SessionReadyPayload | null }
+  | { type: "resident"; resident: boolean }
+  | { type: "voice"; state: VoiceStateEventDto }
+  | { type: "theme"; theme: string }
+  | { type: "node"; state: NodeStateDto }
+  | { type: "node-prefs"; preferences: NodePreferencesDto };
+
+/**
+ * API do preload exposta como `window.lunmiPresence` nas duas janelas. O processo principal valida
+ * o remetente e a allowlist de cada janela: os métodos opcionais existem só na janela indicada.
+ */
+export interface LunmiPresenceApi {
+  snapshot(): Promise<PresenceSnapshotDto>;
+  action(action: PresenceAction): Promise<PresenceActionResultDto>;
+  setDraft(text: string): Promise<{ ok: boolean }>;
+  sendCommand<TResult = Record<string, unknown>>(
+    type: string,
+    payload?: Record<string, unknown>
+  ): Promise<TResult>;
+  onEvent(callback: (event: PresenceEventDto) => void): () => void;
+  /** Só na janela principal: a opção residente pertence às definições. */
+  setResident?(resident: boolean): Promise<PresencePreferencesDto>;
+  /** Só na janela principal: preferências do Node (N1), com validação e rollback no main. */
+  setNodePreferences?(patch: Partial<NodePreferencesDto>): Promise<NodePreferencesResultDto>;
+  /** @deprecated N1 não tem arrasto livre; mantido para o renderer antigo não falhar. */
+  dragBy?(dx: number, dy: number): Promise<{ ok: boolean }>;
+  /** @deprecated idem. */
+  endDrag?(): Promise<{ ok: boolean }>;
+  /** @deprecated a shape nativa é a única autoridade de input. */
+  hitTest?(inside: boolean): Promise<{ ok: boolean }>;
+}

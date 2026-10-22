@@ -1,0 +1,155 @@
+/* Pele do LUNMI NODE V1 (`desktop/src/features/companion/node.css`).
+   O corpo é preto uniforme sobre o envelope inteiro (420×520 DIP) e a silhueta é a shape nativa
+   do main (`setShape`): não há clip-path nem raio CSS a imitar o recorte, para nunca existir uma
+   região invisível que ainda recebe cliques. O conteúdo é posicionado pelo rect partilhado
+   (`nodeContentRect`), o mesmo que o main usa para a shape — sem rect nem IPC por frame.
+   Preto constante nos três temas: o Node não usa tokens de tema. */
+
+.lunmi-node {
+  position: fixed;
+  inset: 0;
+  color: #f2f2f2;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  -webkit-app-region: no-drag;
+}
+
+/* Corpo: preto fosco uniforme, sem gradiente, sem borda, sem raio. */
+.lunmi-node-body {
+  position: absolute;
+  inset: 0;
+  background: #090909;
+}
+
+.lunmi-node-content { position: absolute; inset: 0; }
+
+/* As três camadas ficam montadas: o objeto nunca é remontado. Só a camada da superfície
+   assente está visível; as outras ficam `hidden` (fora da árvore de acessibilidade). */
+.lunmi-node-layer { position: absolute; }
+.lunmi-node-layer[hidden] { display: none; }
+
+/* Durante o morph o interior fica discreto: o conteúdo entra quando a forma assenta.
+   `visibility: hidden` (atrasado para não cortar o fade) tira a camada da ordem de tabulação;
+   durante o morph nada recebe input, nem por Tab nem por clique. */
+.lunmi-node-layer {
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+.lunmi-node[data-visible="false"] .lunmi-node-layer {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 0s linear 120ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lunmi-node-layer { transition: none; }
+}
+
+/* --- círculo (botão acessível: Enter/Espaço nativos; 52×52 de alvo) --- */
+.lunmi-node-circle {
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lunmi-node-circle img { filter: brightness(0) invert(1); pointer-events: none; }
+.lunmi-node-circle:focus-visible,
+.lunmi-node-pill:focus-visible { outline: 2px solid rgba(255, 255, 255, .65); outline-offset: 2px; }
+
+/* --- cápsula (etiqueta do estado finito publicado pelo main) --- */
+.lunmi-node-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lunmi-node-pill-text {
+  margin: 0;
+  font-size: 14px;
+  color: #f2f2f2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- indicador de estado: o tom vem do main, a UI não o inventa --- */
+.lunmi-node-dot {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6b6b6b;
+  flex: 0 0 auto;
+}
+.lunmi-node-pill .lunmi-node-dot { position: static; }
+.lunmi-node[data-tone="working"] .lunmi-node-dot { background: #e7bb75; animation: lunmi-node-pulse 1.6s ease-in-out infinite; }
+.lunmi-node[data-tone="needs"] .lunmi-node-dot { background: #e7bb75; }
+.lunmi-node[data-tone="success"] .lunmi-node-dot { background: #8fbf9b; }
+.lunmi-node[data-tone="error"] .lunmi-node-dot { background: #e58d99; }
+.lunmi-node[data-tone="offline"] .lunmi-node-dot { background: #4a4a4a; }
+
+@keyframes lunmi-node-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lunmi-node[data-tone="working"] .lunmi-node-dot { animation: none; }
+}
+
+/* --- chat: o MiniChat real dentro do rect partilhado, sobre o corpo preto --- */
+.lunmi-node-chat .lunmi-mini {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #f2f2f2;
+}
+.lunmi-node-chat .lunmi-mini-head { border-bottom-color: #1c1c1c; }
+.lunmi-node-chat .lunmi-mini-head strong { color: #f2f2f2; }
+.lunmi-node-chat .lunmi-mini-icon-button { color: #a3a3a3; }
+.lunmi-node-chat .lunmi-mini-icon-button:hover { background: #141414; color: #f2f2f2; }
+.lunmi-node-chat .lunmi-mini-empty,
+.lunmi-node-chat .lunmi-mini-phase { color: #a3a3a3; }
+.lunmi-node-chat .lunmi-mini-bubble {
+  background: #141414;
+  border-color: #1f1f1f;
+  color: #f2f2f2;
+}
+.lunmi-node-chat .lunmi-mini-bubble[data-role="user"] { background: #1d1d1f; border-color: #2a2a2c; }
+.lunmi-node-chat .lunmi-mini-composer { border-top-color: #1c1c1c; }
+.lunmi-node-chat .lunmi-mini-composer textarea {
+  background: #0f0f0f;
+  border-color: #262626;
+  color: #f2f2f2;
+}
+.lunmi-node-chat .lunmi-mini-button {
+  background: #f2f2f2;
+  border-color: #f2f2f2;
+  color: #090909;
+}
+.lunmi-node-chat .lunmi-mini-button:hover:not(:disabled) { background: #ffffff; border-color: #ffffff; }
+.lunmi-node-chat .lunmi-mini-quiet {
+  background: transparent;
+  border-color: #262626;
+  color: #a3a3a3;
+}
+.lunmi-node-chat .lunmi-mini-quiet:hover:not(:disabled) { background: #141414; color: #f2f2f2; }
+.lunmi-node-chat .lunmi-mini-pending { border-color: #e7bb75; color: #f2f2f2; }
+.lunmi-node-chat .lunmi-mini-error { color: #e58d99; border-color: #e58d99; }

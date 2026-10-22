@@ -113,6 +113,12 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "memory.profile.undo",
     "ui.preferences.get",
     "ui.preferences.set",
+    # VOICE V1 (aditivo): saída de voz opcional, fora do caminho crítico do chat.
+    "voice.get",
+    "voice.set",
+    "voice.test",
+    "voice.speak_last",
+    "voice.stop",
     "app.shutdown",
 })
 
@@ -142,6 +148,8 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "task.error",
     "brain.updated",
     "memory.changed",
+    # Estado público de voz: nunca carrega texto de conversa, paths ou diagnóstico interno.
+    "voice.state",
     "log.append",
 })
 

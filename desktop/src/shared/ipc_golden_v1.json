@@ -62,6 +62,11 @@
     "memory.profile.undo",
     "ui.preferences.get",
     "ui.preferences.set",
+    "voice.get",
+    "voice.set",
+    "voice.test",
+    "voice.speak_last",
+    "voice.stop",
     "app.shutdown"
   ],
   "responses": [
@@ -89,6 +94,7 @@
     "task.error",
     "brain.updated",
     "memory.changed",
+    "voice.state",
     "log.append"
   ],
   "examples": {
