@@ -147,4 +147,5 @@ def test_capability_is_announced_only_when_the_service_registers_the_command(tmp
     # O cliente v1 continua lendo as seis capabilities que já conhecia, com os mesmos valores.
     assert caps["converse"] is True and caps["execute"] is True
     assert caps["memory"] is True and caps["brain"] is True
-    assert caps["web_search"] is False and caps["browser_use"] is False
+    # WEB-SEARCH-V1: os handlers `web.get`/`web.set` existem, logo a capability é real.
+    assert caps["web_search"] is True and caps["browser_use"] is False

@@ -30,7 +30,7 @@ from pathlib import Path
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "release" / "win-unpacked"
 
 FORBIDDEN_NAMES = {".env", ".local", ".git", ".agents", ".claude", ".cursor", ".qoder",
-                   ".freebuff"}
+                   ".freebuff", "secret.bin", "install.json", "state.json"}
 FORBIDDEN_DIR_NAMES = {"logs", "output"}
 FORBIDDEN_SUFFIXES = {".dpapi", ".pfx", ".p12", ".key"}
 FORBIDDEN_NAME_SUFFIXES = ("-wal", "-shm", "-journal", ".sqlite3", ".sqlite3-wal",
@@ -44,6 +44,9 @@ SECRET_PATTERNS = (
     re.compile(rb"sk-[A-Za-z0-9]{20,}"),
     re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(rb"api[_-]?key\s*=\s*[\"'][A-Za-z0-9\-_]{24,}"),
+    # Bundle privado do Spotify (config injetada): a chave de pareamento tem 32 bytes
+    # em hex e nunca pode viajar num payload. O JS público só tem a validação da chave.
+    re.compile(rb"secretHex\"?\s*[:=]\s*[\"'][0-9a-fA-F]{64}[\"']"),
 )
 
 BINARY_SUFFIXES = {".exe", ".dll", ".pyd", ".so", ".bin", ".ico", ".png", ".jpg", ".ttf",

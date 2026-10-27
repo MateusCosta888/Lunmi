@@ -1,0 +1,39 @@
+/* Pesquisa web — cartão de definições e fontes (`desktop/src/features/web/web.css`).
+   Só tokens existentes; discreto, sem nova linguagem visual. Alvos táteis nos controlos.
+   Fontes: chips compactos (título + domínio), sem cartões nem excertos; metadados só no
+   tooltip/texto acessível. */
+
+.lunmi-web-state { margin: 8px 0 0; font-size: 12px; color: var(--lunmi-text-secondary); }
+.lunmi-web-chip { margin-left: auto; font-size: 11.5px; color: var(--lunmi-accent); }
+.lunmi-web-state[data-state="searching"], .lunmi-web-state[data-state="reading"], .lunmi-web-state[data-state="starting"] { color: var(--lunmi-accent); }
+.lunmi-web-error { margin: 8px 0 0; color: var(--lunmi-error); font-size: 13px; }
+.lunmi-web-note { margin: 8px 0 0; font-size: 12px; color: var(--lunmi-text-secondary); }
+
+.lunmi-web-sources { margin: 10px 0 0; }
+.lunmi-web-evidence { margin: 0; font-size: 11.5px; color: var(--lunmi-text-muted); overflow-wrap: anywhere; }
+.lunmi-web-evidence + .lunmi-web-sources-title { margin-top: 6px; }
+.lunmi-web-sources-title { margin: 0; font-size: 11.5px; color: var(--lunmi-text-muted); }
+.lunmi-web-sources ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.lunmi-web-source { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; max-width: 100%; }
+.lunmi-web-source-open, .lunmi-web-source-static {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 6px 10px; border: 1px solid var(--lunmi-border-hairline); border-radius: 10px;
+  background: var(--lunmi-bg-card-subtle); font: inherit; font-size: 12.5px; text-align: left;
+  color: var(--lunmi-text-primary); cursor: pointer;
+}
+/* Alvo tátil: o piso do projeto é 44px também no chat principal. `styles.css` tem
+   `.lunmi-main > section button { min-height: 40px }` (especificidade 0-1-2); o par de classes
+   abaixo (0-2-0) vence sem `!important` e sem regra global. Só altura/alinhamento do chip. */
+.lunmi-web-sources .lunmi-web-source-open, .lunmi-web-sources .lunmi-web-source-static { min-height: 44px; }
+.lunmi-web-source-static { cursor: default; }
+.lunmi-web-source-open:hover { border-color: var(--lunmi-border-subtle); background: var(--lunmi-surface-hover); }
+.lunmi-web-source-open:hover .lunmi-web-source-title { color: var(--lunmi-accent); }
+.lunmi-web-source-open:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-web-source-open:disabled { opacity: .6; cursor: default; }
+.lunmi-web-source-title { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+.lunmi-web-source-domain { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; line-height: 1.2; color: var(--lunmi-text-muted); }
+/* Metadados honestos: presentes no DOM (leitor de tela) e no tooltip; nunca em blocos visíveis. */
+.lunmi-web-source-meta { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.lunmi-web-source-error { margin: 0; font-size: 11.5px; color: var(--lunmi-error); overflow-wrap: anywhere; }
+
+.lunmi-web-sources-compact .lunmi-web-source-open, .lunmi-web-sources-compact .lunmi-web-source-static { font-size: 12px; }

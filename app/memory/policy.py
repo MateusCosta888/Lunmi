@@ -94,6 +94,14 @@ def timestamp(value: Any) -> str:
         raise MemoryPolicyError() from None
 
 
+def safe_chat_text(text: Any) -> str:
+    """Archive public paragraphs/code with the existing secret/private/sensitive protections."""
+    value = safe_document(text, maximum=32000)
+    if _SENSITIVE.search(value) or _SENSITIVE.search(normalized(value)):
+        raise MemoryPolicyError()
+    return value
+
+
 def identifier(value: Any, *, empty: bool = False) -> str:
     if not isinstance(value, str) or (not value and not empty) or len(value) > 100:
         raise MemoryPolicyError()

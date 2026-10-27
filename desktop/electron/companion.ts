@@ -78,6 +78,7 @@ export class CompanionManager {
   private envelope: NodeBounds;
   private settledSurface: NodeSurface = "hidden";
   private targetSurface: NodeSurface = "hidden";
+  private focusChat = true;
   private phase: "settled" | "transitioning" = "settled";
   private transitionId = 0;
   private transition: NodeTransitionState | null = null;
@@ -309,16 +310,18 @@ export class CompanionManager {
     if (!next || next === "hidden") return false;
     if (next === this.targetSurface) {
       if (next === "revealed") this.armCustody();
+      if (next === "chat") { this.focusChat = true; this.applyFocusPolicy(next); }
       return true;
     }
     this.setSurface(next);
     return true;
   }
 
-  public setSurface(target: NodeSurface): boolean {
+  public setSurface(target: NodeSurface, options: { focus?: boolean } = {}): boolean {
     if (!this.prefs.enabled) return false;
     if (!isNodeVisibleSurface(target) || target === this.targetSurface) return false;
     if (!this.win || this.win.isDestroyed()) return false;
+    this.focusChat = options.focus !== false;
 
     // Interromper um morph: a nova transição parte do rect que está DESENHADO, não da
     // superfície de repouso anterior. Sem isto, pedir «dock» a meio de uma abertura dava um
@@ -628,9 +631,11 @@ export class CompanionManager {
     try {
       if (surface === "chat") {
         win.setFocusable(true);
-        if (!win.isVisible()) win.show();
+        if (!win.isVisible()) {
+          if (this.focusChat) win.show(); else win.showInactive();
+        }
         // O gate offline usa um duplo sem `focus`; em produção é o BrowserWindow real.
-        win.focus();
+        if (this.focusChat) win.focus();
       } else {
         win.setFocusable(false);
         // Sair do chat não deixa o foco preso numa superfície que já não o aceita.

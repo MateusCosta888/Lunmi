@@ -46,7 +46,8 @@ API_KEY_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "openrouter", "n
 # Endpoints compatíveis com OpenAI que dispensam chave ("custom" exige URL base).
 LOCAL_ENDPOINT_PROVIDERS = frozenset({"custom", "ollama", "lmstudio", "vllm"})
 # Runtimes de CLI locais: autenticação e sessão pertencem ao próprio CLI.
-CLI_PROVIDERS = frozenset({"codex", "claude", "agy", "qoder", "kilo", "kiro", "opencode"})
+CLI_PROVIDERS = frozenset({"codex", "claude", "agy", "qoder", "kilo", "kiro", "opencode",
+                          "freepi"})
 # Todos os ids aceitos em Settings.provider.
 SUPPORTED_PROVIDERS = API_KEY_PROVIDERS | LOCAL_ENDPOINT_PROVIDERS | CLI_PROVIDERS
 

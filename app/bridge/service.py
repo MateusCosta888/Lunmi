@@ -40,11 +40,21 @@ from app import settings as settings_module
 from app.brain import registry
 from app.brain.contracts import BrainError, Capability
 from app.brain.discovery import DiscoveryStatus, ModelDiscovery, ModelListing, get_discovery
+from app.brain.web import (
+    NativeWebCapability,
+    NativeWebState,
+    can_complete_web,
+    native_web_capability_of,
+)
 from app.brain.probe import PROBE_TIMEOUT_SECONDS, probe_settings
-from app.brain.registry import resolve as resolve_brain
+from app.brain.registry import BrainDescriptor, BrainLocation, resolve as resolve_brain
 from app.bridge import protocol
 from app.computer.com_cache import use_in_memory_com_modules
 from app.core.controller import TaskController, TaskResult
+from app.chat_history import ChatHistory, NOT_SAVED, title_text
+from app.memory.contracts import now
+from app.memory.policy import identifier
+import sqlite3
 from app.bridge.responses import PublicResponse, verified_speech_prefix
 from app.memory import MemoryItem, MemoryManager, MemoryPolicyError
 from app.memory.profile import MemoryDisabled, NothingToUndo, ProfileTooLarge, StaleRevision
@@ -56,8 +66,12 @@ from app.settings import (
     Settings,
 )
 from app.ui import ui_preferences
+from app.integrations.web_search import WebSearchError, WebSearchManager
+from app.integrations.web_state import WebPreferencesError, identity_for_settings
 from app.voice.eligibility import speakable_reply
+from app.voice.input_manager import VoiceInputManager
 from app.voice.manager import VoiceError, VoiceManager
+from app.voice.warmup import VoiceWarmup
 
 LOCATION_TIMEOUT_SECONDS = 45.0
 # Quanto a thread lenta do comando `brain.set` espera o commit na thread do loop antes de
@@ -66,6 +80,35 @@ LOCATION_TIMEOUT_SECONDS = 45.0
 RECONFIGURE_TIMEOUT_SECONDS = 30.0
 # Prazo da listagem de modelos de um provider (espera de rede, cancelável no estouro).
 BRAIN_LIST_TIMEOUT_SECONDS = 30.0
+
+# Mensagens públicas do Spotify: fixas, sem paths, URLs, comandos ou detalhe interno.
+_SPOTIFY_MESSAGES = {
+    "not_implemented": "Esta versão ainda não suporta esta operação Spotify.",
+    "consent_invalid": "O plano mudou. Reveja e confirme outra vez.",
+    "consent_expired": "A confirmação expirou. Reveja o plano.",
+    "consent_replayed": "Esta confirmação já foi usada. Reveja o plano.",
+    "job_busy": "Já existe uma configuração Spotify em curso.",
+    "unavailable": "O serviço Spotify não está disponível agora.",
+    "not_configured": "O Spotify ainda não está ligado à Lunmi.",
+    "spotify_missing": "Não encontrei o Spotify neste computador.",
+    "store_unsupported": "A versão Microsoft Store não é suportada nesta versão.",
+    "arm_unsupported": "Esta arquitetura não é suportada nesta versão.",
+    "policy_blocked": "Uma política do Windows impede alterar o Spotify.",
+    "write_denied": "Não tenho permissão para alterar o Spotify.",
+    "disk_space": "Não há espaço suficiente para guardar uma cópia de segurança.",
+    "offline": "Sem rede para obter o componente necessário. Tente mais tarde.",
+    "cli_unavailable": "O componente de configuração não está disponível.",
+    "signature_invalid": "O componente descarregado não tem uma assinatura válida.",
+    "hash_mismatch": "O componente descarregado não corresponde à versão esperada.",
+    "version_unsupported": "Esta versão do Spotify não é suportada.",
+    "close_refused": "O Spotify não fechou. Feche-o e tente outra vez.",
+    "not_ready": "A ligação não ficou confirmada. Abre o Spotify e entra na tua conta.",
+    "port_in_use": "A porta local do Spotify está ocupada por outra aplicação.",
+    "profile_unsafe": "As tuas definições não puderam ser copiadas com segurança.",
+    "interrupted": "A configuração foi interrompida.",
+    "job_cancelled": "A configuração foi cancelada.",
+    "rollback_failed": "A configuração parou e a recuperação não pôde ser confirmada.",
+}
 
 
 def filter_trusted_host_pids(candidate_pids: list[int], *, trusted_root_pid: int | None = None) -> set[int]:
@@ -177,6 +220,28 @@ def public_task_result_dto(result: TaskResult) -> dict[str, Any]:
         "app_index_cold": bool(result.app_index_cold),
         "memory_context_items": int(result.memory_context_items or 0),
         "memory_error": bool(result.memory_error),
+        # WEB-SEARCH-V1: sempre presentes; vazios/None fora de um turno web.
+        "web_sources": [dict(item) for item in (result.web_sources or [])
+                        if isinstance(item, dict)],
+        "web_outcome": result.web_outcome,
+        # WEB-SEARCH-ORIGIN-V1: proveniência e evidência simples, sem query/conteúdo.
+        "search_source": result.search_source,
+        "provider_id": result.provider_id or None,
+        "native_tool_names": [str(name) for name in (result.native_tool_names or [])
+                              if isinstance(name, str) and name],
+        "source_count": len(result.web_sources or []),
+        "search_outcome": result.web_outcome,
+        "web_preference": result.web_preference,
+        "web_fallback": result.web_fallback,
+        # WEB-SEARCH-AUTO-V1: desfechos por tentativa. A tentativa anterior nunca se perde
+        # quando a recuperação `auto` substitui a resposta; `fallback_triggered` só é
+        # verdadeiro quando a segunda tentativa do plano começou.
+        "fallback_triggered": bool(result.fallback_triggered),
+        "provider_outcome": result.provider_outcome,
+        "lunmi_outcome": result.lunmi_outcome,
+        "web_provider_failure": result.web_provider_failure,
+        "evidence_status": result.evidence_status,
+        "request_status": result.request_status,
     }
 
 
@@ -196,6 +261,8 @@ def public_memory_item_dto(item: MemoryItem) -> dict[str, Any]:
 class BridgeService:
     """Serviço completo da ponte IPC v1."""
 
+    # I1 regista os handlers do Spotify; a capability só é anunciada porque os comandos
+    # estão efetivamente suportados nesta sessão.
     SUPPORTED_COMMANDS: frozenset[str] = protocol.COMMAND_TYPES
 
     def __init__(
@@ -210,6 +277,8 @@ class BridgeService:
         trusted_root_pid: int | None = None,
         session_id: str | None = None,
         voice: VoiceManager | None = None,
+        voice_input: VoiceInputManager | None = None,
+        spotify_install: Any | None = None,
     ) -> None:
         self._emit = emit
         self.session_id = session_id or 'sess-' + uuid.uuid4().hex[:16]
@@ -266,9 +335,34 @@ class BridgeService:
             session_id=self.session_id,
         )
 
+        # VOICE INPUT V1: entrada ortogonal e separada do TTS. O manager só abre processo no
+        # primeiro `start`; o `get` é barato e honesto quando o runtime opcional está ausente.
+        self.voice_input = voice_input if voice_input is not None else VoiceInputManager(
+            emit=self._emit_voice_input,
+            state_root=self.settings.state_root,
+            session_id=self.session_id,
+            on_speech_interrupt=self.voice.stop,
+            on_active_changed=self.voice.set_input_active,
+        )
+        # Warmup de introdução: só prepara recursos; não fala nem abre microfone. O renderer
+        # pede explicitamente `voice.warmup` no loading e espera `voice.readiness`/timeout.
+        self.voice_warmup = VoiceWarmup(
+            tts=self.voice,
+            stt=self.voice_input,
+            emit=self._emit_voice_warmup,
+        )
+
         # Antes de criar o controlador (que pode importar pywinauto/UIA): wrappers COM gerados em
         # memória, para nada ser escrito em `resources/` do pacote. Ver `app/computer/com_cache.py`.
         use_in_memory_com_modules()
+
+        # WEB-SEARCH-V1: estado próprio e lazy; `web.get` nunca arranca o runtime. O controller
+        # só recebe este objeto depois de criado, sem mudar a assinatura usada pelos testes.
+        self.web = WebSearchManager(
+            emit=self._emit_web,
+            state_root=self.settings.state_root,
+            session_id=self.session_id,
+        )
 
         factory = controller_factory or TaskController
         self.controller = factory(
@@ -279,11 +373,42 @@ class BridgeService:
             indicate=self._indicate_callback,
             memory=self.memory,
         )
+        self.controller.web = self.web
+        # No arranque não se faz probe nativo: `web.get` é quem paga esse custo uma vez,
+        # para o arranque da aplicação não esperar por `--version`/`help` do CLI.
+        self._bind_web_brain(emit=False, probe_native=False)
         self._sync_engine_host_pids()
         from app.integrations.gmail import GmailIntegration
         self.integrations = GmailIntegration(
             self.root_dir / '.local' / 'composio.dpapi', self._integration_emit, self.session_id)
         self.controller.integrations = self.integrations
+
+        # SPOTIFY INTEGRAÇÃO V1: objeto próprio ao lado do Gmail. O broker é dono do host
+        # loopback/segredo; o instalador é dono do estado/plano/job. Em sandbox não há
+        # autostart, para nenhum teste abrir a porta real da máquina.
+        if spotify_install is not None:
+            self.spotify_install = spotify_install
+            self.spotify = spotify_install.broker
+        else:
+            from app.integrations.spotify import SpotifyBroker
+            from app.integrations.spotify_install import SpotifyInstaller
+
+            self.spotify = SpotifyBroker(
+                state_root=self.settings.state_root,
+                session_id=self.session_id,
+                on_session=lambda info: self.spotify_install.on_broker_session(info),
+            )
+            self.spotify_install = SpotifyInstaller(
+                state_root=self.settings.state_root,
+                broker=self.spotify,
+                session_id=self.session_id,
+                emit=lambda payload: self._integration_emit('spotify.changed', payload),
+            )
+            if self.sandbox_dir is None:
+                self.spotify_install.autostart()
+        # Música continua a passar pelo controller, mas o objeto é próprio e o
+        # controller só recebe o que o tool fechado precisa: instalador + broker.
+        self.controller.spotify = self.spotify_install
 
         self._active_task_id: str | None = None
         self._active_task_future: concurrent.futures.Future[TaskResult] | None = None
@@ -291,12 +416,18 @@ class BridgeService:
         # Commit da troca de cérebro em voo. A guarda `_reconfiguring` é liberada só no
         # `finally` da própria coroutine no loop, nunca pela thread que já desistiu de esperar.
         self._reconfig_future: concurrent.futures.Future[dict[str, Any]] | None = None
+        # Capacidade nativa lida sem Brain resolvido, uma vez por fingerprint de
+        # configuração. O valor pode ser UNKNOWN; nunca é inferido de tools.
+        self._web_capability_cache: dict[str, NativeWebCapability] = {}
         self._closed = False
 
         # Solicitações interativas pendentes (confirm, choice, location)
         self._pending_confirms: dict[str, tuple[str, asyncio.Future[bool]]] = {}
         self._pending_inputs: dict[str, tuple[str, str, int, asyncio.Future[Any]]] = {}
         self._lock = threading.RLock()
+        self.history = ChatHistory(self.root_dir / '.local' / 'chat-history.sqlite3')
+        self._history_announced = False
+        self._restore_chat_context()
         if self.integrations.path.exists():
             self._loop.call_soon_threadsafe(self.integrations.resume)
 
@@ -305,8 +436,204 @@ class BridgeService:
             return
         self._emit("voice.state", dict(payload))
 
+    def _emit_voice_input(self, payload: dict[str, Any]) -> None:
+        # Sem texto/áudio: o manager já fecha o payload em DTO+session_id.
+        if self._closed:
+            return
+        self._emit("voice.input.state", dict(payload))
+
+    def _emit_web(self, payload: dict[str, Any]) -> None:
+        # `WebStateDto` exato, já com `session_id` e `revision`; nada de query/conteúdo.
+        if self._closed:
+            return
+        self._emit("web.changed", dict(payload))
+
+    def _web_native_capability(self, *, probe_native: bool = True) -> NativeWebCapability:
+        """Lê a capacidade sem inferência/rede.
+
+        Preferimos o Brain já resolvido; antes disso o descriptor pode publicar a
+        capacidade pequena. Se nem um nem outro provarem, o provider local é construído
+        uma vez (barato, sem inferência nem processo permanente) para oferecer o seletor
+        Kiro antes da primeira tarefa. Sem prova, é `UNKNOWN`, nunca inferida de
+        `Capability.TOOL_CALLS`.
+        """
+        brain = getattr(self.controller, "brain", None)
+        if brain is not None:
+            capability = native_web_capability_of(brain)
+            if capability.selectable and not can_complete_web(brain):
+                return NativeWebCapability(supported=capability.supported, available=False,
+                                           can_disable=capability.can_disable,
+                                           state=NativeWebState.SUPPORTED)
+            if capability.state is not NativeWebState.UNKNOWN:
+                return capability
+        try:
+            descriptor = registry.get(self.settings.provider)
+        except Exception:
+            descriptor = None
+        if descriptor is not None:
+            candidate = getattr(descriptor, "native_web_capability", None)
+            if callable(candidate):
+                try:
+                    candidate = candidate()
+                except Exception:
+                    candidate = None
+            if not isinstance(candidate, NativeWebCapability):
+                candidate = getattr(descriptor, "native_web", None)
+            if isinstance(candidate, NativeWebCapability):
+                return candidate
+        if probe_native:
+            probed = self._probe_native_web_capability(descriptor)
+            if probed.state is not NativeWebState.UNKNOWN:
+                return probed
+        return NativeWebCapability.unknown()
+
+    def _probe_native_web_capability(self, descriptor: BrainDescriptor | None,
+                                     ) -> NativeWebCapability:
+        """Capacidade nativa antes de o Brain estar resolvido; cache por configuração.
+
+        Constrói o Brain barato do provider local — sem inferência, sem pesquisa paga e
+        sem processo permanente; o adapter Kiro só corre `--version` e `chat --help`,
+        cada um limitado a 5 s (10 s no pior caso). O resultado fica em cache pelo
+        fingerprint provider/model/endpoint para `web.get` não repetir o custo.
+        """
+        if (descriptor is None or descriptor.location is not BrainLocation.LOCAL_CLI
+                or descriptor.factory is None):
+            return NativeWebCapability.unknown()
+        key = identity_for_settings(self.settings).fingerprint
+        cached = self._web_capability_cache.get(key)
+        if cached is not None:
+            return cached
+        capability = NativeWebCapability.unknown()
+        try:
+            brain = resolve_brain(self.settings)
+        except Exception:
+            brain = None
+        if brain is not None:
+            try:
+                capability = native_web_capability_of(brain)
+                if capability.selectable and not can_complete_web(brain):
+                    capability = NativeWebCapability(
+                        supported=capability.supported, available=False,
+                        can_disable=capability.can_disable,
+                        state=NativeWebState.SUPPORTED)
+            except Exception:
+                capability = NativeWebCapability.unknown()
+        # Um cache pequeno e limitado: trocar A→B→A volta a fazer probe (10 s), mas
+        # nunca fica memória nem resultado de uma configuração antiga a mandar.
+        if len(self._web_capability_cache) >= 8:
+            self._web_capability_cache.clear()
+        self._web_capability_cache[key] = capability
+        return capability
+
+    def _bind_web_brain(self, *, emit: bool, probe_native: bool = True,
+                        ) -> dict[str, Any] | None:
+        """Liga fingerprint/capacidade ao mesmo `WebState` do manager V1.
+
+        O manager é Root E e não expõe um setter; a bridge acede ao estado canónico que
+        ele próprio possui. Isto não altera o lifecycle nem executa pesquisa.
+        """
+        state = getattr(self.web, "_state", None)
+        binder = getattr(state, "bind_brain", None)
+        if not callable(binder):
+            return None
+        identity = identity_for_settings(self.settings)
+        snapshot = binder(identity.fingerprint,
+                          self._web_native_capability(probe_native=probe_native),
+                          available=self.web.available)
+        if emit:
+            self._emit_web(snapshot)
+        return snapshot
+
+    def _web_command(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if command == "web.get":
+            if payload:
+                raise protocol.ProtocolError("invalid_payload", "Pedido de pesquisa web inválido.")
+            before = self.web.dto().get("revision")
+            snapshot = self._bind_web_brain(emit=False)
+            if snapshot is not None and snapshot.get("revision") != before:
+                # A capacidade do Brain mudou desde o último getter; o cartão não pode
+                # continuar com uma opção antiga. Isto não arranca o runtime.
+                self._emit_web(snapshot)
+            return self.web.dto()
+        if command != "web.set":
+            raise protocol.ProtocolError("invalid_payload", "Pedido de pesquisa web inválido.")
+        allowed = {"enabled", "mode", "brain_id", "origin"}
+        if not isinstance(payload, dict) or not payload or set(payload) - allowed:
+            raise protocol.ProtocolError("invalid_payload", "Pedido de pesquisa web inválido.")
+        if ("brain_id" in payload) != ("origin" in payload):
+            raise protocol.ProtocolError("invalid_payload", "Pedido de pesquisa web inválido.")
+        if "origin" in payload:
+            brain_id = payload.get("brain_id")
+            current = identity_for_settings(self.settings).fingerprint
+            if not isinstance(brain_id, str):
+                raise protocol.ProtocolError("invalid_payload", "Pedido de pesquisa web inválido.")
+            if brain_id != current:
+                raise protocol.ProtocolError(
+                    "stale_brain",
+                    "O cérebro mudou entretanto; a preferência antiga não foi aplicada.",
+                    details={"brain_id": current},
+                )
+            if payload.get("origin") == "provider" and not self._web_native_capability().selectable:
+                raise protocol.ProtocolError(
+                    "unavailable",
+                    "A pesquisa nativa não está disponível para este cérebro.",
+                )
+        try:
+            future = asyncio.run_coroutine_threadsafe(self.web.configure(payload), self._loop)
+            return future.result(timeout=5)
+        except WebSearchError as exc:
+            code = "invalid_payload" if exc.code == "invalid_payload" else "unavailable"
+            raise protocol.ProtocolError(code, "Pedido de pesquisa web inválido."
+                                        if code == "invalid_payload" else
+                                        "Não foi possível guardar as definições da pesquisa web.") from None
+        except WebPreferencesError as exc:
+            code = "invalid_payload" if exc.code == "invalid_payload" else "unavailable"
+            raise protocol.ProtocolError(code, "Pedido de pesquisa web inválido."
+                                        if code == "invalid_payload" else
+                                        "Não foi possível guardar as definições da pesquisa web.") from None
+        except concurrent.futures.TimeoutError:
+            raise protocol.ProtocolError("unavailable",
+                                         "Não foi possível guardar as definições da pesquisa web.") from None
+
+    def _emit_voice_warmup(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        self._emit("voice.readiness", {**payload, "session_id": self.session_id})
+
     def _integration_emit(self, kind: str, payload: dict[str, Any]) -> None:
         self._emit(kind, {**payload, 'session_id': self.session_id})
+
+    def _spotify_command(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Comandos Spotify: payload fechado, sem shell/paths e fora da autonomia do modelo."""
+        from app.integrations import spotify_contract as spotify
+        from app.integrations.spotify import SpotifyBrokerError
+        from app.integrations.spotify_install import SpotifyInstallError
+
+        try:
+            spotify.validate_command_payload(command, payload)
+        except spotify.SpotifyContractError:
+            raise protocol.ProtocolError("invalid_payload", "Pedido Spotify inválido.") from None
+        try:
+            if command == "spotify.get":
+                return self.spotify_install.payload()
+            if command == "spotify.plan":
+                return self.spotify_install.plan(payload["action"])
+            if command == "spotify.apply":
+                return self.spotify_install.apply(payload["consent_id"])
+            if command == "spotify.cancel":
+                return self.spotify_install.cancel(payload["job_id"])
+            if command == "spotify.connect":
+                return self.spotify_install.connect()
+            if command == "spotify.disconnect":
+                return self.spotify_install.disconnect()
+            if command == "spotify.open":
+                return self.spotify_install.open_target(payload["target"])
+        except (SpotifyInstallError, SpotifyBrokerError) as exc:
+            code = getattr(exc, "code", "unavailable")
+            raise protocol.ProtocolError(
+                code, _SPOTIFY_MESSAGES.get(code, "Não foi possível concluir a operação Spotify.")
+            ) from None
+        raise protocol.ProtocolError("invalid_payload", "Pedido Spotify inválido.")
 
     async def _integration_command(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         from app.integrations.oauth import IntegrationError
@@ -397,9 +724,17 @@ class BridgeService:
             return set(self.host_pids)
 
     def capabilities(self) -> dict[str, bool]:
+        # VOICE INPUT V1/V2: a capability só é verdadeira quando o manager de entrada está mesmo
+        # ligado a esta sessão (incluindo `finish`). Sem ele, os nomes existem no protocolo mas
+        # não há handlers.
+        supported = set(self.SUPPORTED_COMMANDS)
+        if getattr(self, "voice_input", None) is None:
+            supported -= protocol.VOICE_INPUT_COMMAND_TYPES
+        if getattr(self, "web", None) is None:
+            supported -= protocol.WEB_COMMAND_TYPES
         return protocol.capabilities_for_commands(
-            self.SUPPORTED_COMMANDS,
-            web_search=False,
+            supported,
+            web_search=getattr(self, "web", None) is not None,
             browser_use=False,
         )
 
@@ -557,6 +892,15 @@ class BridgeService:
                         request_id=env.id,
                     )
 
+        if cmd in protocol.WEB_COMMAND_TYPES:
+            return self._web_command(cmd, payload)
+        if cmd.startswith('spotify.'):
+            if cmd == "spotify.apply" and self._is_task_running():
+                raise protocol.ProtocolError(
+                    "task_busy",
+                    "Há uma tarefa em execução. Termine-a ou cancele antes de configurar o Spotify.",
+                )
+            return self._spotify_command(cmd, payload)
         if cmd.startswith('integrations.'):
             if cmd == 'integrations.get':
                 if payload:
@@ -566,6 +910,8 @@ class BridgeService:
             return future.result(timeout=5)
         if cmd == "chat.send":
             return self._handle_chat_send(payload)
+        if cmd in protocol.HISTORY_COMMAND_TYPES:
+            return self._handle_history(cmd, payload)
         if cmd == "task.cancel":
             return self._handle_task_cancel(payload)
         if cmd == "task.confirm":
@@ -634,6 +980,20 @@ class BridgeService:
             return self._handle_voice_speak_last(payload)
         if cmd == "voice.stop":
             return self._handle_voice_stop(payload)
+        if cmd == "voice.warmup":
+            return self._handle_voice_warmup(payload)
+        if cmd == "voice.warmup.get":
+            return self._handle_voice_warmup_get(payload)
+        if cmd == "voice.input.get":
+            return self._handle_voice_input_get(payload)
+        if cmd == "voice.input.start":
+            return self._handle_voice_input_start(payload)
+        if cmd == "voice.input.finish":
+            return self._handle_voice_input_finish(payload)
+        if cmd == "voice.input.cancel":
+            return self._handle_voice_input_cancel(payload)
+        if cmd == "voice.input.result":
+            return self._handle_voice_input_result(payload)
         if cmd == "app.shutdown":
             self.close()
             return {"status": "shutting_down"}
@@ -641,6 +1001,126 @@ class BridgeService:
         raise protocol.ProtocolError("unknown_command", f"Comando desconhecido: {cmd}", request_id=env.id)
 
     # --------------------------------------------------------- chat & tarefas (F2a) --
+    def _restore_chat_context(self) -> None:
+        controller = self.controller
+        controller.conversation_id = self.history.active['id']
+        controller.chat_history_recording = bool(self.history.options['enabled']
+                                                 and not self.history.active['temporary'])
+        turns = getattr(controller, 'turns', None)
+        if turns is not None:
+            turns.clear(controller.session_id)
+            for user, answer in self.history.active['pairs']:
+                turns.add(controller.session_id, user, answer)
+        # Archived text cannot restore an authorization, pending action or live connector ref.
+        reset_values: dict[str, Any] = {'email_context': False, 'email_identity': None, 'email_pending': None,
+                                       'email_authorization': None, '_spotify_refs': {}, '_spotify_search_id': ''}
+        for key, value in reset_values.items():
+            if hasattr(controller, key):
+                setattr(controller, key, value)
+        self.memory.working.clear(getattr(controller, 'session_id', self.session_id))
+
+    def _history_changed(self, reason: str) -> dict[str, Any]:
+        if reason == 'selected':
+            self._history_announced = True
+        snapshot = self.history.snapshot()
+        payload = {**snapshot, 'reason': reason, 'session_id': self.session_id,
+                   'conversation_id': self.history.active['id']}
+        if reason == 'updated':
+            payload.pop('messages')
+        self._emit('chat.history.changed', payload)
+        return snapshot
+
+    def _handle_history(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+        operation = command.removeprefix('chat.history.')
+        keys = {'get': set(), 'list': {'query', 'offset'}, 'read': {'conversation_id', 'before'},
+                'create': {'temporary'}, 'select': {'conversation_id'},
+                'rename': {'conversation_id', 'title'}, 'delete': {'conversation_id', 'confirmed'},
+                'clear': {'confirmed'}, 'options.get': set(), 'options.set': {'enabled', 'startup'}}
+        if set(payload) - keys[operation]:
+            raise protocol.ProtocolError('invalid_payload', 'Pedido de histórico inválido.')
+        with self._lock:
+            try:
+                if operation == 'get':
+                    if not self._history_announced:
+                        return self._history_changed('selected')
+                    return self.history.snapshot()
+                if operation == 'options.get':
+                    return {k: self.history.options[k] for k in ('enabled', 'startup')}
+                if operation in {'create', 'select', 'delete', 'clear'} and self._is_task_running():
+                    raise protocol.ProtocolError('task_busy', 'Conclua ou pare a tarefa antes de mudar de conversa.')
+                store = self.history.store
+                if operation == 'create':
+                    temporary = payload.get('temporary', False)
+                    if not isinstance(temporary, bool):
+                        raise ValueError()
+                    self.history.new(temporary)
+                    self._restore_chat_context()
+                    return self._history_changed('selected')
+                if operation == 'select':
+                    turns = getattr(self.controller, 'turns', None)
+                    if turns is not None:
+                        self.history.remember_context(turns.pairs(self.controller.session_id))
+                    self.history.select(identifier(payload.get('conversation_id')))
+                    self._restore_chat_context()
+                    return self._history_changed('selected')
+                if not store:
+                    raise OSError()
+                if operation == 'list':
+                    query, offset = payload.get('query', ''), payload.get('offset', 0)
+                    if (not isinstance(query, str) or len(query) > 4000
+                            or type(offset) is not int or not 0 <= offset < 2**63):
+                        raise ValueError()
+                    return store.list(query, offset)
+                if operation == 'read':
+                    cid = identifier(payload.get('conversation_id'))
+                    before = payload.get('before')
+                    if before is not None and (type(before) is not int or not 0 < before < 2**63):
+                        raise ValueError()
+                    page = store.read(cid, before)
+                    if cid == self.history.active['id'] and before is not None:
+                        self.history.active.update(has_more=page['has_more'], before=page['before'])
+                        self._emit('chat.history.changed', {**page, 'reason': 'page',
+                                   'conversation_id': cid, 'session_id': self.session_id})
+                    return page
+                if operation == 'options.set':
+                    if ('enabled' in payload and type(payload['enabled']) is not bool
+                            or 'startup' in payload and payload['startup'] not in {'resume', 'new'}):
+                        raise ValueError()
+                    store.set_options(payload)
+                    self.history.options.update(payload)
+                    self.controller.chat_history_recording = bool(self.history.options['enabled']
+                                                                  and not self.history.active['temporary'])
+                elif operation == 'rename':
+                    cid = identifier(payload.get('conversation_id'))
+                    title = title_text(payload.get('title'))
+                    store.rename(cid, title)
+                    if cid in self.history.cache:
+                        self.history.cache[cid]['title'] = title
+                elif operation in {'delete', 'clear'}:
+                    if payload.get('confirmed') is not True:
+                        raise protocol.ProtocolError('confirmation_required', 'Confirme a eliminação do histórico.')
+                    delete_id = identifier(payload.get('conversation_id')) if operation == 'delete' else None
+                    store.delete(delete_id)
+                    if delete_id is None:
+                        self.history.cache.clear()
+                    else:
+                        self.history.cache.pop(delete_id, None)
+                    if delete_id is None or delete_id == self.history.active['id']:
+                        self.history.new()
+                        self._restore_chat_context()
+                        return self._history_changed('selected')
+                return self._history_changed('updated')
+            except protocol.ProtocolError:
+                raise
+            except KeyError:
+                raise protocol.ProtocolError('not_found', 'Conversa não encontrada.') from None
+            except (MemoryPolicyError, ValueError, TypeError):
+                raise protocol.ProtocolError('invalid_payload', 'Pedido de histórico inválido.') from None
+            except (sqlite3.Error, OSError):
+                self.history.error = NOT_SAVED
+                self._history_changed('updated')
+                raise protocol.ProtocolError('history_unavailable', NOT_SAVED) from None
+
     def _is_task_running(self) -> bool:
         with self._lock:
             return self._active_task_id is not None
@@ -676,16 +1156,27 @@ class BridgeService:
                     "reconfiguring",
                     "Troca de cérebro em andamento; aguarde concluir antes de enviar.",
                 )
+            expected_conversation = payload.get('conversation_id')
+            if expected_conversation is not None and expected_conversation != self.history.active['id']:
+                raise protocol.ProtocolError('stale_conversation', 'A conversa mudou. Reveja a mensagem antes de enviar.')
             if self._is_task_running():
                 raise protocol.ProtocolError(
                     "task_busy",
                     "Já existe uma tarefa em execução.",
+                )
+            if bool(getattr(self.spotify_install, "job_running", False)):
+                raise protocol.ProtocolError(
+                    "job_busy",
+                    "A configuração do Spotify está em curso; tente novamente quando terminar.",
                 )
             task_id = f"tsk-{uuid.uuid4().hex[:16]}"
             self._active_task_id = task_id
 
             conversation = mode == "converse"
             user_msg: dict[str, Any] = {
+                "conversation_id": self.history.active['id'],
+                "created_at": now(),
+                "state": "completed",
                 "role": "user",
                 "text": stripped,
                 "mode": mode,
@@ -698,8 +1189,11 @@ class BridgeService:
                 ]
             # The task context exists before any echo: the consumer must be able to
             # accept the user turn even when the next turn starts immediately.
-            self._emit("task.started", {"task_id": task_id, "mode": mode, "instruction": stripped})
+            self._emit("task.started", {"task_id": task_id, "mode": mode, "instruction": stripped,
+                                       "conversation_id": self.history.active['id']})
             user_msg["message_id"] = f"{task_id}:user"
+            self.history.accept(user_msg, attachments=bool(attachments))
+            self._history_changed('updated')
             self._emit("chat.message", user_msg)
             if conversation:
                 self._emit(
@@ -726,7 +1220,8 @@ class BridgeService:
             )
             self._active_task_future = fut
 
-        return {"task_id": task_id, "mode": mode, "status": "started"}
+        return {"task_id": task_id, "mode": mode, "status": "started",
+                "conversation_id": self.history.active['id']}
 
     async def _execute_task(
         self,
@@ -741,6 +1236,7 @@ class BridgeService:
         res: TaskResult | None = None
         err: Exception | None = None
         response = PublicResponse(self._emit, self.session_id, task_id)
+        response.ids['conversation_id'] = self.history.active['id']
         self._public_response = response
         self.controller.on_public = response.receive
         try:
@@ -765,10 +1261,7 @@ class BridgeService:
             if self._public_response is response:
                 self._public_response = None
             self._deny_all_pending_questions()
-            with self._lock:
-                if self._active_task_id == task_id:
-                    self._active_task_id = None
-                    self._active_task_future = None
+            # The conversation stays locked until public text and archive are consolidated.
 
         if err is not None or res is None:
             response.fail('internal_error')
@@ -783,9 +1276,10 @@ class BridgeService:
                 message=msg,
                 failure_kind="INTERNAL_ERROR",
             )
-            self._emit("task.finished", public_task_result_dto(fallback))
+            self._finish_chat_history(fallback, response)
             # Uma falha interna limpa o último texto falável: nunca se lê uma resposta antiga.
             self._observe_voice(fallback, attachments=bool(attachments), verified_prefix='')
+            self._release_chat_task(fallback)
             return fallback
 
         dto = public_task_result_dto(res)
@@ -796,29 +1290,80 @@ class BridgeService:
         if res.status == 'SUCCESS':
             response.finish(res.message, res.status, verified_result=bool(speech),
                             verified_prefix=speech)
-        elif res.failure_kind == 'AUTHORIZATION_REFUSED':
-            # The refusal is honest public text appended to whatever the model already
-            # streamed: no response.error and no configuration/provider blame.
+        elif (res.failure_kind == 'AUTHORIZATION_REFUSED'
+              or (res.plan_source in {'spotify', 'web'}
+                  and res.status in {'FAILED', 'NOT_VERIFIED'} and res.status != 'CANCELLED'
+                  and (res.plan_source == 'web' or
+                       res.failure_kind in {'VERIFICATION_FAILURE', 'ACTION_FAILURE',
+                                            'TIMEOUT', 'CONFIGURATION'}))):
+            # Expected refusal/block is honest public text appended to whatever the model
+            # already streamed: no response.error, no verified_result and no SUCCESS. The
+            # status/failure_kind stay in task.finished exactly as the controller reported.
             response.flush()
             prefix = response.text
             response.finish((prefix + '\n\n' if prefix else '') + res.message, res.status)
         else:
             response.fail(res.failure_kind or 'task_failed', cancelled=res.status == 'CANCELLED')
         if (res.scope in {'conversation', 'memory_command'}
-                and (res.status == "SUCCESS" or res.failure_kind == 'AUTHORIZATION_REFUSED')):
+                and (res.status == "SUCCESS" or res.failure_kind == 'AUTHORIZATION_REFUSED'
+                     or (res.plan_source == 'web' and res.status == 'NOT_VERIFIED'))):
             self._emit(
                 "chat.message",
-                {"role": "assistant", "text": res.message, "task_id": task_id, "scope": res.scope,
-                 'message_id': response.ids['message_id'], 'response_id': response.ids['response_id']},
+                {**{"role": "assistant", "text": res.message, "task_id": task_id,
+                    "scope": res.scope,
+                    'message_id': response.ids['message_id'], 'response_id': response.ids['response_id']},
+                 # A origem/evidência publica-se sempre que houve turno web, mesmo sem
+                 # fontes (ex.: NO_RESULTS/BLOCKED de um provider); só a lista é vazia.
+                 **({'sources': [dict(item) for item in res.web_sources
+                                 if isinstance(item, dict)],
+                     'search_source': res.search_source,
+                     'web_preference': res.web_preference,
+                     'web_fallback': res.web_fallback,
+                     'fallback_triggered': bool(res.fallback_triggered),
+                     'evidence_status': res.evidence_status,
+                     'request_status': res.request_status}
+                    if res.web_outcome is not None else {})},
             )
         if res.status == "CANCELLED":
             self._emit("task.cancelled", {"task_id": task_id, "message": res.message, "result": dto})
-        self._emit("task.finished", dto)
+        self._finish_chat_history(res, response)
         if res.scope != "conversation":
             self._emit("memory.changed", {"reason": "task_finished"})
         # Fala depois da resposta final: uma única decisão backend serve auto e manual.
         self._observe_voice(res, attachments=bool(attachments), verified_prefix=speech)
+        self._release_chat_task(res)
         return res
+
+    def _finish_chat_history(self, result: TaskResult, response: PublicResponse) -> None:
+        with self._lock:
+            turns = getattr(self.controller, 'turns', None)
+            pairs = turns.pairs(self.controller.session_id) if turns is not None else []
+            user = next((m for m in self.history.active['messages'] if m['task_id'] == result.task_id
+                         and m['role'] == 'user'), None)
+            eligible = bool(user and pairs and pairs[-1] == (user['text'], result.message)
+                            and result.status == 'SUCCESS')
+            self.history.remember_context(pairs)
+            self.history.complete({
+                'message_id': response.ids['message_id'], 'response_id': response.ids['response_id'],
+                'conversation_id': self.history.active['id'], 'task_id': result.task_id,
+                'role': 'assistant', 'text': response.text or result.message, 'created_at': now(),
+                'state': response.final_state,
+                'provider': result.provider or self.settings.provider,
+                'model': result.model or self.settings.model, 'status': result.status,
+                'scope': result.scope, 'sources': result.web_sources or [],
+                'search_source': result.search_source, 'web_preference': result.web_preference,
+                'web_fallback': result.web_fallback, 'fallback_triggered': bool(result.fallback_triggered),
+                'evidence_status': result.evidence_status, 'request_status': result.request_status,
+            }, eligible=eligible)
+            self._history_changed('updated')
+
+    def _release_chat_task(self, result: TaskResult) -> None:
+        with self._lock:
+            self._emit('task.finished', {**public_task_result_dto(result),
+                                        'conversation_id': self.history.active['id']})
+            if self._active_task_id == result.task_id:
+                self._active_task_id = None
+                self._active_task_future = None
 
     def _handle_task_cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
         req_task_id = payload.get("task_id")
@@ -978,19 +1523,39 @@ class BridgeService:
         }
 
     def _handle_brain_get(self) -> dict[str, Any]:
+        from app.brain.cli.catalog import find_spec
+        from app.brain.cli.known import known_runtime
+        from app.brain.cli.process import resolve_executable
+        from app.codex_app_server import codex_executable
+
         providers_list: list[dict[str, Any]] = []
         for desc in registry.descriptors():
-            providers_list.append(
-                {
-                    "id": desc.id,
-                    "label": desc.label,
-                    "kind": desc.kind.value,
-                    "location": desc.location.value,
-                    "requires_api_key": desc.requires_api_key,
-                    "supports_model_discovery": desc.capabilities.supports(Capability.MODEL_DISCOVERY),
-                    "supports_interactive_login": desc.capabilities.supports(Capability.INTERACTIVE_LOGIN),
-                }
-            )
+            if known_runtime(desc.id) is not None:
+                continue  # Recognisable interactive CLIs are not selectable Brains.
+            info: dict[str, Any] = {
+                "id": desc.id,
+                "label": desc.label,
+                "kind": desc.kind.value,
+                "location": desc.location.value,
+                "requires_api_key": desc.requires_api_key,
+                "supports_model_discovery": desc.capabilities.supports(Capability.MODEL_DISCOVERY),
+                "supports_interactive_login": desc.capabilities.supports(Capability.INTERACTIVE_LOGIN),
+                "available": desc.implemented,
+            }
+            if not desc.implemented:
+                info["unavailable_reason"] = (
+                    desc.unavailable_reason
+                    or f"{desc.label} ainda não tem integração com a Lunmi."
+                )
+            if desc.location is BrainLocation.LOCAL_CLI and desc.executable:
+                # Only locate the command; opening this page never runs a CLI or logs in.
+                spec = find_spec(desc.id)
+                runtime = known_runtime(desc.id)
+                search_paths = spec.search_paths if spec else runtime.search_paths if runtime else ()
+                info["installed"] = bool(codex_executable() if desc.id == "codex" else resolve_executable(
+                    desc.executable, search_paths,
+                ))
+            providers_list.append(info)
         return {
             "current": self._public_brain_state(),
             "providers": providers_list,
@@ -1293,6 +1858,9 @@ class BridgeService:
                 }
                 raise
             self.settings = target
+            # Uma troca de Brain reemite o WebState: o cartão nunca fica na preferência
+            # do Brain anterior. Isto não arranca pesquisa nem processo permanente.
+            self._bind_web_brain(emit=True)
             self._sync_engine_host_pids()
             try:
                 self._persist_brain_selection(target, remember=remember)
@@ -1793,6 +2361,61 @@ class BridgeService:
         self._voice_empty_payload(payload)
         return self.voice.stop()
 
+    def _handle_voice_warmup(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_empty_payload(payload)
+        return self.voice_warmup.start()
+
+    def _handle_voice_warmup_get(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_empty_payload(payload)
+        return self.voice_warmup.snapshot()
+
+    # ------------------------------------------------------------ ditado (V1) --
+    @staticmethod
+    def _voice_input_empty_payload(payload: dict[str, Any]) -> None:
+        if payload:
+            raise protocol.ProtocolError(
+                "invalid_payload", "Este comando de ditado não aceita campos."
+            )
+
+    def _handle_voice_input_get(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_input_empty_payload(payload)
+        return self.voice_input.snapshot()
+
+    def _handle_voice_input_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        mode = "manual"
+        if payload:
+            if set(payload) != {"mode"} or payload.get("mode") not in {"manual", "hold"}:
+                raise protocol.ProtocolError(
+                    "invalid_payload", "Use {} ou {'mode':'hold'} em voice.input.start."
+                )
+            mode = payload["mode"]
+        return self.voice_input.start() if mode == "manual" else self.voice_input.start(mode="hold")
+
+    @staticmethod
+    def _voice_input_generation(payload: dict[str, Any], command: str) -> int:
+        if set(payload) != {"generation"}:
+            raise protocol.ProtocolError(
+                "invalid_payload", f"Use exatamente 'generation' em {command}."
+            )
+        generation = payload.get("generation")
+        if type(generation) is not int or generation < 0 or generation > 2_147_483_647:
+            raise protocol.ProtocolError(
+                "invalid_payload", "Campo 'generation' deve ser um inteiro válido."
+            )
+        return generation
+
+    def _handle_voice_input_finish(self, payload: dict[str, Any]) -> dict[str, Any]:
+        generation = self._voice_input_generation(payload, "voice.input.finish")
+        return self.voice_input.finish(generation)
+
+    def _handle_voice_input_cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._voice_input_empty_payload(payload)
+        return self.voice_input.cancel()
+
+    def _handle_voice_input_result(self, payload: dict[str, Any]) -> dict[str, Any]:
+        generation = self._voice_input_generation(payload, "voice.input.result")
+        return self.voice_input.result(generation)
+
     def _observe_voice(self, result: TaskResult, *, attachments: bool,
                        verified_prefix: str) -> None:
         """Entrega a decisão de fala ao gestor; voz nunca altera o resultado da tarefa."""
@@ -1805,6 +2428,8 @@ class BridgeService:
                 attachments=attachments,
                 evidence_count=len(result.evidence or []),
                 operations=result.operation_states or (),
+                web_outcome=result.web_outcome,
+                web_sources=len(result.web_sources or []),
             )
             self.voice.observe_reply(text)
         except Exception:
@@ -1819,7 +2444,26 @@ class BridgeService:
             pending_reconfig = self._reconfig_future
         self._deny_all_pending_questions()
         try:
+            self.voice_warmup.close()
+        except Exception:
+            pass
+        try:
+            # Ordem: microfone primeiro; depois o worker de fala. Fechar a entrada nunca pode
+            # deixar um processo de captura a escrever depois do terminal da bridge.
+            self.voice_input.close()
+        except Exception:
+            pass
+        try:
             self.voice.close()
+        except Exception:
+            pass
+        try:
+            self.spotify_install.close()
+        except Exception:
+            pass
+        try:
+            fut = asyncio.run_coroutine_threadsafe(self.web.close(), self._loop)
+            fut.result(timeout=5.0)
         except Exception:
             pass
         # Um commit de cérebro em voo termina (ou falha) antes de fechar: encerrar no meio
@@ -1839,3 +2483,5 @@ class BridgeService:
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread.is_alive():
             self._thread.join(timeout=3.0)
+        if not self._thread.is_alive() and self.history.store:
+            self.history.store.close()

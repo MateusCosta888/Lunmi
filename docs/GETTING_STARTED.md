@@ -22,7 +22,13 @@ O frontend legado é opcional: `run.bat --tk` ou `run-tk.bat`.
 4. Abra o catálogo e escolha um modelo disponível. É possível pesquisar na lista; não é necessário escrever um ID de modelo. Verificar e testar um modelo são operações distintas; o teste de inferência exige consentimento e pode consumir cota.
 5. Aplique. O catálogo aparece na barra de conversa quando o provedor oferece listagem.
 
-Credenciais lembradas usam DPAPI. A chave salva não volta ao renderer como texto. Variáveis explícitas do ambiente têm prioridade; se um valor parece fixo, confira `.env` e o ambiente do processo. Aguarde ou pare a tarefa antes de trocar a configuração do Brain.
+Credenciais lembradas usam DPAPI. A chave salva não volta ao renderer como texto. O campo
+de chave só aparece para provedores que o exigem; as CLIs usam a própria autenticação.
+Variáveis explícitas do ambiente têm prioridade; se um valor parece fixo, confira `.env`
+e o ambiente do processo. Aguarde ou pare a tarefa antes de trocar a configuração do Brain.
+
+O OpenCode ainda não tem adaptador implementado. A Free-pi, exclusivamente interativa na
+versão avaliada, não é oferecida no catálogo de Brains.
 
 ## Usar com previsibilidade
 
@@ -57,7 +63,12 @@ O botão de voz no compositor oferece ativação, fala automática opcional, tes
 
 O runtime de áudio é separado do Python principal. A resolução padrão procura `<state_root>/.local/voice/runtime/Scripts/python.exe` e modelos em `<state_root>/.local/voice/models/supertonic-3/`. O worker usa Supertonic1.3.1 com download automático desligado. Esses pacotes, pesos e ambiente preparado **não estão incluídos no Git nem são criados pelo launcher**. Esta entrega não oferece instalador automático de voz: sem preparação externa validada, o estado esperado é indisponível, sem impedir o chat. As licenças do SDK, pesos e dependências devem ser revistas antes de distribuir esse runtime.
 
-A captura de microfone/STT ainda não foi integrada. Ativar saída de voz não inicia gravação. A validação do Node foi feita num Windows com um monitor a100% DPI; outros DPI, múltiplos monitores e sessões prolongadas exigem validação adicional.
+O ditado usa um runtime e modelos próprios, também preparados separadamente. O botão do
+microfone permite rever a transcrição antes de enviar. O atalho configurável envia ao largar
+a tecla; confirme esse comportamento antes de o ativar. Não existe escuta contínua, e ativar
+a saída de voz não inicia gravação. Microfone, dispositivos e desempenho exigem validação
+local. A validação física do Node foi feita num Windows com um monitor a100% DPI; outros
+DPI, múltiplos monitores e sessões prolongadas exigem validação adicional.
 
 ## Solução de problemas
 

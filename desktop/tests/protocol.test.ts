@@ -261,7 +261,8 @@ describe("Contrato IPC v1 (TypeScript <-> Golden <-> Python)", () => {
       const readyEvent = received.find((m) => m.type === "session.ready");
       expect(readyEvent).toBeDefined();
       expect((readyEvent!.payload.capabilities as Record<string, boolean>).converse).toBe(true);
-      expect((readyEvent!.payload.capabilities as Record<string, boolean>).web_search).toBe(false);
+      // WEB-SEARCH-V1: web.get/web.set têm handlers reais nesta ponte.
+      expect((readyEvent!.payload.capabilities as Record<string, boolean>).web_search).toBe(true);
 
       const helloResult = received.find((m) => m.type === "command.result" && m.id === "hello-ts-1");
       expect(helloResult).toBeDefined();

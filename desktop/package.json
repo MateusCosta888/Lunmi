@@ -18,6 +18,7 @@
   "dependencies": {
     "liquid-glass-react": "1.1.1",
     "lucide-react": "1.57.0",
+    "motion": "14.6.0",
     "ogl": "1.0.11",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -88,6 +89,7 @@
       "artifactName": "${productName}-${version}-Setup.${ext}"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": false,

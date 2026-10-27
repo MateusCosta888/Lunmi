@@ -72,6 +72,41 @@ TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_.]*$")
 
 PRIVATE_COMMAND_TYPES = frozenset({'integrations.browser.failed'})
 
+# SPOTIFY INTEGRAÇÃO V1 (I0): nomes públicos congelados em `.agents/SPOTIFY-INTEGRATION-V1-CONTRACT.md`.
+# Os handlers chegam em I1; até lá a sessão não os anuncia (`capabilities.spotify`) nem os aceita
+# (`not_implemented`), e um cliente antigo ignora tanto os nomes como a chave aditiva. A igualdade
+# com `app/integrations/spotify_contract.py` e com o golden é verificada em `tests/test_spotify_contract.py`.
+SPOTIFY_COMMAND_TYPES: frozenset[str] = frozenset({
+    "spotify.get",
+    "spotify.plan",
+    "spotify.apply",
+    "spotify.cancel",
+    "spotify.connect",
+    "spotify.disconnect",
+    "spotify.open",
+})
+
+# VOICE INPUT V1/V2: ditado revisto, aditivo e ortogonal ao TTS. Contrato em
+# `.agents/VOICE-INPUT-V1-CONTRACT.md` e `.agents/VOICE-REFINEMENTS-V2-CONTRACT.md`.
+# `finish` entra no conjunto porque é um handler real e a capability só é honesta com todos.
+VOICE_INPUT_COMMAND_TYPES: frozenset[str] = frozenset({
+    "voice.input.get",
+    "voice.input.start",
+    "voice.input.finish",
+    "voice.input.cancel",
+    "voice.input.result",
+})
+
+# WEB-SEARCH-V1: estado/definições da pesquisa web. Contrato em
+# `.agents/WEB-SEARCH-V1-CONTRACT.md`; a capability `web_search` só é verdadeira com ambos
+# os handlers registados, nunca por causa de uma flag otimista.
+WEB_COMMAND_TYPES: frozenset[str] = frozenset({"web.get", "web.set"})
+HISTORY_COMMAND_TYPES: frozenset[str] = frozenset({
+    'chat.history.get', 'chat.history.list', 'chat.history.read', 'chat.history.create',
+    'chat.history.select', 'chat.history.rename', 'chat.history.delete', 'chat.history.clear',
+    'chat.history.options.get', 'chat.history.options.set',
+})
+
 COMMAND_TYPES: frozenset[str] = frozenset({
     "session.hello",
     "integrations.get",
@@ -119,8 +154,17 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.test",
     "voice.speak_last",
     "voice.stop",
+    # VOICE REFINEMENTS V2: preparação de introdução e release hold, ambos aditivos.
+    "voice.warmup",
+    "voice.warmup.get",
+    # VOICE INPUT V1: entrada separada da saída; nunca reutiliza `capture_supported`.
+    "voice.input.get",
+    "voice.input.start",
+    "voice.input.finish",
+    "voice.input.cancel",
+    "voice.input.result",
     "app.shutdown",
-})
+}) | SPOTIFY_COMMAND_TYPES | VOICE_INPUT_COMMAND_TYPES | WEB_COMMAND_TYPES | HISTORY_COMMAND_TYPES
 
 RESPONSE_TYPES: frozenset[str] = frozenset({
     "command.result",
@@ -139,6 +183,7 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "response.cancelled",
     "session.ready",
     "chat.message",
+    "chat.history.changed",
     "task.started",
     "task.progress",
     "task.finished",
@@ -150,6 +195,14 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "memory.changed",
     # Estado público de voz: nunca carrega texto de conversa, paths ou diagnóstico interno.
     "voice.state",
+    # VOICE REFINEMENTS V2: readiness agregado (TTS+STT) da introdução; sem texto/áudio.
+    "voice.readiness",
+    # VOICE INPUT V1: estado do ditado; nunca carrega transcrição, áudio ou device.
+    "voice.input.state",
+    # SPOTIFY INTEGRAÇÃO V1 (aditivo): estado público do Spotify; payload fechado `{spotify}`.
+    "spotify.changed",
+    # WEB-SEARCH-V1: estado público da pesquisa web; payload `WebStateDto` exato.
+    "web.changed",
     "log.append",
 })
 
@@ -224,8 +277,17 @@ def capabilities_for_commands(
         "approval.get",
         "approval.set",
     } <= cmds
+    # Aditiva: `true` só quando os seis comandos Spotify estão realmente registados na sessão.
+    # Em I0 o serviço exclui-os de propósito (sem handlers), logo é `false`.
+    has_spotify = SPOTIFY_COMMAND_TYPES <= cmds
+    # VOICE INPUT V1/V2: `true` só quando os cinco comandos de ditado (incluindo `finish`)
+    # têm handlers na sessão. Aditiva: o cliente antigo ignora a chave e usa o legado.
+    has_voice_input = VOICE_INPUT_COMMAND_TYPES <= cmds
+    # WEB-SEARCH-V1: derivada dos handlers reais, nunca de uma promessa de implementação.
+    has_web = WEB_COMMAND_TYPES <= cmds or bool(web_search)
     return {
         "converse": has_chat,
+        "chat_history": HISTORY_COMMAND_TYPES <= cmds,
         "execute": has_exec_controls,
         "auto": has_exec_controls,
         "memory": has_memory,
@@ -234,7 +296,9 @@ def capabilities_for_commands(
         # Aditiva: `false` numa sessão mínima e `true` só quando o serviço realmente registra
         # `fs.read`. Um cliente v1 lê as seis chaves que conhece e ignora esta.
         "file_read": "fs.read" in cmds,
-        "web_search": bool(web_search),
+        "spotify": has_spotify,
+        "voice_input": has_voice_input,
+        "web_search": has_web,
         "browser_use": bool(browser_use),
     }
 

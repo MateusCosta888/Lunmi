@@ -5,10 +5,18 @@
  * `api_key` nunca é devolvida pelo backend e o renderer nunca a envia de volta em claro.
  */
 import type { SessionReadyPayload } from "./protocol";
+import type { ChatHistorySnapshotDto } from './chatHistory';
+export type { ChatHistorySnapshotDto, ConversationDto, HistoryOptionsDto, HistoryListDto } from './chatHistory';
 
 export type ChatMode = "converse" | "execute" | "auto";
 
 export interface ChatMessageDto {
+  conversation_id?: string;
+  created_at?: string;
+  provider?: string;
+  model?: string;
+  status?: string;
+  attachments?: { name: string; size_bytes: number }[];
   role: "user" | "assistant" | "system";
   text: string;
   mode?: ChatMode;
@@ -17,10 +25,138 @@ export interface ChatMessageDto {
   message_id?: string;
   response_id?: string;
   state?: "streaming" | "completed" | "interrupted" | "cancelled";
+  /** WEB-SEARCH-V1: fontes da resposta web canónica; ausente fora de turno web. */
+  sources?: WebSourceDto[];
+  /** WEB-SEARCH-ORIGIN-V1: origem efetiva e evidência simples do turno web. */
+  search_source?: WebOrigin;
+  /** WEB-SEARCH-AUTO-V1: preferência guardada e motivo da mudança de plano. */
+  web_preference?: WebPreference;
+  web_fallback?: WebFallbackReason;
+  fallback_triggered?: boolean;
+  evidence_status?: WebEvidenceStatus | null;
+  request_status?: WebRequestStatus | null;
+}
+
+/**
+ * WEB-SEARCH-V1 — estado e fontes públicas. Contrato: `.agents/WEB-SEARCH-V1-CONTRACT.md`.
+ * Nenhum DTO carrega query, conteúdo externo cru, path ou segredo.
+ */
+export type WebMode = "auto" | "quick" | "deep";
+export type WebStateName = "idle" | "starting" | "searching" | "reading" | "error";
+
+/**
+ * WEB-SEARCH-AUTO-V1 — **preferência** escolhida (persistida por Brain). `auto` não é
+ * uma origem: é o plano «provedor primeiro, Free Search só em recuperação». `none` é OFF.
+ * Contrato: `.agents/WEB-SEARCH-AUTO-V1-CONTRACT.md`.
+ */
+export type WebPreference = "auto" | "lunmi" | "provider" | "none";
+/** WEB-SEARCH-ORIGIN-V1 — **origem efetiva** de uma tentativa, sem notas A–F. */
+export type WebOrigin = "none" | "lunmi" | "provider";
+export type WebNativeState = "SUPPORTED" | "AVAILABLE" | "UNAVAILABLE" | "UNKNOWN";
+export type WebEvidenceStatus = "suff" | "partial" | "insufficient";
+export type WebRequestStatus = "met" | "partial" | "unmet" | "unknown";
+export type WebFallbackReason =
+  | ""
+  | "forbidden"
+  | "provider_unavailable"
+  | "provider_recovered"
+  | "cleanup_failed"
+  | "lunmi_unavailable";
+/** Classe fechada da tentativa nativa falhada; `security` nunca é recuperável. */
+export type WebProviderFailure =
+  | ""
+  | "cancelled"
+  | "security"
+  | "permission"
+  | "unavailable"
+  | "timeout"
+  | "malformed"
+  | "failed"
+  | "exhausted"
+  | "unknown";
+
+export interface NativeWebCapabilityDto {
+  supported: boolean;
+  available: boolean;
+  can_disable: boolean;
+  state: WebNativeState;
+}
+
+export interface WebStateDto {
+  session_id: string;
+  /** Monotónica apenas nesta sessão; um evento com revisão velha é ignorado. */
+  revision: number;
+  enabled: boolean;
+  mode: WebMode;
+  available: boolean;
+  state: WebStateName;
+  message: string;
+  /** Fingerprint estável do Brain atual; nunca uma credencial. */
+  brain_id: string;
+  /** Preferência guardada para este Brain (nunca `auto` como origem). */
+  preference: WebPreference;
+  /** Origem efetiva agora: primeira tentativa do plano, depois de enabled/capacidade. */
+  origin: WebOrigin;
+  /** Capacidade nativa pequena; `state` UNKNOWN/SUPPORTED não é oferecido. */
+  native_web: NativeWebCapabilityDto;
+  /** Motivo do plano não ter a origem pedida; vazio quando não houve mudança. */
+  web_fallback: WebFallbackReason;
+}
+
+/**
+ * Payload fechado de `web.set`; `origin` exige `brain_id` (guarda stale_brain). A chave
+ * `origin` é histórica e carrega a **preferência** (`WebPreference`), não uma origem.
+ */
+export interface WebSetPayload {
+  enabled?: boolean;
+  mode?: WebMode;
+  brain_id?: string;
+  origin?: WebPreference;
+}
+
+/** Evento `web.changed`: exatamente o DTO acima, sem campos extra. */
+export type WebStateEventDto = WebStateDto;
+
+export interface WebSourceDto {
+  /** Opaco do backend, único por tarefa; o renderer nunca o deriva de uma URL. */
+  id: string;
+  title: string;
+  url: string;
+  snippet: string;
+  engines: string[];
+  published_at: string | null;
+  date_source: string | null;
+  retrieved_at: string;
+  read: boolean;
+  truncated: boolean;
+  cached: boolean;
+}
+
+export type WebOutcome =
+  | "SUCCESS"
+  | "NO_RESULTS"
+  | "TIMEOUT"
+  | "BLOCKED"
+  | "FAILED"
+  | "NOT_VERIFIED";
+
+export type WebSourceOpenReason =
+  | ""
+  | "invalid_payload"
+  | "not_found"
+  | "stale"
+  | "blocked_url"
+  | "unavailable"
+  | "open_failed";
+
+export interface WebSourceOpenResultDto {
+  opened: boolean;
+  reason: WebSourceOpenReason;
 }
 
 /** Um fluxo público por resposta; offsets contam pontos Unicode, não unidades UTF-16. */
 export interface PublicResponseDto {
+  conversation_id?: string;
   session_id: string;
   task_id: string;
   response_id: string;
@@ -43,6 +179,7 @@ export interface PublicResponseDto {
 }
 
 export interface TaskResultDto {
+  conversation_id?: string;
   task_id: string;
   status: string;
   message: string;
@@ -108,6 +245,25 @@ export interface TaskResultDto {
   app_index_cold?: boolean;
   memory_context_items?: number;
   memory_error?: boolean;
+  /** WEB-SEARCH-V1: sempre presente (vazio fora de turno web). */
+  web_sources?: WebSourceDto[];
+  /** WEB-SEARCH-V1: `null` fora de turno web. */
+  web_outcome?: WebOutcome | null;
+  /** WEB-SEARCH-ORIGIN-V1: origem efetiva, proveniência e evidência simples. */
+  search_source?: WebOrigin;
+  provider_id?: string | null;
+  native_tool_names?: string[];
+  source_count?: number;
+  search_outcome?: WebOutcome | null;
+  web_preference?: WebPreference;
+  web_fallback?: WebFallbackReason;
+  /** Desfechos separados: a tentativa anterior não se perde na recuperação `auto`. */
+  fallback_triggered?: boolean;
+  provider_outcome?: WebOutcome | null;
+  lunmi_outcome?: WebOutcome | null;
+  web_provider_failure?: WebProviderFailure;
+  evidence_status?: WebEvidenceStatus | null;
+  request_status?: WebRequestStatus | null;
   [key: string]: unknown;
 }
 
@@ -213,6 +369,10 @@ export interface BrainProviderInfoDto {
   requires_api_key: boolean;
   supports_model_discovery: boolean;
   supports_interactive_login: boolean;
+  /** A supported adapter is distinct from a locally installed command. */
+  available?: boolean;
+  installed?: boolean;
+  unavailable_reason?: string;
 }
 
 export interface BrainGetDto {
@@ -368,6 +528,7 @@ export type TaskPhase =
   | "cancelled";
 
 export interface TaskStateDto {
+  conversation_id?: string;
   task_id: string;
   mode: ChatMode;
   instruction: string;
@@ -399,6 +560,10 @@ export interface VoiceStateDto {
   state: VoiceStateName;
   generation: number;
   can_speak_last: boolean;
+  /**
+   * Legado congelado do contrato de saída: permanece sempre `false` e **não** é sinal da entrada
+   * nova. Clientes novos usam `voice.input.*` / `voice.input.state`.
+   */
   capture_supported: false;
   message: string;
 }
@@ -413,12 +578,145 @@ export interface VoiceCommandAckDto {
   accepted: boolean;
   generation: number;
   state: VoiceStateName;
-  reason: "" | "disabled" | "unavailable" | "no_last_response";
+  /** `input_active` é aditivo (VOICE INPUT V1): microfone aberto recusa fala nova. */
+  reason: "" | "disabled" | "unavailable" | "no_last_response" | "input_active";
 }
 
 export interface VoiceSetPayload {
   enabled?: boolean;
   auto_speak?: boolean;
+}
+
+/**
+ * VOICE REFINEMENTS V2 — preparação da introdução. Nenhuma perna produz áudio ou abre microfone;
+ * `ready=true` é o único sinal de que o loading pode abrir a aplicação sem ficar bloqueado.
+ */
+export type VoiceWarmupLegState =
+  | "idle"
+  | "preparing"
+  | "ready"
+  | "unavailable"
+  | "error";
+
+export interface VoiceWarmupDto {
+  state: "idle" | "preparing" | "ready";
+  ready: boolean;
+  tts: VoiceWarmupLegState;
+  stt: VoiceWarmupLegState;
+  message: string;
+}
+
+/** Evento `voice.readiness`: DTO + `session_id`, sem mais nenhum campo. */
+export interface VoiceWarmupEventDto extends VoiceWarmupDto {
+  session_id: string;
+}
+
+/**
+ * VOICE INPUT V1 — entrada de voz (ditado revisto). Contrato:
+ * `.agents/VOICE-INPUT-V1-CONTRACT.md`. Ortogonal ao TTS: nenhum campo destes DTOs carrega texto
+ * de conversa; a transcrição só sai em `voice.input.result`, uma vez.
+ */
+export type VoiceInputStateName =
+  | "unavailable"
+  | "idle"
+  | "starting"
+  | "listening"
+  | "transcribing"
+  | "ready"
+  | "error";
+
+export interface VoiceInputStateDto {
+  available: boolean;
+  state: VoiceInputStateName;
+  generation: number;
+  message: string;
+}
+
+/** Evento `voice.input.state`: o DTO acima + `session_id`, sem mais nenhum campo nem texto. */
+export interface VoiceInputStateEventDto extends VoiceInputStateDto {
+  session_id: string;
+}
+
+/** Resultado imediato de `voice.input.start` e `voice.input.cancel`. */
+export interface VoiceInputAckDto {
+  accepted: boolean;
+  generation: number;
+  state: VoiceInputStateName;
+  reason: "" | "unavailable" | "busy" | "not_active";
+}
+
+export type VoiceInputMode = "manual" | "hold";
+
+export interface VoiceInputStartPayload {
+  mode?: VoiceInputMode;
+}
+
+export interface VoiceInputFinishPayload {
+  generation: number;
+}
+
+/** Texto privado e consumível uma única vez; `status:"none"` nunca traz texto. */
+export interface VoiceInputResultDto {
+  status: "ready" | "none";
+  generation: number;
+  text: string;
+  truncated: boolean;
+  /**
+   * Só presente em turnos hold: `true` apenas quando o release foi aceite e a captura terminou
+   * por release. O renderer nunca envia sem este campo verdadeiro.
+   */
+  auto_send?: boolean;
+}
+
+/** Fase sanitizada publicada pelo main; o renderer é o único que chama start/finish/chat.send. */
+export type VoiceInputHoldPhase = "pressed" | "released" | "cancelled";
+
+export interface VoiceInputHoldPhaseDto {
+  session_id: string;
+  /** Monotónico por sessão; identifica o gesto físico e não substitui a geração do backend. */
+  press_id: number;
+  phase: VoiceInputHoldPhase;
+  reason:
+    | ""
+    | "extra_key"
+    | "injected"
+    | "pause"
+    | "reconfigured"
+    | "hook_lost"
+    | "blur"
+    | "shutdown"
+    | "lifecycle";
+}
+
+export const DEFAULT_VOICE_INPUT_SHORTCUT = "Ctrl+Alt";
+
+/**
+ * DTO único do atalho de ditado (`window.lunmi.voiceInputShortcut`, API opcional). O preload do
+ * Electron importa este tipo de `shared/types.ts`; `shared/ipc/client.ts` só reexporta a forma.
+ */
+export interface VoiceInputShortcutResultDto {
+  /** Ordem visual normalizada escolhida; `null` = sem binding. */
+  accelerator: string | null;
+  error:
+    | ""
+    | "invalid_shortcut"
+    | "shortcut_conflict"
+    | "io_error"
+    | "hold_unavailable";
+}
+
+export interface VoiceInputShortcutControlDto {
+  ok: boolean;
+  error: "" | "hold_unavailable";
+}
+
+/** Ordem visual da captura local; `accelerator` é o visual normalizado aceite por `set`. */
+export interface VoiceShortcutCaptureDto {
+  keys: string[];
+  display: string;
+  accelerator: string;
+  valid: boolean;
+  error: "" | "duplicate" | "ambiguous" | "incomplete";
 }
 
 export type { SessionReadyPayload };
@@ -483,6 +781,8 @@ export interface NodePreferencesDto {
   auto_dock: boolean;
   /** Autoriza o Node a mostrar atividade (N2). Não inventa progresso. */
   show_activity: boolean;
+  /** Legacy snapshots omit this field; the mini chat then follows the theme. */
+  chat_appearance?: "theme" | "black";
   /** Acelerador Electron (`"Control+Shift+L"`); `null` = sem atalho. */
   shortcut: string | null;
 }
@@ -508,6 +808,8 @@ export interface NodeStateDto {
   status: NodeStatus | null;
   tone: NodeTone;
   session_id: string | null;
+  /** Apresentacao de um turno de voz background; nunca contem transcricao. */
+  voice_phase?: "starting" | "listening" | "thinking" | "error" | null;
 }
 
 export interface NodePreferencesResultDto {
@@ -527,6 +829,8 @@ export interface PresencePreferencesDto {
 
 /** Projeção pública da conversa: uma conversa, duas vistas. `cursor` é monotónico por sessão. */
 export interface ChatProjectionDto {
+  conversation_id?: string;
+  history?: ChatHistorySnapshotDto;
   session_id: string;
   cursor: number;
   messages: ChatMessageDto[];
@@ -541,6 +845,8 @@ export interface ChatProjectionDto {
  * `message_id` (nunca um segundo histórico). `reset` descarta a projeção anterior (sessão nova).
  */
 export interface ChatProjectionDeltaDto {
+  conversation_id?: string;
+  history?: ChatHistorySnapshotDto;
   session_id: string;
   cursor: number;
   reset?: boolean;
@@ -594,12 +900,21 @@ export type PresenceEventDto =
 export interface LunmiPresenceApi {
   snapshot(): Promise<PresenceSnapshotDto>;
   action(action: PresenceAction): Promise<PresenceActionResultDto>;
-  setDraft(text: string): Promise<{ ok: boolean }>;
+  setDraft(text: string, conversationId?: string): Promise<{ ok: boolean }>;
   sendCommand<TResult = Record<string, unknown>>(
     type: string,
     payload?: Record<string, unknown>
   ): Promise<TResult>;
   onEvent(callback: (event: PresenceEventDto) => void): () => void;
+  /**
+   * WEB-SEARCH-V1: abrir uma fonte por gesto, nas duas janelas.
+   * Só viajam IDs; a URL é resolvida na projeção canónica do main e validada lá.
+   */
+  openWebSource?(input: {
+    session_id: string;
+    task_id: string;
+    source_id: string;
+  }): Promise<WebSourceOpenResultDto>;
   /** Só na janela principal: a opção residente pertence às definições. */
   setResident?(resident: boolean): Promise<PresencePreferencesDto>;
   /** Só na janela principal: preferências do Node (N1), com validação e rollback no main. */

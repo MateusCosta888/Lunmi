@@ -21,7 +21,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NodeSurface } from "../src/features/companion/NodeSurface";
-import { nodeContentRect } from "../src/shared/node";
+import { DEFAULT_NODE_PREFERENCES, nodeContentRect } from "../src/shared/node";
 import type {
   ChatProjectionDto,
   NodeStateDto,
@@ -67,6 +67,7 @@ interface Harness {
   actions: string[];
   commands: Array<{ type: string; payload: Record<string, unknown> }>;
   emitNode: (next: Partial<NodeStateDto>) => void;
+  emitAppearance: (appearance: "theme" | "black") => void;
 }
 
 function presence(node: Partial<NodeStateDto> = {}, chat: ChatProjectionDto = chatProjection()): Harness {
@@ -75,6 +76,9 @@ function presence(node: Partial<NodeStateDto> = {}, chat: ChatProjectionDto = ch
   const harness: Harness = {
     actions: [],
     commands: [],
+    emitAppearance: appearance => act(() => {
+      for (const listener of [...listeners]) listener({ type: "node-prefs", preferences: { ...DEFAULT_NODE_PREFERENCES, chat_appearance: appearance } });
+    }),
     emitNode: next => {
       current = nodeState({ ...current, ...next });
       act(() => {
@@ -129,6 +133,21 @@ afterEach(() => {
 });
 
 describe("NodeSurface — objeto contínuo", () => {
+  it("aplica a aparência confirmada sem fechar nem remontar o chat", async () => {
+    const harness = presence({ surface: "chat" });
+    render(<NodeSurface />);
+    const node = await screen.findByTestId("lunmi-node");
+    const chat = screen.getByTestId("mini-chat");
+    expect(node.dataset.chatAppearance).toBe("theme");
+    harness.emitAppearance("black");
+    expect(node.dataset.chatAppearance).toBe("black");
+    expect(screen.getByTestId("mini-chat")).toBe(chat);
+    expect(node.dataset.surface).toBe("chat");
+    harness.emitAppearance("theme");
+    expect(node.dataset.chatAppearance).toBe("theme");
+    expect(harness.actions).toHaveLength(0);
+  });
+
   it("mudar de superfície não remonta o DOM: o nó e o círculo são os mesmos elementos", async () => {
     const harness = presence({ surface: "docked" });
     render(<NodeSurface />);

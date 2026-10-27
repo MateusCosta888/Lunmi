@@ -4,7 +4,7 @@
  * O objeto é UM só: o DOM nasce uma vez e nunca é remontado quando a superfície muda
  * (círculo → cápsula → chat). O main é a autoridade da forma — a `setShape` nativa recorta a
  * janela no rect da superfície e é ela que define também a região de input. Por isso aqui não há
- * clip-path nem raio CSS a imitar a silhueta: o corpo é preto uniforme sobre o envelope inteiro
+ * clip-path nem raio CSS a imitar a silhueta: o corpo cobre o envelope inteiro
  * e o recorte nativo faz o resto (D4).
  *
  * O conteúdo é posicionado com a ajuda partilhada (`nodeContentRect` de
@@ -21,8 +21,9 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { nodeContentRect, NODE, type NodeBounds } from "../../shared/node";
-import { presenceAction, useNodeState } from "../../shared/ipc/presence";
-import { BrandMark } from "../../shared/ui";
+import { presenceAction, useNodePreferences, useNodeState, usePresenceVoiceState } from "../../shared/ipc/presence";
+import { GalaxyOrb } from "../chat/orb/GalaxyOrb";
+import { deriveOrbMode } from "../chat/orb/orbState";
 import type {
   NodeSide,
   NodeStateDto,
@@ -63,6 +64,21 @@ const STATUS_LABEL: Record<NodeStatus, string> = {
 
 const IDLE_LABEL = "Lunmi";
 
+/**
+ * VOICE/NODE V3: etiquetas fixas e honestas do campo canónico `NodeStateDto.voice_phase`
+ * (publicado pelo main; `null`/ausente = comportamento V1). Nenhum texto livre, nenhuma
+ * transcrição, nenhum progresso — a UI só espelha o enum fechado. A atividade explícita do
+ * microfone não é ocultada por `show_activity=false`: enquanto houver fase de voz, é ela que a
+ * cápsula mostra (limpeza/precedência de turno são autoridade do main).
+ */
+const VOICE_LABEL: Record<NonNullable<NodeStateDto["voice_phase"]>, string> = {
+  starting: "A preparar o microfone",
+  listening: "A escutar",
+  thinking: "A pensar",
+  // delta do contrato: falha de ENTRADA de voz — etiqueta fixa honesta, nunca "tarefa falhou".
+  error: "O ditado falhou",
+};
+
 /** Envelope medido: a janela do Node É o envelope (420×520 DIP, ou o que couber no ecrã). */
 function measureEnvelope(): NodeBounds {
   const width = Math.max(1, Math.round(window.innerWidth || NODE.envelope_width));
@@ -81,6 +97,8 @@ function rectStyle(x: number, y: number, width: number, height: number): React.C
 
 export function NodeSurface(): React.ReactElement | null {
   const { state, available } = useNodeState();
+  const { preferences } = useNodePreferences();
+  const presenceVoice = usePresenceVoiceState();
   const [envelope, setEnvelope] = useState<NodeBounds>(measureEnvelope);
   /**
    * A superfície que já assentou. Durante um morph o main publica o DESTINO; o renderer mantém
@@ -164,7 +182,15 @@ export function NodeSurface(): React.ReactElement | null {
   const phase = state.phase;
   const tone = state.tone;
   const status = state.status;
-  const label = status ? STATUS_LABEL[status] : IDLE_LABEL;
+  const voicePhase = state.voice_phase ?? null;
+  const label = voicePhase ? VOICE_LABEL[voicePhase] : status ? STATUS_LABEL[status] : IDLE_LABEL;
+  // ORB REACTIVE V1: estados reais espelhados na face circular — voice_phase do main manda;
+  // TTS playing → speaking; nada de áudio medido nem estados inventados.
+  const orbMode = deriveOrbMode({
+    voicePhase,
+    ttsState: presenceVoice?.state ?? null,
+    taskWorking: status === "working",
+  });
   const circleTop = settled === "docked" ? rects.docked.y : rects.circle.y;
 
   return (
@@ -172,16 +198,18 @@ export function NodeSurface(): React.ReactElement | null {
       className="lunmi-node"
       data-testid="lunmi-node"
       data-surface={settled}
+      data-chat-appearance={preferences?.chat_appearance ?? "theme"}
       data-target={state.surface}
       data-phase={phase}
       data-side={side}
       data-tone={tone}
       data-status={status ?? "none"}
+      data-voice={voicePhase ?? "none"}
       data-visible={phase === "settled" ? "true" : "false"}
       onPointerEnter={onPointerEnter}
       onKeyDown={onKeyDown}
     >
-      {/* Corpo preto uniforme: cobre o envelope inteiro; a shape nativa é a única silhueta. */}
+      {/* O corpo acompanha a aparência do chat; a shape nativa continua a única silhueta. */}
       <div className="lunmi-node-body" data-testid="node-body" aria-hidden="true" />
 
       {/*
@@ -203,7 +231,7 @@ export function NodeSurface(): React.ReactElement | null {
           tabIndex={circleActive ? 0 : -1}
           onClick={open}
         >
-          <BrandMark size={26} />
+          <GalaxyOrb mode={orbMode} compact active={layer === "circle"} />
           <span className="lunmi-node-dot" data-testid="node-dot" aria-hidden="true" />
         </button>
 

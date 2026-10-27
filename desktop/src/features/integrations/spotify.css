@@ -1,0 +1,217 @@
+/* Spotify — cartão do painel Apps (`desktop/src/features/integrations/spotify.css`).
+   Apresentação apenas. O cartão usa `lunmi-settings-card` e `lunmi-action-button`; aqui
+   ficam os subcartões, o plano, os passos e as opções. Só tokens `--lunmi-*`, sem cores
+   literais, sem novos tokens, fontes ou dependências. */
+
+.lunmi-spotify-card {
+  min-width: 0;
+}
+
+.lunmi-spotify-state {
+  margin: 0;
+}
+
+.lunmi-spotify-state[data-tone="ok"] > svg {
+  color: var(--lunmi-success);
+}
+
+.lunmi-spotify-state[data-tone="warn"] {
+  color: var(--lunmi-warning);
+}
+
+.lunmi-spotify-state[data-tone="error"] {
+  color: var(--lunmi-error);
+}
+
+.lunmi-spotify-body {
+  margin: 0;
+}
+
+/* Subcartão interno: plano e progresso não competem com o cartão principal. */
+.lunmi-app-subcard {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 12px;
+  background: var(--lunmi-bg-card-subtle);
+}
+
+.lunmi-app-progress {
+  min-width: 0;
+}
+
+.lunmi-app-progress .lunmi-app-copy {
+  margin: 0;
+}
+
+/* Plano ------------------------------------------------------------------ */
+
+.lunmi-spotify-plan h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.lunmi-spotify-plan > .lunmi-app-copy {
+  margin: 0 0 12px;
+}
+
+.lunmi-spotify-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 7px 18px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.lunmi-spotify-facts li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--lunmi-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.lunmi-spotify-facts li > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--lunmi-success);
+}
+
+.lunmi-spotify-consent {
+  margin: 0 0 12px;
+  color: var(--lunmi-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.lunmi-spotify-plan > .lunmi-app-actions {
+  margin-top: 0;
+}
+
+/* Passos ----------------------------------------------------------------- */
+
+.lunmi-spotify-progress {
+  margin-top: 2px;
+}
+
+.lunmi-spotify-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lunmi-spotify-steps li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-height: 32px;
+  padding: 4px 0;
+  color: var(--lunmi-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.lunmi-spotify-steps li > svg {
+  margin-top: 1px;
+}
+
+.lunmi-spotify-steps li[data-state="current"] {
+  color: var(--lunmi-text-primary);
+  font-weight: 600;
+}
+
+.lunmi-spotify-steps li[data-state="todo"] {
+  opacity: 0.55;
+}
+
+.lunmi-spotify-steps li[data-state="done"] > svg {
+  color: var(--lunmi-success);
+}
+
+.lunmi-spotify-dot {
+  width: 9px;
+  height: 9px;
+  margin: 5px 0 0 4px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.lunmi-spotify-steps li[data-state="current"] .lunmi-spotify-dot {
+  background: var(--lunmi-accent);
+  border-color: var(--lunmi-accent);
+}
+
+/* Opções ----------------------------------------------------------------- */
+
+.lunmi-app-options {
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 12px;
+  background: var(--lunmi-bg-card-subtle);
+}
+
+.lunmi-app-options summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--lunmi-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.lunmi-app-options summary::-webkit-details-marker {
+  display: none;
+}
+
+.lunmi-app-options summary > svg {
+  margin-left: auto;
+  transition: transform 160ms ease;
+}
+
+.lunmi-app-options[open] summary > svg {
+  transform: rotate(90deg);
+}
+
+.lunmi-app-options[open] summary {
+  color: var(--lunmi-text-primary);
+}
+
+.lunmi-app-options .lunmi-app-actions {
+  margin-top: 0;
+}
+
+.lunmi-app-options .lunmi-app-card-note {
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+@media (max-width: 700px) {
+  .lunmi-app-subcard {
+    padding: 12px;
+  }
+
+  .lunmi-spotify-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lunmi-app-options summary > svg {
+    transition: none;
+  }
+}

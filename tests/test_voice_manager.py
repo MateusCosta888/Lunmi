@@ -355,3 +355,56 @@ def test_events_never_carry_speech_text_and_close_kills_the_worker(tmp_path: Pat
         assert set(event) == EVENT_KEYS
         assert "Texto privado" not in json.dumps(event, ensure_ascii=False)
     assert os.path.exists(prefs_path(tmp_path / "root"))
+
+
+WARMUP_WORKER = """\
+import json, sys
+for line in sys.stdin:
+    try:
+        data = json.loads(line)
+    except Exception:
+        continue
+    kind = data.get("type")
+    if kind == "warmup":
+        print(json.dumps({"type": "warmup_done"}), flush=True)
+    elif kind == "shutdown":
+        break
+"""
+
+SILENT_WARMUP_WORKER = """\
+import json, sys
+for line in sys.stdin:
+    try:
+        json.loads(line)
+    except Exception:
+        pass
+"""
+
+
+def test_warmup_loads_tts_without_audio_or_state_events(tmp_path: Path) -> None:
+    worker = _script_with_body(tmp_path, WARMUP_WORKER, "warmup_worker.py")
+    manager, events = make_manager(tmp_path, worker)
+    assert manager.warm_up(timeout=2.0) == ("ready", "")
+    assert manager.worker_pid is not None
+    assert events == []  # warmup não publica voz nem muda enabled/auto_speak
+    assert manager.snapshot()["state"] == "disabled"
+    manager.close()
+
+
+def test_warmup_timeout_is_finite_and_terminates_the_worker(tmp_path: Path) -> None:
+    worker = _script_with_body(tmp_path, SILENT_WARMUP_WORKER, "silent_warmup.py")
+    manager, events = make_manager(tmp_path, worker)
+    state, message = manager.warm_up(timeout=0.15)
+    assert state == "error"
+    assert "demorou" in message
+    assert manager.worker_pid is None
+    assert events == []
+    manager.close()
+
+
+def test_warmup_unavailable_runtime_never_spawns(tmp_path: Path) -> None:
+    worker = _script_with_body(tmp_path, WARMUP_WORKER, "warmup_worker2.py")
+    manager, _ = make_manager(tmp_path, worker, available=False)
+    assert manager.warm_up(timeout=0.2) == ("unavailable", MESSAGE_UNAVAILABLE)
+    assert manager.worker_pid is None
+    manager.close()

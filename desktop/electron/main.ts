@@ -27,6 +27,7 @@ import {
   Tray,
 } from "electron";
 import { CELESTIAL_COLORS, getTheme } from "../src/shared/theme";
+import { BackgroundVoiceTurn, nodeVoicePhase } from "./voice-node";
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
@@ -76,6 +77,8 @@ import type {
   PresenceEventDto,
   PresenceMode,
   PresenceSnapshotDto,
+  VoiceInputHoldPhaseDto,
+  VoiceInputShortcutResultDto,
   VoiceStateEventDto,
 } from "../src/shared/types";
 import { PythonBackendSupervisor, resolvePythonExecutable } from "./backend";
@@ -102,6 +105,13 @@ import {
 } from "./presence";
 import { applyProjectionCommand, ChatProjectionStore } from "./chat-projection";
 import { CompanionManager, type CompanionSnapshot } from "./companion";
+import {
+  parseVoiceShortcutSetRequest,
+  sameVoiceShortcut,
+  VoiceInputShortcutStore,
+} from "./voice-shortcut";
+import { VoiceHoldCoordinator, VoiceHotkeyObserver } from "./voice-hotkey";
+import { createWebSourceOpenHandler, WebSourceOpener } from "./web-source-open";
 
 export { resolvePythonExecutable };
 
@@ -179,7 +189,16 @@ let nodeGestureSeq = 0;
 let nodeExpiredDone: NodeDoneExpiry | null = null;
 let lastSession: SessionReadyPayload | null = null;
 let lastVoiceState: VoiceStateEventDto | null = null;
+/** Atalho próprio do ditado; prefs e registo separados do Node. */
+let voiceShortcutStore: VoiceInputShortcutStore | null = null;
+/** Supervisor do helper WH_KEYBOARD_LL; prefs e registo separados do Node. */
+let voiceHotkey: VoiceHotkeyObserver | null = null;
+/** Fases hold sanitizadas; o renderer único decide start/finish/chat.send. */
+let voiceHoldCoordinator: VoiceHoldCoordinator | null = null;
+const backgroundVoice = new BackgroundVoiceTurn();
 let draft = "";
+const conversationDrafts = new Map<string, string>();
+let draftConversationId = '';
 let pendingChatDelta: ChatProjectionDeltaDto | null = null;
 let chatDeltaTimer: NodeJS.Timeout | null = null;
 let mainRendererReady = false;
@@ -211,6 +230,11 @@ export const COMPANION_COMMANDS = new Set<string>([
 ]);
 
 const EMPTY_CHAT_PROJECTION: ChatProjectionDto = projectChat(createChatProjection(""));
+
+/** WEB-SEARCH-V1: abertura de fontes por gesto; dedupe in-flight vive nesta instância. */
+const webSourceOpener = new WebSourceOpener({
+  openExternal: (url) => shell.openExternal(url),
+});
 
 function elapsedMs(): number {
   return Number((Number(process.hrtime.bigint() - bootStartHr) / 1_000_000).toFixed(2));
@@ -361,6 +385,7 @@ function presenceMode(): PresenceMode {
 
 function nodeStateDto(): NodeStateDto {
   const status = effectiveNodeStatus(nodeStatus, presencePrefs.node.show_activity);
+  const voicePhase = nodeVoicePhase(backgroundVoice.phase, status);
   return {
     v: 1,
     enabled: presencePrefs.node.enabled,
@@ -370,8 +395,9 @@ function nodeStateDto(): NodeStateDto {
     transition_id: companionSnapshot.transition_id,
     transition: companionSnapshot.transition,
     status,
-    tone: nodeToneFor(status),
+    tone: voicePhase === "error" ? "error" : voicePhase ? "working" : nodeToneFor(status),
     session_id: lastSession?.session_id ?? null,
+    voice_phase: voicePhase,
   };
 }
 
@@ -447,6 +473,12 @@ function applyNodeSurfacePolicy(): void {
   if (!manager || !win || win.isDestroyed() || !win.isVisible() || !presencePrefs.node.enabled) {
     return;
   }
+  const voicePhase = backgroundVoice.phase;
+  if (voicePhase && nodeStatus !== "needs_confirm" && nodeStatus !== "needs_input") {
+    manager.setSurface(voicePhase === "error" ? "attention" : "pill", { focus: false });
+    nodePillAutomatic = voicePhase !== "error";
+    return;
+  }
   const target = nodeSurfaceForStatus({
     status: nodeStatus,
     show_activity: presencePrefs.node.show_activity,
@@ -502,6 +534,15 @@ function broadcastPresence(event: PresenceEventDto): void {
  * mensagens por ordem.
  */
 function publishChatDelta(delta: ChatProjectionDeltaDto): void {
+  if (delta.reset && !delta.conversation_id) {
+    conversationDrafts.clear();
+    draftConversationId = '';
+    setDraft('');
+  } else if (delta.conversation_id && delta.conversation_id !== draftConversationId) {
+    if (draftConversationId) conversationDrafts.set(draftConversationId, draft);
+    draftConversationId = delta.conversation_id;
+    setDraft(conversationDrafts.get(draftConversationId) ?? '');
+  }
   // Toda a mudança da projeção passa aqui: é o único sítio onde o passivo N4 é sincronizado,
   // antes mesmo do coalescer, para a janela nunca aceitar um tick depois de a tarefa arrancar.
   syncNodePassive();
@@ -561,6 +602,7 @@ function deliverShellRoute(view: "chat" | "preferences"): void {
 
 function showMainWindow(route?: "chat" | "preferences"): void {
   if (quitting) return;
+  backgroundVoice.dismiss();
   companionManager?.hide();
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
@@ -684,9 +726,129 @@ type PowerMonitorLike = {
   on(event: "suspend", listener: () => void): unknown;
 };
 
-export function registerPowerVoiceGuards(monitor: PowerMonitorLike, stop: () => void): void {
-  monitor.on("lock-screen", stop);
-  monitor.on("suspend", stop);
+/**
+ * Bloqueio/suspensão cancelam primeiro a captura e só depois a fala. Nenhum evento de regresso
+ * é ligado: voltar do bloqueio não abre microfone nem retoma o TTS.
+ */
+export function registerPowerVoiceGuards(
+  monitor: PowerMonitorLike,
+  stop: () => void,
+  cancelInput?: () => void
+): void {
+  const onSuspend = () => {
+    cancelInput?.();
+    stop();
+  };
+  monitor.on("lock-screen", onSuspend);
+  monitor.on("suspend", onSuspend);
+}
+
+// ---------------------------------------------------------------------------
+// VOICE REFINEMENTS V2: fases hold main-only (sem start/finish/chat.send)
+// ---------------------------------------------------------------------------
+
+function publishVoiceHoldPhase(phase: VoiceInputHoldPhaseDto): void {
+  const background = !mainWindow?.isVisible() && presencePrefs.resident && presencePrefs.node.enabled;
+  if (background && phase.phase === "pressed") nodeGestureSeq += 1;
+  backgroundVoice.hold(phase, background);
+  refreshBackgroundVoice();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  try {
+    mainWindow.webContents.send("lunmi:voice-input-hold", phase);
+  } catch {
+    // janela em destruição: a fase seguinte volta a ser tentada
+  }
+}
+
+/**
+ * Cancelamento de ciclo de vida (lock/suspend/quit/restart/shutdown): finito e sem retoma.
+ * No maximo uma chamada `voice.input.cancel`; nunca sintetiza release, finish ou envio.
+ */
+async function cancelVoiceInputCapture(): Promise<void> {
+  if (!backendSupervisor?.isRunning) {
+    return;
+  }
+  try {
+    await backendSupervisor._sendInternalCommand("voice.input.cancel", {}, 4000);
+  } catch {
+    // captura já inativa, árvore morta ou sessão em encerramento: nada a retomar
+  }
+}
+
+/**
+ * Um único `voice.input.cancel` por ciclo de vida: se havia gesto hold, o coordenador já o
+ * envia; se não havia, ainda pode existir ditado manual para cancelar. Nunca sintetiza release.
+ */
+function cancelVoiceInputForLifecycle(): void | Promise<void> {
+  backgroundVoice.reset();
+  refreshBackgroundVoice();
+  const holdActive = voiceHoldCoordinator?.isActive() === true;
+  const pending = voiceHoldCoordinator?.cancel("lifecycle");
+  return holdActive ? pending : cancelVoiceInputCapture();
+}
+
+/** A completed, acknowledged voice task reveals only its already projected conversation. */
+function refreshBackgroundVoice(): void {
+  if (backgroundVoice.takeCompleted() && !quitting && !mainWindow?.isVisible() &&
+      presencePrefs.resident && presencePrefs.node.enabled) {
+    syncNodePassive();
+    if (!nodePassive) companionManager?.setSurface("chat", { focus: false });
+  }
+  if (backgroundVoice.phase && !mainWindow?.isVisible() && presencePrefs.resident &&
+      presencePrefs.node.enabled && !companionManager) ensureCompanion("pill");
+  applyNodeSurfacePolicy();
+  publishNode();
+}
+
+function setupVoiceInputShortcutIpc(): void {
+  ipcMain.handle("lunmi:voice-input-shortcut-get", async (event) => {
+    if (!isTrustedMain(event)) {
+      throw new Error("Sender não autorizado.");
+    }
+    return voiceShortcutStore
+      ? await voiceShortcutStore.get()
+      : { accelerator: null, error: "" };
+  });
+
+  ipcMain.handle("lunmi:voice-input-shortcut-set", async (event, args: unknown) => {
+    if (!isTrustedMain(event)) {
+      throw new Error("Sender não autorizado.");
+    }
+    if (!voiceShortcutStore) {
+      return { accelerator: null, error: "io_error" } satisfies VoiceInputShortcutResultDto;
+    }
+    const request = parseVoiceShortcutSetRequest(args);
+    if (!request.ok) {
+      return {
+        accelerator: (await voiceShortcutStore.get()).accelerator,
+        error: "invalid_shortcut",
+      } satisfies VoiceInputShortcutResultDto;
+    }
+    // Alterar o atalho nunca pode autorizar um release pendente do gesto antigo.
+    voiceHoldCoordinator?.cancel("reconfigured");
+    return voiceShortcutStore.set(request.accelerator);
+  });
+
+  ipcMain.handle("lunmi:voice-input-shortcut-pause", async (event) => {
+    if (!isTrustedMain(event)) {
+      throw new Error("Sender não autorizado.");
+    }
+    voiceHoldCoordinator?.cancel("pause");
+    return voiceShortcutStore
+      ? await voiceShortcutStore.pause()
+      : { ok: false, error: "hold_unavailable" };
+  });
+
+  ipcMain.handle("lunmi:voice-input-shortcut-resume", async (event) => {
+    if (!isTrustedMain(event)) {
+      throw new Error("Sender não autorizado.");
+    }
+    return voiceShortcutStore
+      ? await voiceShortcutStore.resume()
+      : { ok: false, error: "hold_unavailable" };
+  });
 }
 
 /**
@@ -696,14 +858,25 @@ export function registerPowerVoiceGuards(monitor: PowerMonitorLike, stop: () => 
  */
 async function dispatchRendererCommand(
   type: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  fromMain = false
 ): Promise<Record<string, unknown>> {
   if (!backendSupervisor) {
     throw new Error("Bridge não inicializada.");
   }
   // Sessão original do pedido: um ACK que chega depois de um reinício não toca na sessão nova.
   const sessionId = chatProjection?.sessionId;
-  const result = await backendSupervisor.sendRendererCommand(type, payload);
+  const ticket = backgroundVoice.begin(type, payload, fromMain);
+  let result: Record<string, unknown>;
+  try {
+    result = await backendSupervisor.sendRendererCommand(type, payload);
+    backgroundVoice.end(type, result, ticket);
+  } catch (error) {
+    backgroundVoice.failed(ticket);
+    refreshBackgroundVoice();
+    throw error;
+  }
+  refreshBackgroundVoice();
   if (chatProjection) {
     applyProjectionCommand(chatProjection, type, payload, result ?? null, sessionId);
   }
@@ -732,6 +905,10 @@ async function applyPresenceAction(
       resident: presencePrefs.resident,
       error: NODE_PASSIVE_REASON,
     };
+  }
+  if (["show-main", "show-settings", "hide-mini", "toggle-mini", "node-open", "node-close", "node-dock", "quit"].includes(action)) {
+    backgroundVoice.dismiss();
+    publishNode();
   }
   let error: string | undefined;
   switch (action) {
@@ -881,6 +1058,7 @@ function applyNodeShortcutChange(
  */
 function applyNodeRuntimeChange(previous: NodePreferencesDto, next: NodePreferencesDto): void {
   if (!next.enabled) {
+    backgroundVoice.dismiss();
     companionManager?.destroy();
     companionManager = null;
     nodePillAutomatic = false;
@@ -922,7 +1100,28 @@ function isTrustedCompanion(event: IpcMainInvokeEvent): boolean {
   return isTrustedSenderFrame(event, companionManager?.window ?? null, expectedIndexFileUrl);
 }
 
+/** Janela confiável para uma operação de presença; `null` para um sender hostil. */
+function trustedPresenceWindow(event: IpcMainInvokeEvent): BrowserWindow | null {
+  if (isTrustedMain(event)) {
+    return mainWindow;
+  }
+  if (isTrustedCompanion(event)) {
+    return companionManager?.window ?? null;
+  }
+  return null;
+}
+
 function setupPresenceIpc(): void {
+  // WEB-SEARCH-V1: o renderer envia só IDs; a URL sai da projeção canónica em RAM.
+  ipcMain.handle(
+    "lunmi:web-open-source",
+    createWebSourceOpenHandler({
+      trustedWindow: (event) => trustedPresenceWindow(event as IpcMainInvokeEvent),
+      snapshot: () => chatProjection?.snapshot() ?? null,
+      opener: webSourceOpener,
+    })
+  );
+
   ipcMain.handle("lunmi:presence-snapshot", (event) => {
     if (!isTrustedMain(event) && !isTrustedCompanion(event)) {
       throw new Error("Sender não autorizado.");
@@ -966,13 +1165,14 @@ function setupPresenceIpc(): void {
     return applyPresenceAction(action, fromCompanion);
   });
 
-  ipcMain.handle("lunmi:presence-draft", (event, args: { text?: unknown }) => {
+  ipcMain.handle("lunmi:presence-draft", (event, args: { text?: unknown; conversation_id?: unknown }) => {
     if (!isTrustedMain(event) && !isTrustedCompanion(event)) {
       throw new Error("Sender não autorizado.");
     }
     if (typeof args?.text !== "string") {
       return { ok: false };
     }
+    if (args.conversation_id !== undefined && args.conversation_id !== draftConversationId) return { ok: false };
     setDraft(args.text);
     return { ok: true };
   });
@@ -1129,6 +1329,9 @@ function requestQuit(): Promise<void> {
       // atalho já livre
     }
   }
+  // Atalho próprio do ditado: cancelar a fase e libertar sem tocar nas preferências (Node intacto).
+  const voiceCancel = cancelVoiceInputForLifecycle();
+  voiceShortcutStore?.dispose();
   companionManager?.destroy();
   companionManager = null;
   try {
@@ -1139,6 +1342,8 @@ function requestQuit(): Promise<void> {
   tray = null;
   quitPromise = (async () => {
     try {
+      // Cancelar a captura antes de fechar a bridge; nada é retomado ao voltar a abrir.
+      await voiceCancel;
       await backendSupervisor?.shutdown();
     } catch {
       // o supervisor já tem fallback de kill; sair não pode ficar preso
@@ -1250,6 +1455,7 @@ function setupIpc(): void {
     handshakeCompletedMs = elapsedMs();
     lastSession = ready;
     chatProjection?.syncSession(ready);
+    if (ready.capabilities.chat_history) await backendSupervisor.sendRendererCommand('chat.history.get', {});
     broadcastPresence({ type: "session", session: ready });
     if (
       process.env.LUNMI_BENCH_OUT &&
@@ -1346,7 +1552,7 @@ function setupIpc(): void {
         });
       }
 
-      return dispatchRendererCommand(args.type, payload);
+      return dispatchRendererCommand(args.type, payload, true);
     }
   );
 
@@ -1499,6 +1705,8 @@ function setupIpc(): void {
     }
     // Reinício explícito do backend: refaz apenas o handshake numa sessão nova.
     // Não reexecuta nenhuma instrução anterior — repetir a tarefa é decisão do usuário.
+    // A captura fecha antes de a árvore morrer e nunca é retomada na sessão nova.
+    await cancelVoiceInputCapture();
     const ready = await backendSupervisor.restart();
     handshakeCompletedMs = elapsedMs();
     lastSession = ready;
@@ -1506,6 +1714,7 @@ function setupIpc(): void {
       setDraft("");
       lastVoiceState = null;
     }
+    if (ready.capabilities.chat_history) await backendSupervisor.sendRendererCommand('chat.history.get', {});
     broadcastPresence({ type: "session", session: ready });
     return ready;
   });
@@ -1517,6 +1726,7 @@ function setupIpc(): void {
     if (!backendSupervisor) {
       return { status: "stopped", session_id: "" };
     }
+    await cancelVoiceInputCapture();
     return backendSupervisor.shutdown();
   });
 }
@@ -1570,6 +1780,23 @@ function isElectronMainRuntime(): boolean {
   return Boolean(process.versions?.electron) && Boolean(app) && typeof app.whenReady === "function";
 }
 
+/** Conflito de conjunto canónico com o atalho atual do Node; o Node fica sempre intacto. */
+function nodeShortcutConflicts(canonical: string): boolean {
+  const shortcut = presencePrefs.node.shortcut;
+  if (!shortcut) {
+    return false;
+  }
+  if (sameVoiceShortcut(canonical, shortcut)) {
+    return true;
+  }
+  // Electron aceita aliases que não fazem parte da gramática do helper; no Windows
+  // CommandOrControl/CmdOrCtrl são Ctrl e Command/Cmd são Super.
+  const normalized = shortcut
+    .replace(/CommandOrControl|CmdOrCtrl/g, "Ctrl")
+    .replace(/Command|Cmd/g, "Super");
+  return normalized !== shortcut && sameVoiceShortcut(canonical, normalized);
+}
+
 function bootstrap(): void {
   nativeTheme.themeSource = "dark";
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => {
@@ -1589,6 +1816,25 @@ function bootstrap(): void {
   appliedPrefs = readPreferencesFile(prefsLocalDir);
   presencePrefs = readPresenceFile(presenceLocalDir);
   chatProjection = new ChatProjectionStore(publishChatDelta);
+  // VOICE REFINEMENTS V2: helper Windows owned; prefs e registo separados do Node.
+  voiceHoldCoordinator = new VoiceHoldCoordinator({
+    getSessionId: () => lastSession?.session_id ?? null,
+    isQuitting: () => quitting,
+    publish: publishVoiceHoldPhase,
+    cancelCapture: () => cancelVoiceInputCapture(),
+    showMain: (phase) => {
+      if (!backgroundVoice.backgroundRelease(phase)) showMainWindow("chat");
+    },
+  });
+  voiceHotkey = new VoiceHotkeyObserver({
+    python: resolvePythonExecutable(repoRoot, resourcesRoot),
+    cwd: repoRoot,
+    onPhase: (phase, reason) => voiceHoldCoordinator?.onPhase(phase, reason),
+    onFailure: () => voiceShortcutStore?.handleObserverFailure(),
+  });
+  voiceShortcutStore = new VoiceInputShortcutStore(prefsLocalDir, voiceHotkey, {
+    nodeConflict: (canonical) => nodeShortcutConflicts(canonical),
+  });
 
   backendSupervisor = new PythonBackendSupervisor({
     repoRoot,
@@ -1605,7 +1851,13 @@ function bootstrap(): void {
     onEvent: (envelope) => {
       if (envelope.type === "session.ready") {
         const payload = envelope.payload as unknown as SessionReadyPayload;
+        const newSession = lastSession?.session_id !== payload.session_id;
         lastSession = payload;
+        // Sessão nova: nenhuma geração/gesto da sessão antiga sobrevive.
+        if (newSession) {
+          voiceHoldCoordinator?.sessionChanged();
+          backgroundVoice.reset();
+        }
         if (chatProjection?.syncSession(payload)) {
           setDraft("");
           lastVoiceState = null;
@@ -1618,12 +1870,31 @@ function bootstrap(): void {
         const code = (envelope.payload as Record<string, unknown>).code;
         if (typeof code === "string" && BACKEND_FAILURE_CODES.has(code)) {
           lastSession = null;
+          backgroundVoice.reset();
+          voiceHoldCoordinator?.sessionChanged();
           broadcastPresence({ type: "session", session: null });
           refreshNodeStatus();
           publishNode();
         }
       }
       chatProjection?.apply(envelope);
+      if (envelope.type === "voice.input.state") {
+        const input = envelope.payload as Record<string, unknown>;
+        if (input.session_id === lastSession?.session_id) backgroundVoice.input(input);
+        refreshBackgroundVoice();
+      } else if (envelope.type === "task.started") {
+        backgroundVoice.taskStarted((envelope.payload as Record<string, unknown>).task_id);
+      } else if (envelope.type === "task.cancelled") {
+        backgroundVoice.cancelledTask((envelope.payload as Record<string, unknown>).task_id);
+        refreshBackgroundVoice();
+      } else if (envelope.type === "task.finished") {
+        const finished = envelope.payload as Record<string, unknown>;
+        const canonical = chatProjection?.snapshot().task ?? null;
+        const result = canonical && canonical.task_id === finished.task_id ? canonical.result : null;
+        // A projeção canónica é a autoridade: sem resultado correspondente não há mini chat.
+        backgroundVoice.finished(finished.task_id, result?.status);
+        refreshBackgroundVoice();
+      }
       if (envelope.type === "voice.state") {
         lastVoiceState = envelope.payload as unknown as VoiceStateEventDto;
         sendPresenceTo(companionManager?.window ?? null, { type: "voice", state: lastVoiceState });
@@ -1636,18 +1907,28 @@ function bootstrap(): void {
 
   setupIpc();
   setupPresenceIpc();
+  setupVoiceInputShortcutIpc();
   mainWindow = createWindow();
   setupTray();
-  // Windows a bloquear ou a suspender: parar fala e invalidar buffers; nada retoma sozinho.
-  registerPowerVoiceGuards(powerMonitor, () => {
-    void stopVoice();
-  });
+  // Windows a bloquear ou a suspender: cancelar captura e parar fala; nada retoma sozinho.
+  registerPowerVoiceGuards(
+    powerMonitor,
+    () => {
+      void stopVoice();
+    },
+    () => {
+      // A fase hold é cancelada e o backend fecha imediatamente; o renderer não é necessário.
+      void cancelVoiceInputForLifecycle();
+    }
+  );
 
   // N1: atalho guardado. Se o sistema o recusar no arranque, não fica anunciado como ativo.
   if (presencePrefs.node.shortcut && !registerNodeShortcut(presencePrefs.node.shortcut)) {
     presencePrefs = { ...presencePrefs, node: { ...presencePrefs.node, shortcut: null } };
     persistPresence();
   }
+  // Regista o atalho de ditado depois do Node: um conflito limpa só o ditado, nunca o Node.
+  void voiceShortcutStore.load();
 
   // Envelope do Node é recalculado no ecrã atual; uma transição em curso é descartada, sem replay.
   const retargetNode = () => {
@@ -1709,6 +1990,8 @@ if (isElectronMainRuntime()) {
     (app as WindowsSessionEndApp).on("session-end", () => {
       // Windows a desligar: limpeza síncrona possível; nenhuma promessa de JS de cleanup.
       quitting = true;
+      void cancelVoiceInputForLifecycle();
+      voiceShortcutStore?.dispose();
       companionManager?.destroy();
       companionManager = null;
       try {

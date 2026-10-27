@@ -197,7 +197,8 @@ def test_core_layers_do_not_branch_on_vendor_names() -> None:
     """
     root = Path(__file__).resolve().parents[1] / "app"
     vendors = ("codex", "openai", "anthropic", "gemini", "openrouter", "nvidia", "custom",
-               "ollama", "lmstudio", "vllm", "claude", "agy", "qoder", "kilo", "kiro", "opencode")
+               "ollama", "lmstudio", "vllm", "claude", "agy", "qoder", "kilo", "kiro", "opencode",
+               "freepi")
     offenders: list[str] = []
     for folder in ("core", "computer", "ui"):
         for path in (root / folder).rglob("*.py"):

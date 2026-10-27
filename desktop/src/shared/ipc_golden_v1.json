@@ -16,87 +16,360 @@
   },
   "default_capabilities": {
     "converse": false,
+    "chat_history": false,
     "execute": false,
+    "auto": false,
     "memory": false,
     "brain": false,
+    "integrations": false,
     "file_read": false,
+    "spotify": false,
+    "voice_input": false,
     "web_search": false,
-    "browser_use": false,
-    "auto": false,
-    "integrations": false
+    "browser_use": false
   },
   "commands": [
-    "session.hello",
-    "integrations.get",
-    "integrations.connect",
-    "integrations.cancel",
-    "integrations.select",
-    "integrations.disconnect",
-    "chat.send",
-    "task.cancel",
-    "task.confirm",
-    "task.answer",
-    "fs.read",
-    "brain.list",
-    "brain.get",
-    "brain.set",
-    "brain.verify",
-    "brain.probe",
+    "app.shutdown",
     "approval.get",
     "approval.set",
-    "memory.list",
-    "memory.search",
-    "memory.upsert",
-    "memory.delete",
-    "memory.proposals",
-    "memory.propose",
+    "brain.get",
+    "brain.list",
+    "brain.probe",
+    "brain.set",
+    "brain.verify",
+    "chat.history.clear",
+    "chat.history.create",
+    "chat.history.delete",
+    "chat.history.get",
+    "chat.history.list",
+    "chat.history.options.get",
+    "chat.history.options.set",
+    "chat.history.read",
+    "chat.history.rename",
+    "chat.history.select",
+    "chat.send",
+    "fs.read",
+    "integrations.cancel",
+    "integrations.connect",
+    "integrations.disconnect",
+    "integrations.get",
+    "integrations.select",
     "memory.accept",
-    "memory.reject",
+    "memory.delete",
     "memory.export",
     "memory.import",
-    "memory.wipe",
+    "memory.list",
     "memory.options.get",
     "memory.options.set",
     "memory.profile.get",
     "memory.profile.save",
     "memory.profile.undo",
+    "memory.proposals",
+    "memory.propose",
+    "memory.reject",
+    "memory.search",
+    "memory.upsert",
+    "memory.wipe",
+    "session.hello",
+    "spotify.apply",
+    "spotify.cancel",
+    "spotify.connect",
+    "spotify.disconnect",
+    "spotify.get",
+    "spotify.open",
+    "spotify.plan",
+    "task.answer",
+    "task.cancel",
+    "task.confirm",
     "ui.preferences.get",
     "ui.preferences.set",
     "voice.get",
+    "voice.input.cancel",
+    "voice.input.finish",
+    "voice.input.get",
+    "voice.input.result",
+    "voice.input.start",
     "voice.set",
-    "voice.test",
     "voice.speak_last",
     "voice.stop",
-    "app.shutdown"
+    "voice.test",
+    "voice.warmup",
+    "voice.warmup.get",
+    "web.get",
+    "web.set"
   ],
   "responses": [
     "command.result",
     "command.error"
   ],
   "events": [
+    "brain.updated",
+    "chat.history.changed",
+    "chat.message",
     "integrations.changed",
+    "log.append",
+    "memory.changed",
+    "operation.finished",
+    "operation.started",
+    "response.cancelled",
+    "response.completed",
+    "response.error",
     "response.started",
     "response.text.delta",
     "response.text.stable",
-    "operation.started",
-    "operation.finished",
-    "response.completed",
-    "response.error",
-    "response.cancelled",
     "session.ready",
-    "chat.message",
-    "task.started",
-    "task.progress",
+    "spotify.changed",
+    "task.cancelled",
+    "task.error",
     "task.finished",
     "task.need_confirm",
     "task.need_input",
-    "task.cancelled",
-    "task.error",
-    "brain.updated",
-    "memory.changed",
+    "task.progress",
+    "task.started",
+    "voice.input.state",
+    "voice.readiness",
     "voice.state",
-    "log.append"
+    "web.changed"
   ],
+  "spotify": {
+    "capability": "spotify",
+    "event": "spotify.changed",
+    "commands": [
+      "spotify.get",
+      "spotify.plan",
+      "spotify.apply",
+      "spotify.cancel",
+      "spotify.connect",
+      "spotify.disconnect",
+      "spotify.open"
+    ],
+    "command_payloads": {
+      "spotify.get": [],
+      "spotify.plan": [
+        "action"
+      ],
+      "spotify.apply": [
+        "consent_id"
+      ],
+      "spotify.cancel": [
+        "job_id"
+      ],
+      "spotify.connect": [],
+      "spotify.disconnect": [],
+      "spotify.open": [
+        "target"
+      ]
+    },
+    "result_keys": {
+      "spotify.get": [
+        "spotify"
+      ],
+      "spotify.plan": [
+        "plan",
+        "consent"
+      ],
+      "spotify.apply": [
+        "accepted",
+        "job_id",
+        "epoch"
+      ],
+      "spotify.cancel": [
+        "cancelled",
+        "reason"
+      ],
+      "spotify.connect": [
+        "spotify"
+      ],
+      "spotify.disconnect": [
+        "spotify"
+      ],
+      "spotify.open": [
+        "opened"
+      ]
+    },
+    "states": {
+      "setup": [
+        "absent",
+        "unsupported",
+        "not_configured",
+        "configured",
+        "needs_repair"
+      ],
+      "connection": [
+        "disabled",
+        "connecting",
+        "connected",
+        "disconnected",
+        "failed"
+      ],
+      "device": [
+        "unknown",
+        "local",
+        "remote"
+      ]
+    },
+    "actions": [
+      "install",
+      "repair",
+      "remove"
+    ],
+    "stages": [
+      "detect",
+      "review",
+      "obtain",
+      "backup",
+      "apply",
+      "pair",
+      "verify",
+      "rollback"
+    ],
+    "job_statuses": [
+      "running",
+      "done",
+      "failed",
+      "cancelled",
+      "interrupted"
+    ],
+    "cancel_reasons": [
+      "cancelled",
+      "no_such_job",
+      "already_finished"
+    ],
+    "open_targets": [
+      "app",
+      "download"
+    ],
+    "detection": {
+      "app": [
+        "absent",
+        "win32",
+        "store",
+        "other"
+      ],
+      "version": [
+        "supported",
+        "newer",
+        "older",
+        "unknown"
+      ],
+      "architecture": [
+        "x64",
+        "arm64",
+        "x86",
+        "unknown"
+      ],
+      "cli": [
+        "missing",
+        "pinned",
+        "other"
+      ],
+      "link": [
+        "absent",
+        "present",
+        "unknown"
+      ]
+    },
+    "error_codes": [
+      "invalid_payload",
+      "not_implemented",
+      "consent_invalid",
+      "consent_expired",
+      "consent_replayed",
+      "job_busy",
+      "unavailable",
+      "not_configured",
+      "spotify_missing",
+      "store_unsupported",
+      "arm_unsupported",
+      "policy_blocked",
+      "write_denied",
+      "disk_space",
+      "offline",
+      "cli_unavailable",
+      "signature_invalid",
+      "hash_mismatch",
+      "version_unsupported",
+      "close_refused",
+      "not_ready",
+      "port_in_use",
+      "profile_unsafe",
+      "interrupted",
+      "job_cancelled",
+      "rollback_failed"
+    ],
+    "dto_keys": {
+      "state": [
+        "setup",
+        "connection",
+        "device",
+        "revision",
+        "epoch",
+        "job",
+        "detection",
+        "error"
+      ],
+      "detection": [
+        "app",
+        "version",
+        "architecture",
+        "cli",
+        "link",
+        "app_running"
+      ],
+      "job": [
+        "id",
+        "action",
+        "stage",
+        "status",
+        "error_code"
+      ],
+      "error": [
+        "code",
+        "retryable"
+      ],
+      "plan": [
+        "action",
+        "plan_hash",
+        "steps",
+        "changes",
+        "requires",
+        "expires_in",
+        "version_pin",
+        "cli_version"
+      ],
+      "plan_changes": [
+        "adds_link",
+        "replaces_files",
+        "backup_bytes"
+      ],
+      "plan_requires": [
+        "close_spotify",
+        "network",
+        "elevation"
+      ],
+      "consent": [
+        "consent_id",
+        "expires_in"
+      ],
+      "changed": [
+        "session_id",
+        "spotify"
+      ]
+    },
+    "patterns": {
+      "session_id": "^sess-[0-9a-f]{16}$",
+      "consent_id": "^cns-[0-9a-f]{32}$",
+      "job_id": "^spj-[0-9a-f]{16}$",
+      "plan_hash": "^[0-9a-f]{64}$"
+    },
+    "pins": {
+      "spotify": "1.3.5.3058",
+      "cli": "2.46.2",
+      "consent_ttl_seconds": 600,
+      "activation_ttl_seconds": 15,
+      "loopback_port": 45871
+    }
+  },
   "examples": {
     "hello_command": {
       "v": 1,
@@ -124,6 +397,8 @@
           "memory": false,
           "brain": false,
           "file_read": false,
+          "spotify": false,
+          "voice_input": false,
           "web_search": false,
           "browser_use": false,
           "auto": false,

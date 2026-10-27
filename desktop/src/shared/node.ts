@@ -147,6 +147,7 @@ export const DEFAULT_NODE_PREFERENCES: NodePreferencesDto = Object.freeze({
   side: "right",
   auto_dock: true,
   show_activity: true,
+  chat_appearance: "theme",
   shortcut: null,
 });
 
@@ -733,6 +734,7 @@ export function parseNodePreferences(raw: unknown): NodePreferencesDto {
       : isValidNodeShortcut(source.shortcut)
         ? (source.shortcut as string)
         : DEFAULT_NODE_PREFERENCES.shortcut,
+    chat_appearance: source.chat_appearance === "black" ? "black" : "theme",
   };
 }
 
@@ -775,6 +777,12 @@ export function applyNodePreferencesPatch(
       return { ok: false, error: "invalid_payload" };
     }
     next.shortcut = patch.shortcut as string | null;
+  }
+  if ("chat_appearance" in patch) {
+    if (patch.chat_appearance !== "theme" && patch.chat_appearance !== "black") {
+      return { ok: false, error: "invalid_payload" };
+    }
+    next.chat_appearance = patch.chat_appearance;
   }
   return { ok: true, next };
 }

@@ -56,6 +56,12 @@ export class ChatProjectionStore {
     const outcome = resetChatProjection(this.state, session.session_id);
     this.state = outcome.state;
     this.publish(outcome.delta);
+    if (session.chat_history) {
+      this.apply({ v: 1, id: 'history-startup', type: 'chat.history.changed', payload: {
+        ...session.chat_history, session_id: session.session_id,
+        conversation_id: session.chat_history.conversation.id, reason: 'selected',
+      } });
+    }
     return true;
   }
 

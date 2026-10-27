@@ -9,6 +9,13 @@
  * de seleção (com modelo); escolha sempre por catálogo, sem input de ID; "(padrão do provider)"
  * só para providers com capacidade real (CLI); teclado no popover; AppAgent em provider diferente
  * não recebe a chave principal. Também mantém `consent: true` no probe e os painéis F2b.
+ *
+ * Redesign 2026-10-27 (settings-redesign): a escolha de provedor passou de dropdown para pílulas
+ * com marca real por grupo (API em nuvem / endpoint local / CLI local). As fixtures usam os
+ * valores CANÓNICOS do DTO (`kind`: `model_api`/`agent_runtime`; `location`: `cloud_api`/
+ * `local_endpoint`/`local_cli`) — os valores antigos (`api`/`cli`/`cloud`/`local_command`) não
+ * eram o contrato. As interações `fireEvent.change(select)` migraram para clique na pílula e a
+ * asserção de seleção para `aria-pressed`; nenhuma guarda de comportamento foi removida.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -65,8 +72,17 @@ const brainGet: BrainGetDto = {
     {
       id: "openai",
       label: "OpenAI",
-      kind: "api",
-      location: "cloud",
+      kind: "model_api",
+      location: "cloud_api",
+      requires_api_key: true,
+      supports_model_discovery: true,
+      supports_interactive_login: false,
+    },
+    {
+      id: "custom",
+      label: "OpenAI Compatible",
+      kind: "model_api",
+      location: "cloud_api",
       requires_api_key: true,
       supports_model_discovery: true,
       supports_interactive_login: false,
@@ -74,7 +90,7 @@ const brainGet: BrainGetDto = {
     {
       id: "ollama",
       label: "Ollama",
-      kind: "local",
+      kind: "model_api",
       location: "local_endpoint",
       requires_api_key: false,
       supports_model_discovery: true,
@@ -83,8 +99,8 @@ const brainGet: BrainGetDto = {
     {
       id: "claude-cli",
       label: "Claude CLI",
-      kind: "cli",
-      location: "local_command",
+      kind: "agent_runtime",
+      location: "local_cli",
       requires_api_key: false,
       supports_model_discovery: false,
       supports_interactive_login: true,
@@ -198,7 +214,8 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
     expect(fake.calls[0].type).toBe("brain.get");
     expect(fake.calls[0].payload).toEqual({});
     expect((screen.getByTestId("current-brain") as HTMLElement).textContent).toContain("gpt-4o");
-    expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("openai");
+    expect(screen.getByTestId("provider-select-btn-openai").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("provider-select-btn-ollama").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("brain.list vai com provider-alvo, role, force, base_url e model; api_key só quando há rascunho", async () => {
@@ -251,7 +268,7 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
     expect(screen.queryByTestId("model-select-option-default")).toBeNull();
     fireEvent.keyDown(screen.getByTestId("model-select-search"), { key: "Escape" });
 
-    fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "claude-cli" } });
+    fireEvent.click(screen.getByTestId("provider-select-btn-claude-cli"));
     await waitFor(() => expect(screen.queryByTestId("model-listing")).toBeNull());
     fireEvent.click(screen.getByTestId("list-models"));
     await screen.findByTestId("model-listing");
@@ -317,7 +334,9 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
 
     // troca explícita de provider limpa o rascunho do anterior
     fireEvent.change(screen.getByTestId("api-key"), { target: { value: "sk-sentinel-67890" } });
-    fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByTestId("provider-select-btn-ollama"));
+    expect(screen.queryByTestId("api-key")).toBeNull();
+    fireEvent.click(screen.getByTestId("provider-select-btn-openai"));
     await waitFor(() => expect((screen.getByTestId("api-key") as HTMLInputElement).value).toBe(""));
     expect(document.body.textContent ?? "").not.toContain("sk-sentinel-67890");
   });
@@ -326,7 +345,7 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
     const fake = makeFake();
     await rendered(fake);
     fireEvent.change(screen.getByTestId("api-key"), { target: { value: "sk-principal" } });
-    fireEvent.change(screen.getByTestId("app-provider-select"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByTestId("app-provider-select-btn-ollama"));
     await screen.findByTestId("app-credential-note");
 
     fireEvent.click(screen.getByTestId("list-app-models"));
@@ -340,7 +359,7 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
   it("transmite base_url explicitamente, inclusive vazio, para não manter silenciosamente o valor antigo", async () => {
     const fake = makeFake();
     await rendered(fake);
-    fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByTestId("provider-select-btn-ollama"));
     const baseUrlInput = await screen.findByTestId("base-url");
 
     fireEvent.click(screen.getByTestId("verify-button"));
@@ -380,7 +399,7 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
     await rendered(fake);
     fireEvent.click(screen.getByTestId("verify-button"));
     await waitFor(() => expect(callsOf(fake.calls, "brain.verify")).toHaveLength(1));
-    fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByTestId("provider-select-btn-ollama"));
     deferred.resolve(verifyResult);
     await waitFor(() =>
       expect((screen.getByTestId("brain-status") as HTMLElement).textContent ?? "").toMatch(/descartad/i)
@@ -394,7 +413,7 @@ describe("BrainPanel — fluxo BYOK (contrato 2026-10-17)", () => {
     await rendered(fake);
     fireEvent.click(screen.getByTestId("probe-button"));
     await waitFor(() => expect(callsOf(fake.calls, "brain.probe")).toHaveLength(1));
-    fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByTestId("provider-select-btn-ollama"));
     deferred.resolve(probeResult);
     await waitFor(() =>
       expect((screen.getByTestId("brain-status") as HTMLElement).textContent ?? "").toMatch(/descartad/i)
@@ -472,6 +491,93 @@ describe("B2 — seleção efetiva Host/App", () => {
     } });
     await waitFor(() => expect(screen.getByTestId("effective-brain").textContent).toContain("herda tudo do principal"));
     expect(fake.calls.length).toBe(before);
+  });
+});
+
+describe("BrainPanel — pílulas de provedor com marca real (redesign 2026-10-27)", () => {
+  it("sem dropdown: pílulas por grupo (API nuvem / endpoint local / CLI) e marca licenciada por id", async () => {
+    const fake = makeFake();
+    const { container } = render(<BrainPanel sendCommand={fake.sendCommand} session={session} />);
+    await screen.findByTestId("brain-panel");
+    expect(container.querySelectorAll("select")).toHaveLength(0); // nenhum dropdown de provedor
+    expect(screen.getByTestId("provider-select").getAttribute("role")).toBe("group");
+    expect(screen.getByTestId("provider-select-group-API em nuvem")).toBeTruthy();
+    expect(screen.getByTestId("provider-select-group-Endpoint local")).toBeTruthy();
+    expect(screen.getByTestId("provider-select-group-CLI local")).toBeTruthy();
+    // marca real (LobeHub lobe-icons, MIT) para ids conhecidos; glifo genérico para os outros
+    expect(screen.getByTestId("provider-select-icon-openai").getAttribute("data-mark")).toBe("OpenAI");
+    expect(screen.getByTestId("provider-select-icon-openai").tagName.toLowerCase()).toBe("svg");
+    expect(screen.getByTestId("provider-select-icon-custom").getAttribute("data-mark")).toBe("generic");
+    expect(screen.getByTestId("provider-select-icon-claude-cli").getAttribute("data-mark")).toBe("generic");
+    // o nome acessível do controlo vem do texto da pílula, não do glifo
+    expect(screen.getByTestId("provider-select-icon-openai").getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByTestId("provider-select-btn-openai").textContent).toContain("OpenAI");
+    expect(screen.getByTestId("provider-select-btn-claude-cli").textContent).toContain("Claude CLI");
+  });
+
+  it("escolher uma pílula é rascunho local: não envia comando, limpa modelo/chave do anterior", async () => {
+    const fake = makeFake();
+    await rendered(fake);
+    fireEvent.change(screen.getByTestId("api-key"), { target: { value: "sk-antes" } });
+    fireEvent.click(screen.getByTestId("provider-select-btn-ollama"));
+    expect(screen.queryByTestId("api-key")).toBeNull();
+    expect(screen.getByTestId("provider-select-btn-ollama").getAttribute("aria-pressed")).toBe("true"); // rascunho da seleção
+    expect(screen.getByTestId("provider-select-btn-openai").getAttribute("aria-pressed")).toBe("false");
+    expect(fake.calls.filter(c => c.type === "brain.set" || c.type === "brain.list")).toHaveLength(0);
+    // aplicar continua a ser o botão próprio; o endpoint do rascunho local aparece de imediato
+    expect(screen.getByTestId("base-url")).toBeTruthy();
+    expect(fake.calls.map(c => c.type)).toEqual(["brain.get"]);
+  });
+
+  it("só mostra controlos de chave quando o provedor os exige, preservando o endpoint local", async () => {
+    const fake = makeFake();
+    await rendered(fake);
+    expect(screen.getByTestId("api-key")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("provider-select-btn-claude-cli"));
+    expect(screen.queryByTestId("api-key")).toBeNull();
+    expect(screen.queryByTestId("api-key-clear")).toBeNull();
+    expect(screen.queryByTestId("remember-credentials")).toBeNull();
+    expect(screen.queryByText(/Após aplicar, a chave/)).toBeNull();
+    expect(screen.queryByTestId("base-url")).toBeNull();
+    fireEvent.click(screen.getByTestId("provider-select-btn-ollama"));
+    expect(screen.queryByTestId("api-key")).toBeNull();
+    expect(screen.getByTestId("base-url")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("provider-select-btn-openai"));
+    expect((screen.getByTestId("api-key") as HTMLInputElement).value).toBe("");
+    expect(screen.getByTestId("remember-credentials")).toBeTruthy();
+    expect(fake.calls.map(c => c.type)).toEqual(["brain.get"]);
+  });
+
+  it("provedor indisponível continua visível, desativado e com o motivo dito em texto", async () => {
+    const withAvailability = {
+      ...brainGet,
+      providers: brainGet.providers.map(p => p.id === "claude-cli"
+        ? { ...p, available: false, installed: false, unavailable_reason: "só corre em interface gráfica (TUI)." }
+        : p.id === "ollama" ? { ...p, available: true, installed: true } : p),
+    } as BrainGetDto;
+    const fake = makeFake({ "brain.get": withAvailability });
+    await rendered(fake);
+    const pill = screen.getByTestId("provider-select-btn-claude-cli") as HTMLButtonElement;
+    expect(pill.disabled).toBe(true);                       // nunca escondido: desativado
+    expect(pill.textContent).toContain("indisponível");
+    expect(screen.getByTestId("provider-select-reasons-CLI local").textContent)
+      .toContain("Claude CLI: só corre em interface gráfica (TUI).");
+    expect(screen.getByTestId("provider-select-installed-ollama").textContent).toBe("instalado");
+  });
+
+  it("AppAgent sem dropdown: pílula herdar mantém valor vazio e pílula própria seleciona", async () => {
+    const fake = makeFake();
+    await rendered(fake);
+    const appPicker = screen.getByTestId("app-provider-select");
+    expect(appPicker.querySelectorAll("select")).toHaveLength(0);
+    expect(screen.getByTestId("app-provider-select-btn-inherit").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByTestId("app-provider-select-btn-ollama"));
+    await screen.findByTestId("app-credential-note");
+    expect(screen.getByTestId("app-provider-select-btn-ollama").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("app-provider-select-btn-inherit").getAttribute("aria-pressed")).toBe("false");
+    expect(fake.calls.filter(c => c.type === "brain.set")).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("app-provider-select-btn-inherit"));
+    await waitFor(() => expect(screen.queryByTestId("app-credential-note")).toBeNull());
   });
 });
 

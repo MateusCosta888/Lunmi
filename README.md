@@ -29,6 +29,8 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 | --- | --- |
 | **Chat único** | Responde, pede esclarecimento ou utiliza ferramentas conforme o pedido, mantendo autorização e verificação no backend. |
 | **Resposta progressiva** | Mostra texto incremental nos transportes que oferecem streaming real. Transportes sem essa capacidade entregam a resposta completa. |
+| **Conversas guardadas** | Histórico local separado da memória pessoal; retomar, renomear, apagar e conversar temporariamente. |
+| **Pesquisa web** | Pesquisa configurável com fontes e metadados; disponibilidade e profundidade dependem do motor e do Brain. |
 | **Brain configurável** | Usa APIs, endpoints compatíveis e CLIs locais suportados. O catálogo depende do provedor conectado. |
 | **Memória local V2** | Documento editável com Guardar/Desfazer, aprendizagem opcional e gestão detalhada de episódios, propostas legadas e importação/exportação. |
 | **Gmail via Composio** | Liga a conta Composio do próprio utilizador para pesquisar, ler e preparar emails. Envio exige uma prévia com aprovação manual. Integração experimental. |
@@ -95,15 +97,21 @@ Na interface atual não é preciso escolher Conversar ou Executar. Uma pergunta 
 - A Autoaprovação mantém o comportamento existente: a alteração se destina à próxima tarefa, sem trocar a política de uma tarefa em andamento.
 - O envio de email exige aprovação manual da prévia, mesmo com Autoaprovação ligada. Um resultado incerto não é repetido automaticamente; aceitação pelo Gmail não comprova entrega ao destinatário.
 
-O painel de tarefas recentes mostra a sessão atual; não promete recuperar integralmente conversas anteriores.
+O painel de tarefas recentes mostra a sessão atual. O histórico sob **Conversa** guarda as
+novas conversas neste computador, permite continuá-las e oferece conversas temporárias.
+Em Configurações, pode desativar a gravação e escolher entre retomar a última conversa ou
+começar uma nova. Apagar histórico não apaga factos da memória pessoal.
 
 Em **Configurações → Segundo plano**, escolha se fechar a janela mantém a Lunmi em execução. O Node tem opções de canto, visibilidade, recolhimento, atividade e atalho. **Sair** na bandeja termina a aplicação. O mini chat partilha a conversa atual; confirmações sensíveis são abertas na principal. Durante uma tarefa em execução, o Node não aceita interação nem rouba o foco; use a bandeja para restaurar a principal se precisar intervir.
 
-A saída de voz é opcional e experimental. O checkout não inclui os modelos nem instala um runtime de áudio automaticamente. Sem esses recursos, a interface indica indisponibilidade e o chat continua a funcionar. Não há escuta, gravação de microfone ou STT nesta versão. Veja [os limites da voz e do modo residente](docs/GETTING_STARTED.md#node-e-segundo-plano).
+A saída de voz e o ditado são opcionais e experimentais. O checkout não inclui os modelos
+nem instala um runtime de áudio automaticamente. Sem esses recursos, a interface indica
+indisponibilidade e o chat continua a funcionar. O microfone é acionado pelo utilizador;
+não há escuta contínua. Veja [os limites da voz e do modo residente](docs/GETTING_STARTED.md#node-e-segundo-plano).
 
 ## Memória e privacidade
 
-As memórias ficam em SQLite local. O painel apresenta um documento de texto livre: **O que a Lunmi deve saber sobre ti**. É possível editar e guardar, pedir para lembrar algo no chat e permitir aprendizagem de declarações claras em conversas. As opções **Usar memória** e **Aprender com as conversas** controlam esse comportamento. Propostas legadas continuam sujeitas a aceite; episódios e histórico têm opções próprias. O histórico persistente começa desligado.
+As memórias ficam em SQLite local. O painel apresenta um documento de texto livre: **O que a Lunmi deve saber sobre ti**. É possível editar e guardar, pedir para lembrar algo no chat e permitir aprendizagem de declarações claras em conversas. As opções **Usar memória** e **Aprender com as conversas** controlam esse comportamento. Propostas legadas continuam sujeitas a aceite; episódios e o histórico legado da memória têm opções próprias. O histórico do chat é separado e começa ativado para novas conversas.
 
 **Memória local não significa inferência privada.** Instruções, contexto recuperado e observações necessárias à execução podem ser enviados ao provedor escolhido. Um endpoint local e uma API externa têm fronteiras de privacidade diferentes.
 
@@ -170,7 +178,7 @@ Os testes usam fixtures e sandboxes; não certificam qualquer aplicativo externo
 
 - Automação depende do que os aplicativos expõem por UIA/Win32 e da verificação disponível.
 - Anexos aceitam texto/código UTF-8. Imagens, PDF e binários são recusados; anexos e respostas desse turno não viram memória automática.
-- Streaming depende da capacidade do transporte. STT/TTS e navegação web completa não estão implementados.
+- Streaming depende da capacidade do transporte. Voz e ditado requerem runtimes externos preparados; pesquisa web não equivale a controlo completo de um navegador.
 - Gmail é experimental: a ligação e a leitura reais foram exercitadas numa conta de testes; o diálogo e as confirmações de envio foram testados com simulações. Envio/entrega reais, todos os formatos MIME e todas as combinações de modelos não estão certificados. Cada utilizador usa a sua conta Composio e Gmail; os limites desses serviços continuam a aplicar-se.
 - A distribuição empacotada está em alpha Windows x64, sem assinatura ou atualização automática. Outra máquina/VM e provedores reais ainda precisam de validação; não há suporte a macOS/Linux ou certificação geral de múltiplos monitores e DPIs.
 - Há dependências upstream legadas; avisos conhecidos e triagem estão em [Segurança](SECURITY.md#dependências-upstream).

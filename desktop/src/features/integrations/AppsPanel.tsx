@@ -3,6 +3,8 @@ import { getBridgeApi, type SendCommandFn } from "../../shared/ipc/client";
 import type { SessionReadyPayload } from "../../shared/protocol";
 import type { GmailConnectionState, IntegrationsDto } from "../../shared/types";
 import { Icon } from "../../shared/ui";
+import SpotifyCard from "./SpotifyCard";
+import gmailLogo from "./assets/gmail.svg";
 import "./apps.css";
 
 const LABELS: Record<GmailConnectionState, string> = {
@@ -12,6 +14,9 @@ const LABELS: Record<GmailConnectionState, string> = {
   unavailable: "Gmail ainda indisponível nesta ligação", error: "Não foi possível ligar",
 };
 const FLOW_STATES: GmailConnectionState[] = ["connecting", "composio_connected", "gmail_connecting", "select_account"];
+
+const PRIMARY = "lunmi-action-button lunmi-action-primary";
+const SECONDARY = "lunmi-action-button";
 
 export default function AppsPanel({ sendCommand, session }: {
   sendCommand: SendCommandFn; session: SessionReadyPayload | null;
@@ -78,44 +83,78 @@ export default function AppsPanel({ sendCommand, session }: {
   const gmail = data?.gmail;
   const inFlow = gmail && FLOW_STATES.includes(gmail.state);
   const connected = gmail?.state === "connected" && Boolean(gmail.account);
-  return <section className="lunmi-apps-page" aria-labelledby="apps-heading" data-testid="apps-panel">
-    <header><h2 id="apps-heading">Apps</h2><p>Liga as tuas contas para a Lunmi te ajudar no chat.</p></header>
-    <article className="lunmi-apps-card" aria-labelledby="gmail-heading" data-testid="gmail-card" aria-busy={loading || Boolean(action)}>
-      <div className="lunmi-apps-title"><span className="lunmi-apps-icon"><Icon name="mail" size={24} /></span>
-        <div><h3 id="gmail-heading">Gmail</h3><p>Pesquisar, ler e preparar emails. Enviar sempre com a tua confirmação.</p></div></div>
-      {!supported ? <p role="status">Esta versão do backend não disponibiliza a ligação ao Gmail.</p>
-        : loading ? <p role="status">A consultar a ligação…</p>
-          : <>
-            {gmail && <p className="lunmi-apps-state" role="status" data-testid="gmail-state" data-connected={connected}>
-              {connected ? <><Icon name="check" size={16} /> Ligado · <span>{gmail.account!.email}</span></>
-                : gmail.state === "connected" ? "Conta não confirmada" : LABELS[gmail.state]}
-            </p>}
-            {inFlow && <p>{gmail.state === "select_account" ? "Composio ligado. Escolhe qual conta Gmail queres usar."
-              : "Conclui a autorização no browser. Usa a tua própria conta Composio e autoriza o Gmail."}</p>}
-            {gmail?.state === "select_account" && <fieldset className="lunmi-apps-accounts">
-              <legend>Qual conta Gmail queres usar?</legend>
-              {gmail.accounts.map(account => <label key={account.id}>
-                <input type="radio" name="gmail-account" value={account.id} checked={selected === account.id}
-                  disabled={Boolean(action)} onChange={() => setSelected(account.id)} />{account.email}
-              </label>)}
-              <button type="button" className="lunmi-apps-primary" disabled={!selected || Boolean(action)}
-                onClick={() => void run("integrations.select", { account_id: selected })}>Usar esta conta</button>
-            </fieldset>}
-            {gmail?.state === "unavailable" && <p>Não foi possível confirmar uma conta Gmail e as ferramentas necessárias. Nenhuma conta alternativa foi usada.</p>}
-            {gmail?.state === "reauth_required" && <p>Volta a ligar ao Composio para continuar a usar o Gmail.</p>}
-            <div className="lunmi-apps-actions">
-              {inFlow ? <button type="button" disabled={Boolean(action)} onClick={() => void run("integrations.cancel")}>Cancelar ligação</button>
-                : connected ? <><button type="button" disabled={Boolean(action)} onClick={() => void run("integrations.connect")}>Trocar conta</button>
-                  <button type="button" disabled={Boolean(action)} onClick={() => void run("integrations.disconnect")}>Desligar da Lunmi</button></>
-                  : <button type="button" className="lunmi-apps-primary" disabled={Boolean(action)}
-                    onClick={() => void run(gmail ? "integrations.connect" : "integrations.get")}>
-                    {action ? "A aguardar…" : !gmail ? "Tentar novamente" : gmail.state === "reauth_required" ? "Reconectar" : "Ligar Gmail"}
-                  </button>}
+  const tone = connected ? "ok"
+    : gmail?.state === "unavailable" || gmail?.state === "error" ? "error"
+      : gmail?.state === "reauth_required" ? "warn" : "idle";
+
+  return <section className="lunmi-settings-page lunmi-apps-page" aria-labelledby="apps-heading" data-testid="apps-panel">
+    <div className="lunmi-settings-content">
+      <header className="lunmi-settings-heading">
+        <h2 id="apps-heading">Apps</h2>
+        <p>Liga as tuas contas para a Lunmi te ajudar no chat.</p>
+      </header>
+
+      <div className="lunmi-settings-grid lunmi-apps-grid">
+        <article className="lunmi-settings-card lunmi-apps-card lunmi-app-card"
+          aria-labelledby="gmail-heading" data-testid="gmail-card" aria-busy={loading || Boolean(action)}>
+          <header className="lunmi-app-card-head">
+            <span className="lunmi-app-logo" data-brand="gmail" data-testid="gmail-logo">
+              <img src={gmailLogo} alt="" width={28} height={28} draggable={false} />
+            </span>
+            <div className="lunmi-app-card-heading">
+              <h3 id="gmail-heading">Gmail</h3>
+              <p>Pesquisar, ler e preparar emails. Enviar sempre com a tua confirmação.</p>
             </div>
-          </>}
-      {error && <p className="lunmi-apps-error" role="alert">{error}</p>}
-      {supported && <p className="lunmi-apps-note">A ligação usa o teu Composio. O conteúdo dos emails consultados pode ser enviado ao provider do Brain.
-        Desligar da Lunmi remove o acesso local; a revogação global é feita no Composio.</p>}
-    </article>
+          </header>
+
+          <div className="lunmi-app-card-body">
+            {!supported ? <p className="lunmi-app-copy" role="status">Esta versão do backend não disponibiliza a ligação ao Gmail.</p>
+              : loading ? <p className="lunmi-app-copy" role="status">A consultar a ligação…</p>
+                : <>
+                  {gmail && <p className="lunmi-app-status lunmi-apps-state" role="status" data-testid="gmail-state"
+                    data-connected={connected} data-tone={tone}>
+                    {connected ? <><Icon name="check" size={15} /><span>Ligado</span>
+                      <span className="lunmi-app-status-sep" aria-hidden="true">·</span>
+                      <span className="lunmi-app-account">{gmail.account!.email}</span></>
+                      : gmail.state === "connected" ? "Conta não confirmada" : LABELS[gmail.state]}
+                  </p>}
+                  {inFlow && <p className="lunmi-app-copy">{gmail.state === "select_account" ? "Composio ligado. Escolhe qual conta Gmail queres usar."
+                    : "Conclui a autorização no browser. Usa a tua própria conta Composio e autoriza o Gmail."}</p>}
+                  {gmail?.state === "select_account" && <fieldset className="lunmi-app-accounts">
+                    <legend>Qual conta Gmail queres usar?</legend>
+                    {gmail.accounts.map(account => <label key={account.id}>
+                      <input type="radio" name="gmail-account" value={account.id} checked={selected === account.id}
+                        disabled={Boolean(action)} onChange={() => setSelected(account.id)} />
+                      <span>{account.email}</span>
+                    </label>)}
+                    <button type="button" className={PRIMARY} disabled={!selected || Boolean(action)}
+                      onClick={() => void run("integrations.select", { account_id: selected })}>Usar esta conta</button>
+                  </fieldset>}
+                  {gmail?.state === "unavailable" && <p className="lunmi-app-copy">Não foi possível confirmar uma conta Gmail e as ferramentas necessárias. Nenhuma conta alternativa foi usada.</p>}
+                  {gmail?.state === "reauth_required" && <p className="lunmi-app-copy">Volta a ligar ao Composio para continuar a usar o Gmail.</p>}
+
+                  <div className="lunmi-app-actions">
+                    {inFlow ? <button type="button" className={SECONDARY} disabled={Boolean(action)}
+                      onClick={() => void run("integrations.cancel")}>Cancelar ligação</button>
+                      : connected ? <><button type="button" className={SECONDARY} disabled={Boolean(action)}
+                        onClick={() => void run("integrations.connect")}>Trocar conta</button>
+                        <button type="button" className="lunmi-action-button lunmi-action-danger" disabled={Boolean(action)}
+                          onClick={() => void run("integrations.disconnect")}>Desligar da Lunmi</button></>
+                        : <button type="button" className={PRIMARY} disabled={Boolean(action)}
+                          onClick={() => void run(gmail ? "integrations.connect" : "integrations.get")}>
+                          {action ? "A aguardar…" : !gmail ? "Tentar novamente" : gmail.state === "reauth_required" ? "Reconectar" : "Ligar Gmail"}
+                        </button>}
+                  </div>
+                </>}
+            {error && <p className="lunmi-app-error" role="alert">{error}</p>}
+          </div>
+
+          {supported && <p className="lunmi-app-card-note">A ligação usa o teu Composio. O conteúdo dos emails consultados pode ser enviado ao provider do Brain.
+            Desligar da Lunmi remove o acesso local; a revogação global é feita no Composio.</p>}
+        </article>
+
+        <SpotifyCard sendCommand={sendCommand} session={session} />
+      </div>
+    </div>
   </section>;
 }

@@ -70,6 +70,7 @@ class PublicResponse:
         self.stable_end = 0
         self.closed = False
         self.started = False
+        self.final_state = 'interrupted'
         self.verified_result = False
         self.timer: asyncio.TimerHandle | None = None
 
@@ -165,6 +166,7 @@ class PublicResponse:
         # Speech ends where the template ends: content and summaries are never spoken.
         self._stable(len(prefix) if prefix else len(self.text))
         self._emit('response.completed', {'text': self.text, 'status': status})
+        self.final_state = 'completed'
         self.closed = True
 
     def fail(self, code: str, *, cancelled: bool = False) -> None:
@@ -176,4 +178,5 @@ class PublicResponse:
             self.timer = None
         self.pending = ''
         self._emit('response.cancelled' if cancelled else 'response.error', {'code': code})
+        self.final_state = 'cancelled' if cancelled else 'interrupted'
         self.closed = True

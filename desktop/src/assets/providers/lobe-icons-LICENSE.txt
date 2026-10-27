@@ -1,0 +1,53 @@
+LobeHub lobe-icons — marcas de provedor usadas em providerMarks.ts
+
+Licenca: MIT (Copyright (c) 2023 LobeHub). Texto integral no fim deste ficheiro.
+Commit fixado: 8b7bbc433d38437fa2b0cca58ae896917162b812
+URL de origem: https://raw.githubusercontent.com/lobehub/lobe-icons/<commit>/packages/static-svg/icons/<nome>.svg
+
+Os 13 primeiros ficheiros foram fornecidos pela Root em output/settings-redesign/brand-sources/
+(com sources.json + LICENSE). codex.svg e kilocode.svg foram obtidos no MESMO commit fixado.
+O traco de cada <path> foi copiado verbatim para providerMarks.ts; so o wrapper <svg> e nosso
+(viewBox 0 0 24 24 + fill="currentColor"), para o glifo herdar a cor do tema.
+
+Proveniencia por marca (SHA-256 do .svg de origem):
+openai.svg  id="openai"  title="OpenAI"  sha256=a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186
+anthropic.svg  id="anthropic"  title="Anthropic"  sha256=e833fdfa7e7187a86a05b870925067556a506dcd4239089aed73e1e58c9366a3
+gemini.svg  id="gemini"  title="Gemini"  sha256=87d5b3c4be75a66f54c1936482a263df68185545b741129badd1b7c2449c18d3
+openrouter.svg  id="openrouter"  title="OpenRouter"  sha256=ae671cc83de9bd45db97a47ed5e38a4e1bd9f93a12be495ba4b4f8b284026bca
+nvidia.svg  id="nvidia"  title="Nvidia"  sha256=5a419b99e0ffdbfbe8caa7ec25581054eae03024da59cb860c54ea55ac8e7e73
+ollama.svg  id="ollama"  title="Ollama"  sha256=3a268218fb2e6e81fa31df70f70b51331625047794db81db21d35359428fae7a
+lmstudio.svg  id="lmstudio"  title="LM Studio"  sha256=4a575e8382b52ce742ac5d21d361a7d2a08cea7c12390ee1bbb755ef7d3cc25b
+vllm.svg  id="vllm"  title="vLLM"  sha256=5b025970b51c270775d0528a68ad96583372c94a2a94c4d92b40b74cbe9f7153
+claude.svg  id="claude"  title="Claude"  sha256=365a70a7eb3956d9b9a96086058ebe04e1dbd8e291a756ad964e8a283fbd6d38
+codex.svg  id="codex"  title="Codex"  sha256=d08b4e824cd6727e89617f59e4737273ff53e44c1da849d016dd64dfd08b33e1
+antigravity.svg  id="agy"  title="Antigravity"  sha256=43f551fd125c17fb54c8c74eb461924fb97f32bb64ac89f73bb73852753a6461
+kilocode.svg  id="kilo"  title="Kilo Code"  sha256=a2aef0e0bb992ebe768bfb8c3a3ab6ff2c2638448b09dd88db27877de1c07a22
+qoder.svg  id="qoder"  title="Qoder"  sha256=f8503aacc41a58e723430488d082f6730c8a6a9ffecdd0a00c522e6bcdb4abb9
+kiro.svg  id="kiro"  title="Kiro"  sha256=1e56073e35799b0d7075d5376ca2d99c3d3bbf51a000a1ec3d4b0df7612c91d6
+opencode.svg  id="opencode"  title="opencode"  sha256=7cfa6e9d6726f7c9fa26c7d9aef0dfec52d20a137380454340f30f12ccbfd302
+
+Sem marca propria: "custom" (OpenAI Compatible) usa o icone generico Endpoint do Lucide
+(ISC, ja dependncia do projeto) — nunca uma marca alheia.
+
+--- Texto MIT (Copyright (c) 2023 LobeHub) ---
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

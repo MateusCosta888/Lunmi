@@ -12,6 +12,7 @@ from dataclasses import replace
 
 from app.brain import detect as detect_module
 from app.brain.cli.catalog import CLI_SPECS, find_spec, specs
+from app.brain.cli.known import known_runtimes
 from app.brain.cli.headless import (HeadlessCliBrain, classify_failure, extract_json_events,
                                     extract_json_reply, render_prompt)
 from app.brain.cli.spec import MODEL_PARSERS, REPLY_PARSERS
@@ -211,7 +212,9 @@ def test_detect_all_covers_every_catalogued_cli(monkeypatch: pytest.MonkeyPatch)
 
     async def scenario() -> None:
         detections = await detect_module.detect_all()
-        assert {item.cli_id for item in detections} == set(CLI_SPECS)
+        # Detection also reports known runtimes that have no headless contract.
+        assert {item.cli_id for item in detections} == (
+            set(CLI_SPECS) | {runtime.id for runtime in known_runtimes()})
 
     asyncio.run(scenario())
 
@@ -731,8 +734,9 @@ def test_kiro_is_driven_headless_with_every_tool_untrusted() -> None:
     assert spec is not None
     brain = HeadlessCliBrain(Settings(provider="kiro", model="auto"), spec, executable="kiro-cli")
     argv = brain.inference_argv()
-    assert argv == ["kiro-cli", "chat", "--no-interactive", "--output-format", "stream-json",
-                    "--trust-tools=", "--model", "auto"]
+    assert argv == ["kiro-cli", "chat", "--agent", "lunmi-off-v3", "--agent-engine", "v3",
+                    "--model", "auto", "--no-interactive", "--output-format", "stream-json",
+                    "--trust-tools="]
     # The CLI's own auto-approval switch is never ours to give.
     assert "--trust-all-tools" not in argv
     assert spec.prompt_on_stdin is True

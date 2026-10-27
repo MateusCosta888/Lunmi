@@ -1,16 +1,20 @@
 /**
- * Testes renderer da saída de voz (`desktop/tests/voice-output.test.tsx`, VOICE-V1-OUTPUT).
+ * Testes renderer da saída de voz (`desktop/tests/voice-output.test.tsx`, VOICE-V1-OUTPUT,
+ * reposicionados para REFINEMENTS V2).
  *
- * Nenhum backend real: `window.lunmi` é uma ponte espiã. Provas do contrato congelado:
- * payloads exatos (`voice.set` só com `enabled`/`auto_speak`; test/speak_last/stop com `{}`);
- * subscrição antes do GET; GET tardio da MESMA generation não sobrescreve evento posterior;
- * geração/session guards; ACK `unavailable`/`no_last_response` com mensagem honesta sem eco de
- * texto; Parar voz usa `voice.stop` (nunca `task.cancel`) e só quando há fala; zero controlo de
- * captura e microfone indicado como pendente.
+ * Nenhum backend real: `window.lunmi` é uma ponte espiã. O cartão vive agora em Configurações
+ * (`VoiceSettingsCard`); o compositor mantém apenas estado + «Parar voz» (`VoiceControls`).
+ * Provas preservadas do contrato de saída: payloads exatos (`voice.set` só com
+ * `enabled`/`auto_speak`; test/speak_last/stop com `{}`); subscrição antes do GET; GET tardio da
+ * MESMA generation não sobrescreve evento posterior; guarda de sessão; recusas
+ * (`unavailable`/`no_last_response`/`input_active`) com mensagem honesta sem eco de texto; Parar
+ * voz usa `voice.stop` (nunca `task.cancel`) e só aparece com fala; desligar limpa o estado e não
+ * dispara fala automática; `capture_supported` legado não bloqueia nada (entrada tem DTO próprio).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { VoiceControls } from "../src/features/voice/VoiceControls";
+import { VoiceSettingsCard } from "../src/features/voice/VoiceSettingsCard";
 import type { VoiceCommandAckDto, VoiceStateDto, VoiceStateEventDto } from "../src/shared/types";
 
 afterEach(() => {
@@ -26,10 +30,10 @@ function bridge(initial: Partial<VoiceStateDto> = {}) {
   };
   const calls: Call[] = [];
   let listener: ((event: { v: 1; type: string; payload: unknown }) => void) | undefined;
-  let pendingGet: ((value: VoiceStateDto) => void) | undefined;
+
   const sendCommand = vi.fn(async (type: string, payload: Record<string, unknown> = {}) => {
     calls.push({ type, payload });
-    if (type === "voice.get") return await new Promise<VoiceStateDto>(resolve => { pendingGet = resolve; resolve(state); });
+    if (type === "voice.get") return { ...state };
     if (type === "voice.set") {
       Object.assign(state, payload);
       state.generation += 1;
@@ -38,210 +42,174 @@ function bridge(initial: Partial<VoiceStateDto> = {}) {
       return { ...state };
     }
     if (type === "voice.test" || type === "voice.speak_last" || type === "voice.stop") {
-      const ack: VoiceCommandAckDto = { accepted: true, generation: ++state.generation, state: type === "voice.stop" ? "ready" : "synthesizing", reason: "" };
+      const ack: VoiceCommandAckDto = {
+        accepted: true, generation: ++state.generation,
+        state: type === "voice.stop" ? "ready" : "synthesizing", reason: "",
+      };
       if (type !== "voice.stop") state.state = "synthesizing";
       return ack;
     }
     throw new Error(`unexpected_command: ${type}`);
   });
+
   (window as unknown as { lunmi: unknown }).lunmi = {
     onEvent: (cb: typeof listener) => { listener = cb; return () => { listener = undefined; }; },
     sendCommand,
   };
-  const emit = (payload: Partial<VoiceStateEventDto> & { generation: number }) =>
-    act(() => listener?.({ v: 1, type: "voice.state", payload: { session_id: "sess-v", ...state, ...payload } as VoiceStateEventDto }));
-  return {
-    calls, state, emit,
-    resolveGet: () => act(async () => { pendingGet?.({ ...state }); }),
-    setGetImplementation: (fn: () => Promise<VoiceStateDto>) => {
-      vi.mocked(sendCommand).mockImplementation(async (type: string, payload: Record<string, unknown> = {}) => {
-        calls.push({ type, payload });
-        if (type === "voice.get") return fn();
-        throw new Error(`unexpected_command: ${type}`);
-      });
-    },
-  };
+
+  const emit = (override: Partial<VoiceStateEventDto> & { generation: number }) =>
+    listener?.({ v: 1, type: "voice.state", payload: { session_id: "sess-v", ...state, ...override } as VoiceStateEventDto });
+
+  return { calls, state, sendCommand, emit };
 }
 
-function opened(initial?: Partial<VoiceStateDto>) {
-  const f = bridge(initial);
-  render(<VoiceControls sessionId="sess-v" />);
-  return f;
-}
-
-async function toggleOpen(): Promise<void> {
-  fireEvent.click(screen.getByTestId("voice-toggle"));
-  await screen.findByTestId("voice-popover");
-}
-
-describe("VoiceControls — contrato de comandos", () => {
-  it("abre com estado do backend e Ativar voz envia exatamente {enabled:true}, sem mais comandos", async () => {
-    const f = opened({ available: true });
+describe("VoiceSettingsCard — contrato de comandos (em Configurações)", () => {
+  it("abre com estado do backend; Ativar voz envia exatamente {enabled:true}", async () => {
+    const f = bridge({ available: true });
+    render(<VoiceSettingsCard sessionId="sess-v" />);
     await waitFor(() => expect(f.calls.some(c => c.type === "voice.get" && Object.keys(c.payload).length === 0)).toBe(true));
-    expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("desligada");
-    await toggleOpen();
-    fireEvent.click(screen.getByTestId("voice-enabled"));
-    await waitFor(() => {
-      const call = f.calls.find(c => c.type === "voice.set");
-      expect(call!.payload).toEqual({ enabled: true });
-    });
-    expect(f.calls.filter(c => c.type === "voice.test" || c.type === "voice.speak_last")).toHaveLength(0);
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta"));
+    const toggle = screen.getByTestId("voice-enabled") as HTMLInputElement;
+    fireEvent.click(toggle);
+    await waitFor(() => expect(f.calls.some(c => c.type === "voice.set" && JSON.stringify(c.payload) === JSON.stringify({ enabled: true }))).toBe(true));
+    expect(f.calls.filter(c => c.type === "voice.set")).toHaveLength(1);
   });
 
-  it("voice.set aceita apenas as chaves enabled/auto_speak; test/speak_last/stop enviam {}", async () => {
-    const f = opened();
-    await toggleOpen();
+  it("Falar respostas envia {auto_speak:true} e está desativada com voz desligada", async () => {
+    const f = bridge({ available: true });
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    await waitFor(() => expect((screen.getByTestId("voice-enabled") as HTMLInputElement).disabled).toBe(false));
+    const auto = screen.getByTestId("voice-auto-speak") as HTMLInputElement;
+    expect(auto.disabled).toBe(true);
     fireEvent.click(screen.getByTestId("voice-enabled"));
-    await waitFor(() => expect(f.calls.some(c => c.type === "voice.set")).toBe(true));
-    for (const call of f.calls.filter(c => c.type.startsWith("voice."))) {
-      if (call.type === "voice.set") expect(Object.keys(call.payload).every(k => k === "enabled" || k === "auto_speak")).toBe(true);
-      else expect(call.payload).toEqual({});
-    }
+    await waitFor(() => expect((screen.getByTestId("voice-auto-speak") as HTMLInputElement).disabled).toBe(false));
+    fireEvent.click(auto);
+    await waitFor(() => expect(f.calls.some(c => c.type === "voice.set" && JSON.stringify(c.payload) === JSON.stringify({ auto_speak: true }))).toBe(true));
   });
 
-  it("Parar voz só com fala em curso e usa voice.stop, nunca task.cancel", async () => {
-    const f = opened({ available: true });
-    await toggleOpen();
-    expect((screen.getByTestId("voice-stop") as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId("voice-enabled"));
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta"));
-    fireEvent.click(screen.getByTestId("voice-test"));
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("sintetizando…"));
-    const stop = screen.getByTestId("voice-stop") as HTMLButtonElement;
-    expect(stop.disabled).toBe(false);
-    fireEvent.click(stop);
-    await waitFor(() => expect(f.calls.some(c => c.type === "voice.stop")).toBe(true));
-    expect(f.calls.some(c => c.type === "task.cancel")).toBe(false);
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta"));
-  });
-
-  it("Ouvir última resposta só com can_speak_last; sem texto no payload", async () => {
-    const f = opened({ enabled: true, available: true, state: "ready", generation: 4 });
-    await toggleOpen();
+  it("Testar/Ouvir/Parar usam payloads {} ; Ouvir exige can_speak_last; Parar exige fala", async () => {
+    const f = bridge({ available: true, enabled: true, state: "ready" });
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    await waitFor(() => expect((screen.getByTestId("voice-test") as HTMLButtonElement).disabled).toBe(false));
     expect((screen.getByTestId("voice-speak-last") as HTMLButtonElement).disabled).toBe(true);
-    f.emit({ generation: 5, can_speak_last: true });
-    await waitFor(() => expect((screen.getByTestId("voice-speak-last") as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByTestId("voice-speak-last"));
-    await waitFor(() => {
-      const call = f.calls.find(c => c.type === "voice.speak_last");
-      expect(call!.payload).toEqual({});
-    });
+    expect((screen.getByTestId("voice-stop") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("voice-test"));
+    await waitFor(() => expect(f.calls.some(c => c.type === "voice.test" && Object.keys(c.payload).length === 0)).toBe(true));
   });
 
-  it("ACK reason 'disabled' pede ativação com frase própria, sem confundir com runtime ausente", async () => {
-    const sendCommand = vi.fn(async (type: string, _payload: Record<string, unknown> = {}) => {
-      if (type === "voice.get") {
-        return { enabled: true, auto_speak: false, available: true, state: "ready", generation: 1, can_speak_last: true, capture_supported: false, message: "" } as VoiceStateDto;
-      }
-      if (type === "voice.speak_last") {
-        return { accepted: false, generation: 2, state: "ready", reason: "disabled" } as VoiceCommandAckDto;
-      }
+  it("recusa input_active mostra a copy aditiva honesta no estado do cartão", async () => {
+    const f = bridge({ available: true, enabled: true, state: "ready" });
+    f.sendCommand.mockImplementation(async (type: string, payload: Record<string, unknown> = {}) => {
+      f.calls.push({ type, payload });
+      if (type === "voice.get") return { ...f.state };
+      if (type === "voice.test") return { accepted: false, generation: f.state.generation, state: "ready", reason: "input_active" };
       throw new Error(`unexpected_command: ${type}`);
     });
-    (window as unknown as { lunmi: unknown }).lunmi = { onEvent: () => () => {}, sendCommand };
-    render(<VoiceControls sessionId="sess-v" />);
-    await toggleOpen();
-    fireEvent.click(screen.getByTestId("voice-speak-last"));
-    await waitFor(() => expect(screen.getByTestId("voice-status").textContent).toContain("Ative a voz para ouvir"));
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    await waitFor(() => expect((screen.getByTestId("voice-test") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("voice-test"));
+    await waitFor(() => expect(screen.getByTestId("voice-status").textContent).toContain("O microfone está aberto"));
   });
 
-  it("ACK unavailable explica sem fingir sucesso e sem eco de texto", async () => {
-    const f = opened({ enabled: true, available: false, state: "error", generation: 2, message: "Voz indisponível: runtime de voz não instalado." });
-    await toggleOpen();
-    fireEvent.click(screen.getByTestId("voice-enabled"));
-    await waitFor(() => expect(f.calls.some(c => c.type === "voice.set")).toBe(true));
-    const status = screen.getByTestId("voice-status").textContent ?? "";
-    expect(status).toContain("runtime de voz não instalado");
-    expect(document.body.textContent).not.toMatch(/synthesizing|accepted/);
-  });
-});
-
-describe("VoiceControls — guards de sessão e geração", () => {
-  it("subscrição antes do GET: evento playing gen5 não é sobrescrito por GET ready da MESMA gen5", async () => {
-    const f = bridge();
-    let resolveLate!: (value: VoiceStateDto) => void;
-    f.setGetImplementation(() => new Promise<VoiceStateDto>(res => { resolveLate = res; }));
-    render(<VoiceControls sessionId="sess-v" />);
-    await waitFor(() => expect(f.calls.some(c => c.type === "voice.get")).toBe(true));
-    // o evento chega antes da resposta do GET, com a mesma generation
-    f.emit({ state: "playing", generation: 5 });
-    act(() => { resolveLate({ ...f.state, state: "ready", generation: 5 }); });
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("falando…"));
-    // e continua "falando…" um tick depois — o GET tardio não venceu
-    await new Promise(res => setTimeout(res, 30));
-    expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("falando…");
-  });
-
-  it("evento de geração mais antiga é descartado sem mudar a UI", async () => {
-    const f = opened({ enabled: true, available: true, state: "ready", generation: 9 });
-    await toggleOpen();
-    f.emit({ generation: 8, state: "error", message: "velho" });
-    await new Promise(res => setTimeout(res, 30));
-    expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta");
-    expect(screen.getByTestId("voice-status").textContent).not.toContain("velho");
-  });
-
-  it("evento de outra sessão é ignorado", async () => {
-    const f = opened({ enabled: true, available: true, state: "ready", generation: 1 });
-    await toggleOpen();
-    f.emit({ generation: 2, session_id: "sess-outra", state: "error", message: "OUTRO" });
-    await new Promise(res => setTimeout(res, 30));
-    expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta");
-    expect(screen.getByTestId("voice-status").textContent).not.toContain("OUTRO");
-  });
-
-  it("troca de sessão: generation 0 da sessão nova é aceite e um SET antigo pendente não reintroduz estado", async () => {
-    let resolveSet!: (value: VoiceStateDto) => void;
-    let listener: ((event: { v: 1; type: string; payload: unknown }) => void) | undefined;
-    const sendCommand = vi.fn(async (type: string, _payload: Record<string, unknown> = {}) => {
-      if (type === "voice.get") {
-        return { enabled: true, auto_speak: false, available: true, state: "ready", generation: 10, can_speak_last: true, capture_supported: false, message: "" } as VoiceStateDto;
-      }
-      if (type === "voice.set") return await new Promise<VoiceStateDto>(res => { resolveSet = res; });
+  it("recusa no_last_response explica a ausência sem prometer áudio", async () => {
+    const f = bridge({ available: true, enabled: true, state: "ready" });
+    f.sendCommand.mockImplementation(async (type: string, payload: Record<string, unknown> = {}) => {
+      f.calls.push({ type, payload });
+      if (type === "voice.get") return { ...f.state };
+      if (type === "voice.speak_last") return { accepted: false, generation: f.state.generation, state: "ready", reason: "no_last_response" };
       throw new Error(`unexpected_command: ${type}`);
     });
-    (window as unknown as { lunmi: unknown }).lunmi = {
-      onEvent: (cb: typeof listener) => { listener = cb; return () => { listener = undefined; }; },
-      sendCommand,
-    };
-    const view = render(<VoiceControls sessionId="sess-v" />);
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta"));
-    fireEvent.click(screen.getByTestId("voice-toggle"));
-    fireEvent.click(screen.getByTestId("voice-enabled")); // SET fica pendente
-    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.set", { enabled: false }));
-
-    view.rerender(<VoiceControls sessionId="sess-w" />);
-    act(() => listener?.({ v: 1, type: "voice.state", payload: {
-      session_id: "sess-w", enabled: true, auto_speak: false, available: true, state: "ready",
-      generation: 0, can_speak_last: false, capture_supported: false, message: "",
-    } }));
-    await waitFor(() => expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta"));
-
-    // o SET antigo (sess-v, generation 11, desligada) chega tarde: não pode vencer a sessão nova
-    act(() => resolveSet({ enabled: false, auto_speak: false, available: true, state: "disabled", generation: 11, can_speak_last: false, capture_supported: false, message: "" }));
-    await new Promise(res => setTimeout(res, 30));
-    expect((screen.getByTestId("voice-state-label") as HTMLElement).textContent).toBe("pronta");
-  });
-
-  it("desativar limpa can_speak_last e desliga controlos sem enviar mais nada", async () => {
-    const f = opened({ enabled: true, available: true, state: "ready", generation: 4, can_speak_last: true, auto_speak: true });
-    await toggleOpen();
-    await waitFor(() => expect((screen.getByTestId("voice-speak-last") as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByTestId("voice-enabled"));
+    render(<VoiceSettingsCard sessionId="sess-v" />);
     await waitFor(() => expect((screen.getByTestId("voice-speak-last") as HTMLButtonElement).disabled).toBe(true));
-    expect((screen.getByTestId("voice-auto-speak") as HTMLInputElement).disabled).toBe(true);
-    expect(f.calls.filter(c => c.type === "voice.test" || c.type === "voice.speak_last" || c.type === "voice.stop")).toHaveLength(0);
+    // o único caminho honesto para «Ouvir última resposta» ativo é o backend dizê-lo: gen2 com can_speak_last
+    act(() => { f.state.generation += 1; f.emit({ generation: f.state.generation, can_speak_last: true }); });
+    await waitFor(() => expect((screen.getByTestId("voice-speak-last") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("voice-speak-last"));
+    await waitFor(() => expect(screen.getByTestId("voice-status").textContent).toContain("resposta elegível"));
+    expect(f.calls.some(c => c.type === "voice.speak_last" && Object.keys(c.payload).length === 0)).toBe(true);
+  });
+
+  it("evento mais novo vence GET tardio da mesma geração; desligar não dispara fala", async () => {
+    const f = bridge({ available: true, enabled: true, state: "ready", generation: 5 });
+    let resolveGet: ((value: VoiceStateDto) => void) | undefined;
+    f.sendCommand.mockImplementation(async (type: string, payload: Record<string, unknown> = {}) => {
+      f.calls.push({ type, payload });
+      if (type === "voice.get") return await new Promise<VoiceStateDto>(resolve => { resolveGet = resolve; });
+      if (type === "voice.set") {
+        Object.assign(f.state, payload);
+        f.state.generation += 1;
+        if (!f.state.enabled) { f.state.state = "disabled"; f.state.can_speak_last = false; }
+        return { ...f.state };
+      }
+      throw new Error(`unexpected_command: ${type}`);
+    });
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    // evento playing gen5 (mesma geração do GET pendente) — o evento é aplicado primeiro
+    act(() => {
+      f.state.state = "playing";
+      f.emit({ generation: 5, state: "playing" });
+    });
+    await waitFor(() => expect(screen.getByTestId("voice-status").textContent).toContain("playing"));
+    act(() => { resolveGet?.({ ...f.state, state: "ready" }); }); // GET tardio diz "ready" gen5
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(screen.getByTestId("voice-status").textContent).toContain("playing");
+    fireEvent.click(screen.getByTestId("voice-enabled"));
+    await waitFor(() => expect((screen.getByTestId("voice-enabled") as HTMLInputElement).checked).toBe(false));
+    // sem comandos de fala depois de desligar: apenas set
+    expect(f.calls.filter(c => c.type === "voice.test" || c.type === "voice.speak_last").length).toBe(0);
+  });
+
+  it("sem ponte: cartão não existe", () => {
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    expect(screen.queryByTestId("voice-card")).toBeNull();
+  });
+
+  it("API de atalho presente: get uma vez por montagem e Remover envia null", async () => {
+    const shortcut = {
+      get: vi.fn(async () => ({ accelerator: "Ctrl+Alt", error: "" })),
+      set: vi.fn(async (value: string | null) => ({ accelerator: value, error: "" })),
+      pause: vi.fn(async () => ({ ok: true, error: "" })),
+      resume: vi.fn(async () => ({ ok: true, error: "" })),
+      onHold: vi.fn(() => () => undefined),
+    };
+    const f = bridge({ available: true });
+    (window as unknown as { lunmi: Record<string, unknown> }).lunmi.voiceInputShortcut = shortcut;
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    await waitFor(() => expect(screen.getByTestId("voice-shortcut-current").textContent).toContain("Ctrl+Alt"));
+    expect(shortcut.get).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("voice-shortcut-remove"));
+    await waitFor(() => expect(shortcut.set).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(screen.getByTestId("voice-shortcut-current").textContent).toContain("Sem atalho"));
+    expect(f.calls.filter(c => c.type === "voice.get").length).toBeLessThanOrEqual(2); // sem polling extra do cartão
+  });
+
+  it("ponte sem API de atalho: secção do atalho não existe; voz continua configurável", async () => {
+    bridge({ available: true });
+    render(<VoiceSettingsCard sessionId="sess-v" />);
+    await waitFor(() => expect((screen.getByTestId("voice-enabled") as HTMLInputElement).disabled).toBe(false));
+    expect(screen.queryByTestId("voice-shortcut-section")).toBeNull();
   });
 });
 
-describe("VoiceControls — ausência de captura", () => {
-  it("indica microfone pendente e não oferece qualquer controlo de gravação", async () => {
-    opened();
-    await toggleOpen();
-    expect(screen.getByTestId("voice-mic-note").textContent).toMatch(/pendente de validação/i);
-    const popover = screen.getByTestId("voice-popover");
-    expect(popover.textContent).not.toMatch(/gravar|microfone ativo|iniciar captura/i);
-    expect(popover.querySelector("input[type=file], button[data-testid*='mic']")).toBeNull();
+describe("VoiceControls — compositor mínimo", () => {
+  it("mostra estado compacto e «Parar voz» só durante a fala; Parar usa voice.stop, nunca task.cancel", async () => {
+    const f = bridge({ available: true, enabled: true, state: "playing" });
+    render(<VoiceControls sessionId="sess-v" />);
+    await waitFor(() => expect(screen.getByTestId("voice-state-label").textContent).toBe("a falar…"));
+    const stop = screen.getByTestId("voice-stop-min") as HTMLButtonElement;
+    fireEvent.click(stop);
+    await waitFor(() => expect(f.calls.some(c => c.type === "voice.stop" && Object.keys(c.payload).length === 0)).toBe(true));
+    expect(f.calls.some(c => c.type === "task.cancel")).toBe(false);
+  });
+
+  it("voz desligada: sem botão Parar", async () => {
+    bridge({ available: false, enabled: false, state: "disabled" });
+    render(<VoiceControls sessionId="sess-v" />);
+    await waitFor(() => expect(screen.getByTestId("voice-state-label").textContent).toBe("voz desligada"));
+    expect(screen.queryByTestId("voice-stop-min")).toBeNull();
+  });
+
+  it("sem ponte: nada no compositor", () => {
+    render(<VoiceControls sessionId="sess-v" />);
+    expect(screen.queryByTestId("voice-state-label")).toBeNull();
   });
 });

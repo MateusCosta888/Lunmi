@@ -3,7 +3,7 @@
    do main (`setShape`): não há clip-path nem raio CSS a imitar o recorte, para nunca existir uma
    região invisível que ainda recebe cliques. O conteúdo é posicionado pelo rect partilhado
    (`nodeContentRect`), o mesmo que o main usa para a shape — sem rect nem IPC por frame.
-   Preto constante nos três temas: o Node não usa tokens de tema. */
+   Círculo/cápsula pretos; o chat segue o tema ou a preferência explícita por preto. */
 
 .lunmi-node {
   position: fixed;
@@ -119,37 +119,30 @@
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  color: #f2f2f2;
+  color: var(--lunmi-text-primary);
 }
-.lunmi-node-chat .lunmi-mini-head { border-bottom-color: #1c1c1c; }
-.lunmi-node-chat .lunmi-mini-head strong { color: #f2f2f2; }
-.lunmi-node-chat .lunmi-mini-icon-button { color: #a3a3a3; }
-.lunmi-node-chat .lunmi-mini-icon-button:hover { background: #141414; color: #f2f2f2; }
-.lunmi-node-chat .lunmi-mini-empty,
-.lunmi-node-chat .lunmi-mini-phase { color: #a3a3a3; }
-.lunmi-node-chat .lunmi-mini-bubble {
-  background: #141414;
-  border-color: #1f1f1f;
-  color: #f2f2f2;
+.lunmi-node[data-surface="chat"][data-chat-appearance="theme"] .lunmi-node-body { background: var(--lunmi-bg-card); }
+
+/* A paleta preta é local ao chat, incluindo fontes web; não muda o tema da principal. */
+.lunmi-node[data-chat-appearance="black"] .lunmi-mini {
+  --lunmi-bg-card: #090909;
+  --lunmi-bg-card-subtle: #141414;
+  --lunmi-bg-input: #111111;
+  --lunmi-bg-user: #1d1d1f;
+  --lunmi-text-primary: #f2f2f2;
+  --lunmi-text-secondary: #a3a3a3;
+  --lunmi-text-muted: #a3a3a3;
+  --lunmi-border-subtle: #2a2a2c;
+  --lunmi-border-hairline: #1c1c1c;
+  --lunmi-accent: #f2f2f2;
+  --lunmi-accent-hover: #ffffff;
+  --lunmi-on-accent: #090909;
+  --lunmi-surface-hover: #202020;
+  --lunmi-warning: #e7bb75;
+  --lunmi-error: #e58d99;
 }
-.lunmi-node-chat .lunmi-mini-bubble[data-role="user"] { background: #1d1d1f; border-color: #2a2a2c; }
-.lunmi-node-chat .lunmi-mini-composer { border-top-color: #1c1c1c; }
-.lunmi-node-chat .lunmi-mini-composer textarea {
-  background: #0f0f0f;
-  border-color: #262626;
-  color: #f2f2f2;
-}
-.lunmi-node-chat .lunmi-mini-button {
-  background: #f2f2f2;
-  border-color: #f2f2f2;
-  color: #090909;
-}
-.lunmi-node-chat .lunmi-mini-button:hover:not(:disabled) { background: #ffffff; border-color: #ffffff; }
-.lunmi-node-chat .lunmi-mini-quiet {
-  background: transparent;
-  border-color: #262626;
-  color: #a3a3a3;
-}
-.lunmi-node-chat .lunmi-mini-quiet:hover:not(:disabled) { background: #141414; color: #f2f2f2; }
-.lunmi-node-chat .lunmi-mini-pending { border-color: #e7bb75; color: #f2f2f2; }
-.lunmi-node-chat .lunmi-mini-error { color: #e58d99; border-color: #e58d99; }
+.lunmi-node-chat .lunmi-mini-composer textarea::selection { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
+
+/* ORB REACTIVE V1: a miniatura preenche o alvo circular existente (52×52) sem mudar geometria,
+   forma nativa nem hit regions; o ponteiro continua a pertencer ao botão. */
+.lunmi-node-circle .lunmi-galaxy-orb { width: 100%; height: 100%; pointer-events: none; }

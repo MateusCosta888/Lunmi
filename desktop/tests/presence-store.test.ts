@@ -41,6 +41,19 @@ afterEach(() => {
 });
 
 describe("preferências residentes v2", () => {
+  it("aparência do mini chat migra para tema e preserva preto ao gravar e reler", () => {
+    expect(parseNodePreferences({ enabled: true }).chat_appearance).toBe("theme");
+    expect(parseNodePreferences({ chat_appearance: "invalid" }).chat_appearance).toBe("theme");
+    expect(applyNodePreferencesPatch(DEFAULT_NODE_PREFERENCES, { chat_appearance: "invalid" })).toEqual({ ok: false, error: "invalid_payload" });
+    const patched = applyNodePreferencesPatch(DEFAULT_NODE_PREFERENCES, { chat_appearance: "black" });
+    expect(patched.ok).toBe(true);
+    if (!patched.ok) throw new Error("valid preference rejected");
+    const dir = tempDir();
+    expect(writePresenceFile(dir, { ...DEFAULT_PRESENCE, node: patched.next })).toBe(true);
+    expect(readPresenceFile(dir).node.chat_appearance).toBe("black");
+    expect(applyNodePreferencesPatch(patched.next, { chat_appearance: "theme" })).toEqual({ ok: true, next: DEFAULT_NODE_PREFERENCES });
+  });
+
   it("default resident=true, Node ligado e ausência nunca levanta", () => {
     expect(DEFAULT_PRESENCE.resident).toBe(true);
     expect(DEFAULT_PRESENCE.node).toEqual(DEFAULT_NODE_PREFERENCES);

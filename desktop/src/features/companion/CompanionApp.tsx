@@ -7,8 +7,8 @@
  * legado (`hidden`/`orb`/`mini`) deixou de decidir o que se vê — a UI nova usa `node.surface` e
  * `node.phase`, o que o main publica.
  *
- * O tema continua a ser aplicado (a janela acompanha a principal), mas o Node é preto
- * constante: a pele não usa tokens de tema.
+ * O chat acompanha o tema da principal ou a preferência por preto; círculo e cápsula
+ * mantêm a sua pele preta.
  */
 import React, { useEffect } from "react";
 import { usePresenceTheme } from "../../shared/ipc/presence";

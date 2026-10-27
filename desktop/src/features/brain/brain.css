@@ -1,50 +1,59 @@
-/* Estilos do painel Brain (`desktop/src/features/brain/brain.css`) — redesign BYOK 2026-10-17.
-   Só tokens de tema; os três temas existentes herdam sem regras próprias. */
+/* Estilos do painel Brain (`desktop/src/features/brain/brain.css`) — redesign 2026-10-27.
+   Só tokens de tema; os três temas herdam sem regras próprias. O layout de página, os cartões
+   comuns e os botões de ação vêm de `shared/settings.css` (Root) — este ficheiro não cria outro
+   scroll owner nem compete com essas regras. */
 
-.lunmi-brain-page { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 20px;
-  display: grid; gap: 16px; align-content: start; color: var(--lunmi-text-primary); font-size: 13px; }
-.lunmi-brain-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.lunmi-brain-head h2 { margin: 0 0 6px; font-size: 15px; color: var(--lunmi-text-primary); }
 .lunmi-brain-sub { margin: 0; color: var(--lunmi-text-muted); font-size: 13px; }
 .lunmi-brain-sub strong { color: var(--lunmi-text-primary); }
-.lunmi-brain-seals { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.lunmi-brain-seals { display: inline-flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .lunmi-brain-seals span { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--lunmi-border-hairline);
   background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 11.5px; }
 .lunmi-brain-seals span[data-on="true"] { border-color: var(--lunmi-accent); color: var(--lunmi-text-primary); }
 
-.lunmi-brain-card { padding: 16px; border-radius: 12px; border: 1px solid var(--lunmi-border-subtle);
-  background: var(--lunmi-bg-card); max-width: 680px; display: flex; flex-direction: column; gap: 4px; }
+.lunmi-brain-card, .lunmi-brain-advanced { display: flex; flex-direction: column; gap: 8px; }
 .lunmi-brain-advanced { gap: 10px; }
-.lunmi-brain-card-title { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--lunmi-text-secondary); }
+.lunmi-brain-grid { align-items: start; }
+.lunmi-brain-grid[data-model-only="true"] { grid-template-columns: minmax(0, 1fr); }
+.lunmi-brain-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .lunmi-brain-label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--lunmi-text-muted); }
-.lunmi-brain-control { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle);
+.lunmi-brain-control { width: 100%; min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle);
   background: var(--lunmi-bg-input); color: var(--lunmi-text-primary); font-size: 13px; font-family: inherit; }
-.lunmi-brain-control:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
-.lunmi-brain-key-row { display: flex; gap: 8px; align-items: center; }
+.lunmi-brain-key-row { display: flex; gap: 8px; align-items: flex-start; }
 .lunmi-brain-key-row .lunmi-brain-control { flex: 1 1 auto; min-width: 0; }
+.lunmi-brain-key-row > button, .lunmi-brain-catalog-row > .lunmi-action-button { flex: 0 0 auto; white-space: nowrap; }
 .lunmi-brain-hint { margin: 6px 0 0; font-size: 11.5px; color: var(--lunmi-text-muted); line-height: 1.5; }
-.lunmi-brain-muted { margin: 6px 0 0; font-size: 12px; color: var(--lunmi-text-muted); }
+.lunmi-brain-muted { margin: 6px 0 0; font-size: 12px; color: var(--lunmi-text-muted); overflow-wrap: anywhere; }
 .lunmi-brain-warn { color: var(--lunmi-warning); font-size: 12px; }
-.lunmi-brain-error-text { color: var(--lunmi-error); font-size: 12.5px; margin: 8px 0 0; }
-.lunmi-brain-ok-text { color: var(--lunmi-success); font-size: 12.5px; margin: 8px 0 0; }
-.lunmi-brain-check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 10px; }
-.lunmi-brain-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
-.lunmi-brain-primary { padding: 8px 14px; border-radius: 10px; border: none; background: var(--lunmi-accent);
-  color: var(--lunmi-on-accent); font-size: 13px; font-weight: 600; cursor: pointer; }
-.lunmi-brain-primary:hover:not(:disabled) { background: var(--lunmi-accent-hover); }
-.lunmi-brain-secondary { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle);
-  background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 13px; cursor: pointer; }
-.lunmi-brain-secondary:hover:not(:disabled) { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
-.lunmi-brain-quiet { padding: 7px 12px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle);
-  background: transparent; color: var(--lunmi-text-secondary); font-size: 12px; cursor: pointer; white-space: nowrap; }
-.lunmi-brain-warn-button { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--lunmi-warning);
-  background: transparent; color: var(--lunmi-warning); font-size: 13px; cursor: pointer; }
-.lunmi-brain-primary:disabled, .lunmi-brain-secondary:disabled, .lunmi-brain-quiet:disabled, .lunmi-brain-warn-button:disabled { opacity: .5; cursor: not-allowed; }
+.lunmi-brain-error-text { color: var(--lunmi-error); font-size: 12.5px; margin: 8px 0 0; overflow-wrap: anywhere; }
+.lunmi-brain-ok-text { color: var(--lunmi-success); font-size: 12.5px; margin: 8px 0 0; overflow-wrap: anywhere; }
+.lunmi-brain-check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 10px; line-height: 1.5; }
+.lunmi-brain-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 
+/* Pílulas de provedor: seleção única com marca real, exceção uniforme do painel (44px, pill).
+   O estado vem de `aria-pressed`; `role="group"` dá o nome acessível do conjunto. */
+.lunmi-brain-providers { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+.lunmi-brain-provider-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lunmi-brain-provider-group-title { font-size: 12px; font-weight: 600; color: var(--lunmi-text-secondary); }
+.lunmi-brain-provider-group-hint { font-size: 11.5px; color: var(--lunmi-text-muted); line-height: 1.45; }
+.lunmi-brain-provider-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.lunmi-brain-provider-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; max-width: 100%;
+  padding: 0 14px; border: 1px solid var(--lunmi-border-subtle); border-radius: 999px;
+  background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 13px; cursor: pointer; }
+.lunmi-brain-provider-btn[aria-pressed="true"] { background: var(--lunmi-accent); border-color: var(--lunmi-accent); color: var(--lunmi-on-accent); }
+.lunmi-brain-provider-btn svg { flex-shrink: 0; }
+.lunmi-brain-provider-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lunmi-brain-provider-flag { flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--lunmi-border-hairline);
+  background: var(--lunmi-bg-input); color: var(--lunmi-text-muted); font-size: 10.5px; }
+.lunmi-brain-provider-btn[aria-pressed="true"] .lunmi-brain-provider-flag { background: transparent; border-color: currentColor; color: inherit; opacity: .85; }
+.lunmi-brain-provider-flag-off { color: var(--lunmi-warning); border-color: color-mix(in srgb, var(--lunmi-warning) 55%, var(--lunmi-border-subtle)); }
+.lunmi-brain-provider-reasons { margin: 0; font-size: 11.5px; color: var(--lunmi-text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.lunmi-brain-probe { color: var(--lunmi-warning); border-color: color-mix(in srgb, var(--lunmi-warning) 55%, var(--lunmi-border-subtle)); background: transparent; }
+
+/* Catálogo de modelos (popover pesquisável) — contratos de comportamento inalterados. */
 .lunmi-brain-catalog { display: flex; flex-direction: column; gap: 4px; position: relative; margin-top: 10px; }
 .lunmi-brain-catalog-row { display: flex; gap: 8px; align-items: center; }
 .lunmi-brain-catalog-trigger { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle);
+  min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-border-subtle);
   background: var(--lunmi-bg-input); color: var(--lunmi-text-primary); font-size: 13px; cursor: pointer; text-align: left; }
 .lunmi-brain-catalog-trigger:disabled { opacity: .5; cursor: not-allowed; }
 .lunmi-brain-catalog-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

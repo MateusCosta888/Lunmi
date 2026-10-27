@@ -121,6 +121,18 @@ describe("Cartão Lunmi Node — visibilidade", () => {
 });
 
 describe("Cartão Lunmi Node — patches exatos", () => {
+  it("o mini chat segue o tema por padrão e guarda a alternativa preta", async () => {
+    const harness = bridge();
+    panel();
+    const select = await screen.findByTestId("node-chat-appearance") as HTMLSelectElement;
+    expect(select.value).toBe("theme");
+    fireEvent.change(select, { target: { value: "black" } });
+    await waitFor(() => expect(harness.patches.at(-1)).toEqual({ chat_appearance: "black" }));
+    await waitFor(() => expect(select.value).toBe("black"));
+    fireEvent.change(select, { target: { value: "theme" } });
+    await waitFor(() => expect(select.value).toBe("theme"));
+  });
+
   it("cada controlo envia exatamente a sua chave snake_case", async () => {
     const harness = bridge();
     panel();

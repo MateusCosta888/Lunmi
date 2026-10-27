@@ -21,6 +21,12 @@ import { GalaxyOrb } from "./orb/GalaxyOrb";
 import { AttachmentsBar } from "./Attachments";
 import { ThoughtLine } from "./ThoughtLine";
 import { VoiceControls } from "../voice/VoiceControls";
+import { useVoice } from "../voice/useVoice";
+import { WebSources } from "../web/WebSources";
+import { useWebState } from "../web/useWebState";
+import { VoiceInputControls } from "../voice/VoiceInputControls";
+import type { VoiceInputApi } from "../voice/useVoiceInput";
+import { deriveOrbMode } from "./orb/orbState";
 import { useBentoSurface } from "../../shared/bento";
 
 export interface ChatPanelProps {
@@ -28,6 +34,10 @@ export interface ChatPanelProps {
   session: SessionReadyPayload | null;
   draft?: string;
   setDraft?: React.Dispatch<React.SetStateAction<string>>;
+  /** VOICE REFINEMENTS V2: instância única do ditado (montada no App) + aviso do hold. */
+  voiceInput?: { api: VoiceInputApi; holdNotice?: string };
+  /** Reporta o modo atual do compositor ao controlador de hold (mesmo `chat.send`, modo normal). */
+  reportVoiceMode?: (mode: ChatMode) => void;
   modelPicker?: React.ReactNode;
   modelChanging?: boolean;
   /** Autoaprovação vive na linha utilitária do compositor; o estado real continua no App. */
@@ -82,7 +92,7 @@ function bubbleStyle(role: string): React.CSSProperties {
 }
 
 export function ChatPanel({
-  chat, session, draft, setDraft, modelPicker, modelChanging = false, autoApprove,
+  chat, session, draft, setDraft, voiceInput, reportVoiceMode, modelPicker, modelChanging = false, autoApprove,
   attachments, attachmentPayload, onPickAttachment, onRemoveAttachment,
   attachSupported = false, attachPicking = false, attachNotice = null,
   onDismissAttachNotice, onAttachmentsAccepted,
@@ -93,6 +103,24 @@ export function ChatPanel({
   const [legacyMode, setMode] = useState<ChatMode>("execute");
   const automatic = session?.capabilities.auto === true;
   const mode: ChatMode = automatic ? "auto" : legacyMode;
+  // ORB REACTIVE V1: a orb reage só aos estados reais (mic listening; starting/transcribing/
+  // tarefa/loading/synthesizing = thinking; playing = speaking). Sem áudio medido, sem estados
+  // inventados; `useVoice` é o hook existente (o GET inicial é o do próprio hook).
+  const { voice } = useVoice(session?.session_id);
+  const orbMode = deriveOrbMode({
+    inputState: voiceInput?.api.state?.state ?? null,
+    ttsState: voice?.state ?? null,
+    taskWorking: chat.busy,
+  });
+  // WEB-SEARCH-V1: chip discreto do estado canónico (a preparar/a pesquisar/a consultar).
+  // Erros e indisponibilidade pertencem ao cartão em Configurações; aqui só o turno em curso.
+  const { web } = useWebState(session?.session_id, session?.capabilities?.web_search === true);
+  const webChip = web && web.enabled
+    ? (web.state === "starting" ? "A preparar a pesquisa…"
+      : web.state === "searching" ? "A pesquisar na web…"
+      : web.state === "reading" ? "A consultar fontes…" : "")
+    : "";
+  useEffect(() => { reportVoiceMode?.(mode); }, [mode, reportVoiceMode]);
   const [locationBusy, setLocationBusy] = useState(false);
   const listEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -175,7 +203,7 @@ export function ChatPanel({
     >
       <div className="lunmi-conversation-body" data-has-messages={chat.messages.length > 0}>
         <div className="lunmi-conversation-face">
-          <GalaxyOrb />
+          <GalaxyOrb mode={orbMode} />
           {chat.messages.length === 0 && (
             <div className="lunmi-welcome"><h1>Como posso ajudar?</h1>
               <p>Converse, organize uma ideia ou descreva uma tarefa.<br />Você controla o que a Lunmi faz no Windows.</p>
@@ -204,6 +232,18 @@ export function ChatPanel({
             style={bubbleStyle(message.role)}
           >
             {message.role === "assistant" ? <SafeMarkdown text={message.text} /> : message.text}
+            {message.role === "assistant" && ((message.sources?.length ?? 0) > 0 || message.search_source === "lunmi" || message.search_source === "provider") && (
+              <WebSources
+                sources={message.sources ?? []}
+                sessionId={session?.session_id}
+                taskId={message.task_id}
+                searchSource={message.search_source}
+                evidenceStatus={message.evidence_status}
+                requestStatus={message.request_status}
+                fallbackTriggered={message.fallback_triggered}
+                webFallback={message.web_fallback}
+              />
+            )}
             {message.state && message.state !== "completed" && (
               <small role="status" aria-live="polite" aria-atomic="true" style={{ color: TOKENS.textSecondary }}>
                 {message.state === "streaming" ? "A receber resposta…"
@@ -350,6 +390,9 @@ export function ChatPanel({
             <span className="lunmi-composer-label"><Icon name={mode === "execute" ? "monitor" : "conversation"} size={15} />
               {automatic ? "Mensagem para a Lunmi" : mode === "converse" ? "Converse com a Lunmi" : "Sua próxima tarefa"}</span>
             <span className="lunmi-composer-presence" data-ready={Boolean(session)}><i aria-hidden="true" />{composerStatus}</span>
+            {webChip && (
+              <span className="lunmi-web-chip" role="status" aria-live="polite" data-testid="web-chip" data-state={web?.state}>{webChip}</span>
+            )}
           </div>
           <div className="lunmi-input-well">
           <textarea ref={inputRef} data-testid="composer" aria-label="Instrução" className="lunmi-composer-input"
@@ -387,7 +430,6 @@ export function ChatPanel({
                 <span className="lunmi-auto-approve-state">{autoApprove.enabled ? "ligada" : "desligada"}</span>
               </button>
             )}
-            <VoiceControls sessionId={session?.session_id} />
             <div className="lunmi-composer-actions">
           {!automatic && <div role="radiogroup" aria-label="Modo" className="lunmi-mode">
             {(["execute", "converse"] as ChatMode[]).map(option => {
@@ -402,6 +444,18 @@ export function ChatPanel({
           <span className="lunmi-composer-counter" data-testid="composer-counter" data-near-limit={text.length >= MAX_COMPOSER_CHARS * .9} aria-label={`${text.length} de ${MAX_COMPOSER_CHARS} caracteres`}>{text.length}/{MAX_COMPOSER_CHARS}</span>
           {chat.busy ? <button type="button" data-testid="stop-task" className="lunmi-send lunmi-stop" aria-label="Parar tarefa" title="Parar tarefa" onClick={() => void chat.stop()}><Icon name="stop" size={16} /><span>Parar</span></button>
             : <button type="submit" data-testid="send-task" className="lunmi-send" aria-label="Enviar mensagem" title="Enviar · Enter" disabled={!canSend}><span>{mode === "execute" ? "Executar" : "Enviar"}</span><Icon name="enter" size={16} /></button>}
+          {/* VOICE/NODE V3: microfone redondo só com ícone, imediatamente à direita de
+              Enviar/Parar tarefa; estados normais saíram do texto visível (aria/title/sr-only). */}
+          {voiceInput && (
+            <VoiceInputControls
+              api={voiceInput.api}
+              supportedBySession={session?.capabilities.voice_input === true}
+              draft={text}
+              setDraft={setText}
+              holdNotice={voiceInput.holdNotice}
+            />
+          )}
+          <VoiceControls sessionId={session?.session_id} />
             </div>
           </div>
         </div>

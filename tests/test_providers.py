@@ -140,7 +140,7 @@ def test_named_cloud_providers_require_a_key() -> None:
 
 
 def test_cli_providers_accept_neither_key_nor_base_url() -> None:
-    for provider in ("claude", "agy", "qoder", "kilo", "kiro", "opencode", "codex"):
+    for provider in ("claude", "agy", "qoder", "kilo", "kiro", "opencode", "codex", "freepi"):
         Settings(provider=provider, model="model").validate()
         with pytest.raises(ConfigurationError):
             Settings(provider=provider, model="model", api_key="key").validate()

@@ -58,6 +58,8 @@ export interface ChatAttachmentPayload {
 }
 
 export interface ChatTaskState {
+  conversationId?: string;
+  history?: import('../../shared/types').ChatHistorySnapshotDto;
   messages: ChatMessageDto[];
   recentTasks: TaskStateDto[];
   task: TaskStateDto | null;
@@ -89,13 +91,8 @@ export function useChatTask(
   const [submitting, setSubmitting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [memoryVersion, setMemoryVersion] = useState(0);
-  const taskRef = useRef<TaskStateDto | null>(null);
   const liveStateRef = useRef<ChatProjectionState>(projection);
   const frameRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    taskRef.current = projection.task;
-  }, [projection.task]);
 
   const cancelPendingFrame = useCallback(() => {
     if (frameRef.current !== null) {
@@ -122,7 +119,12 @@ export function useChatTask(
     const current = liveStateRef.current.sessionId;
     if (!nextId || nextId === current) return;
     const fresh = createChatProjection(nextId);
-    taskRef.current = null;
+    if (session?.chat_history) {
+      const history = session.chat_history;
+      fresh.conversationId = history.conversation.id;
+      fresh.history = history;
+      fresh.messages = history.messages ?? [];
+    }
     liveStateRef.current = fresh;
     if (frameRef.current !== null) {
       cancelAnimationFrame(frameRef.current);
@@ -207,7 +209,12 @@ export function useChatTask(
         if (event.type === "memory.changed") setMemoryVersion((value) => value + 1);
       });
     }
+    let alive = true;
     let local = createChatProjection(session?.session_id ?? "");
+    if (session?.chat_history) {
+      local = { ...local, conversationId: session.chat_history.conversation.id,
+        history: session.chat_history, messages: session.chat_history.messages ?? [] };
+    }
     liveStateRef.current = local;
     setProjection(local);
     const flush = () => {
@@ -250,7 +257,18 @@ export function useChatTask(
       if (structural || terminal) flush();
       else stage();
     });
+    if (session?.capabilities.chat_history) {
+      void sendCommand<import('../../shared/types').ChatHistorySnapshotDto>('chat.history.get', {}).then(history => {
+        if (!alive || local.conversationId) return;
+        const outcome = applyChatEvent(local, { type: 'chat.history.changed', payload: {
+          ...history, conversation_id: history.conversation.id, reason: 'selected',
+          session_id: session.session_id,
+        } });
+        if (outcome) { local = outcome.state; liveStateRef.current = local; flush(); }
+      }).catch(() => { if (alive) setLastError('Não foi possível recuperar o histórico. Pode continuar a conversar.'); });
+    }
     return () => {
+      alive = false;
       off();
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
@@ -296,6 +314,7 @@ export function useChatTask(
       try {
         // Sem anexos, o payload continua exatamente { mode, text } — o fluxo normal não muda.
         const payload: Record<string, unknown> = { mode, text: instruction };
+        if (liveStateRef.current.conversationId) payload.conversation_id = liveStateRef.current.conversationId;
         if (attachments && attachments.length > 0) {
           payload.attachments = attachments;
         }
@@ -314,7 +333,7 @@ export function useChatTask(
   );
 
   const stop = useCallback(async () => {
-    const current = taskRef.current;
+    const current = liveStateRef.current.task;
     if (!current) {
       return;
     }
@@ -329,7 +348,7 @@ export function useChatTask(
 
   const approve = useCallback(
     async (requestId: string, approved: boolean) => {
-      const current = taskRef.current;
+      const current = liveStateRef.current.task;
       try {
         await sendCommand("task.confirm", {
           request_id: requestId,
@@ -346,7 +365,7 @@ export function useChatTask(
 
   const answerChoice = useCallback(
     async (requestId: string, index: number | null) => {
-      const current = taskRef.current;
+      const current = liveStateRef.current.task;
       const payload: Record<string, unknown> = {
         request_id: requestId,
         kind: "choice",
@@ -367,7 +386,7 @@ export function useChatTask(
 
   const answerLocation = useCallback(
     async (requestId: string, path: string) => {
-      const current = taskRef.current;
+      const current = liveStateRef.current.task;
       try {
         await sendCommand("task.answer", {
           request_id: requestId,
@@ -398,6 +417,8 @@ export function useChatTask(
   }, [projection.task]);
 
   return {
+    conversationId: projection.conversationId,
+    history: projection.history,
     messages: projection.messages,
     recentTasks: projection.recentTasks,
     task: projection.task,

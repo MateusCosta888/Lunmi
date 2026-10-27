@@ -9,10 +9,10 @@ const task: TaskStateDto = { task_id: "real-state", mode: "execute", phase: "run
 
 it("mostra só estados recebidos, não inventa etapas ou sucesso, e recolhe depois da falha", () => {
   const { rerender } = render(<ThoughtLine task={task} />);
-  expect(screen.getByRole("status").textContent).toBe("Pensando");
+  expect(screen.getByRole("status").textContent).toBe("Pensando…");
   expect(screen.queryByText("Verificando")).toBeNull();
   rerender(<ThoughtLine task={{ ...task, progress: "Executing" }} />);
-  expect(screen.getByRole("status").textContent).toBe("Executando");
+  expect(screen.getByRole("status").textContent).toBe("Pensando…");
   const trace = screen.getByRole("list"); expect(trace.textContent).toBe("PensandoExecutando");
   rerender(<ThoughtLine task={{ ...task, phase: "failed", progress: "Failed" }} />);
   expect(screen.getByRole("status").textContent).toBe("Atividade encerrada com falha");
@@ -74,9 +74,9 @@ it("setas partem do botão focado por Tab, não da rota selecionada", () => {
   expect(change).toHaveBeenLastCalledWith("brain");
 });
 
-it("conversa sem eventos de progresso não inventa etapas nem oferece expansão vazia", () => {
+it("conversa sem eventos de progresso mostra apenas a preparação real", () => {
   render(<ThoughtLine task={{ ...task, mode: "converse", progress: "" }} />);
-  expect(screen.getByRole("status").textContent).toBe("Preparando resposta");
+  expect(screen.getByRole("status").textContent).toBe("Pensando…");
   expect(screen.queryByRole("button")).toBeNull();
-  expect(screen.queryByRole("list")).toBeNull();
+  expect(screen.getByRole("list").textContent).toBe("Preparando resposta");
 });

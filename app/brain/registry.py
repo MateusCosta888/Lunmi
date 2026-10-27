@@ -37,6 +37,7 @@ LABELS = {
     "kilo": "Kilo CLI",
     "kiro": "Kiro CLI",
     "opencode": "OpenCode",
+    "freepi": "Free Pi CLI",
 }
 
 
@@ -63,6 +64,10 @@ class BrainDescriptor:
     executable: str | None = None
     requires_api_key: bool = True
     capabilities: Capabilities = Capabilities()
+    # Why an existing runtime cannot be selected. Empty for every provider that is
+    # implemented (or merely unwired): this is for a CLI that is known to exist and
+    # is known *not* to expose a usable headless contract, so the UI can say so.
+    unavailable_reason: str = ""
 
     @property
     def implemented(self) -> bool:
@@ -87,6 +92,7 @@ def _load_defaults() -> None:
     from app.brain.cli import process as cli_process
     from app.brain.cli.catalog import find_spec
     from app.brain.cli.headless import HeadlessCliBrain
+    from app.brain.cli.known import known_runtime
     from app.brain.codex_brain import CodexBrain, CodexBrain as _CodexBrain
 
     def api(settings: Settings) -> Brain:
@@ -124,10 +130,19 @@ def _load_defaults() -> None:
     for provider_id in sorted(CLI_PROVIDERS - {"codex"}):
         spec = find_spec(provider_id)
         if spec is None:
-            # Catalogued as a known runtime but not wired yet: visible, not selectable.
-            register(BrainDescriptor(provider_id, LABELS.get(provider_id, provider_id),
-                                     BrainKind.AGENT_RUNTIME, BrainLocation.LOCAL_CLI,
-                                     factory=None, requires_api_key=False))
+            # A known runtime without a headless CliSpec: visible, not selectable.
+            # The reason is part of the contract so the UI never shows a dead entry
+            # without saying why (free-pi-cli is interactive only).
+            known = known_runtime(provider_id)
+            register(BrainDescriptor(
+                provider_id,
+                known.label if known is not None else LABELS.get(provider_id, provider_id),
+                BrainKind.AGENT_RUNTIME, BrainLocation.LOCAL_CLI,
+                factory=None,
+                executable=known.executable if known is not None else None,
+                requires_api_key=False,
+                unavailable_reason=known.unavailable_reason if known is not None else "",
+            ))
             continue
         register(BrainDescriptor(spec.id, spec.label, BrainKind.AGENT_RUNTIME, BrainLocation.LOCAL_CLI,
                                  factory=cli_factory(spec.id), executable=spec.executable,

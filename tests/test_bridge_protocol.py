@@ -45,12 +45,15 @@ def test_constants_and_capabilities_contract() -> None:
     caps_minimal = protocol.default_capabilities()
     assert caps_minimal == {
         "integrations": False,
+        "chat_history": False,
         "auto": False,
         "converse": False,
         "execute": False,
         "memory": False,
         "brain": False,
         "file_read": False,
+        "spotify": False,
+        "voice_input": False,
         "web_search": False,
         "browser_use": False,
     }
@@ -59,13 +62,16 @@ def test_constants_and_capabilities_contract() -> None:
     caps_full = protocol.capabilities_for_commands(protocol.COMMAND_TYPES)
     assert caps_full == {
         "integrations": True,
+        "chat_history": True,
         "auto": True,
         "converse": True,
         "execute": True,
         "memory": True,
         "brain": True,
         "file_read": True,
-        "web_search": False,
+        "spotify": True,
+        "voice_input": True,
+        "web_search": True,
         "browser_use": False,
     }
 
@@ -79,12 +85,18 @@ def test_file_read_capability_is_additive_and_an_old_v1_client_still_works() -> 
     """
     v1_client_knowledge = ("converse", "execute", "memory", "brain", "web_search", "browser_use")
     v1_expected = {"converse": True, "execute": True, "memory": True, "brain": True,
-                   "web_search": False, "browser_use": False}
+                       "web_search": True, "browser_use": False}
 
     caps = protocol.capabilities_for_commands(protocol.COMMAND_TYPES)
     assert set(v1_client_knowledge) <= set(caps)
     assert {key: caps[key] for key in v1_client_knowledge} == v1_expected
     assert caps["file_read"] is True
+    # VOICE INPUT V1/V2 é aditiva e ortogonal à saída: a capability própria só é verdadeira
+    # com os cinco comandos de ditado registados (incluindo `finish`), nunca por causa dos
+    # comandos `voice.*` de TTS.
+    assert caps["voice_input"] is True
+    tts_only = ("voice.get", "voice.set", "voice.test", "voice.speak_last", "voice.stop")
+    assert protocol.capabilities_for_commands(tts_only)["voice_input"] is False
     # O comando é opcional no contrato: quem não o conhece nunca o envia e segue funcionando.
     assert "fs.read" in protocol.COMMAND_TYPES
     assert protocol.capabilities_for_commands(("chat.send", "task.cancel", "task.confirm",
@@ -273,12 +285,15 @@ def test_server_hello_ready_honest_capabilities_unknown_command_and_shutdown_in_
     assert len(ready_events) == 1
     assert ready_events[0]["payload"]["capabilities"] == {
         "integrations": False,
+        "chat_history": False,
         "auto": False,
         "converse": False,
         "execute": False,
         "memory": False,
         "brain": False,
         "file_read": False,
+        "spotify": False,
+        "voice_input": False,
         "web_search": False,
         "browser_use": False,
     }
@@ -468,7 +483,7 @@ def test_subprocess_stdio_only_jsonl_and_no_personal_db_touched(tmp_path: Path) 
     assert ready_evt["payload"]["capabilities"]["memory"] is True
     assert ready_evt["payload"]["capabilities"]["brain"] is True
     assert ready_evt["payload"]["capabilities"]["file_read"] is True
-    assert ready_evt["payload"]["capabilities"]["web_search"] is False
+    assert ready_evt["payload"]["capabilities"]["web_search"] is True
 
     # Nenhum banco SQLite deve ser criado apenas para um hello/shutdown (lazy service init)
     assert list(tmp_path.rglob("*.sqlite3")) == []

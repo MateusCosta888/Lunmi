@@ -43,7 +43,7 @@ O modo residente reutiliza a bridge e a sessão da janela principal. `desktop/el
 
 O app exclui sua própria árvore de processos da seleção de alvos. Autorização, despacho e verificação são conceitos separados. Uma operação incerta não deve virar repetição silenciosa.
 
-Streaming usa os eventos públicos do IPC existente, com identidades de sessão, tarefa e resposta. Texto incremental, texto estável e resultados verificados são conceitos separados; raciocínio interno não é publicado. O suporte pertence a cada transporte, sem simular streaming nos restantes. Não há sistema de voz neste lote.
+Streaming usa os eventos públicos do IPC existente, com identidades de conversa, sessão, tarefa e resposta. Texto incremental, texto estável e resultados verificados são conceitos separados; raciocínio interno não é publicado. O suporte pertence a cada transporte, sem simular streaming nos restantes. Os gestores de voz e ditado comunicam com workers em runtimes separados; não partilham raciocínio interno ou credenciais com o renderer.
 
 `app/integrations` mantém OAuth e ferramentas Gmail limitadas. O modelo não escolhe arbitrariamente a conta ligada. Conteúdo de email é dado externo não confiável, não autorização. Rascunhos pendentes ficam em RAM; enviar exige confirmação manual e não é repetido automaticamente após resultado incerto.
 
@@ -52,5 +52,11 @@ Streaming usa os eventos públicos do IPC existente, com identidades de sessão,
 `app/memory` mantém o documento canónico de perfil em SQLite, um índice FTS derivado, revisão para edição concorrente e um nível de Desfazer. Propostas legadas, episódios e histórico opt-in permanecem na gestão detalhada. Perfil, janela de turnos em RAM e episódios têm papéis diferentes. O contexto é limitado; conteúdo recuperado pode acompanhar chamadas ao provedor de IA.
 
 O frontend usa essa API, sem abrir SQLite. Importação e operações destrutivas mantêm confirmação e validação no backend.
+
+`app/chat_history.py` guarda conversas e fontes públicas num SQLite próprio. O backend controla
+a conversa ativa e restaura apenas o seu contexto elegível. O histórico é separado da memória
+pessoal e não repete ferramentas, confirmações ou fala durante a recuperação. As duas janelas
+recebem a mesma projeção pública. Pesquisa web mantém conteúdo de trabalho privado em RAM;
+apenas as fontes públicas elegíveis acompanham a resposta e o histórico.
 
 Código e lockfiles são públicos. Configurações de máquina, credenciais, bancos, exportações e evidências de execução são locais e ignorados pelo Git. O checkout não é um instalador empacotado; prepare dependências conforme o README.

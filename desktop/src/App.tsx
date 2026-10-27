@@ -3,11 +3,15 @@ import { getBridgeApi, makeSendCommand, type SendCommandFn } from "./shared/ipc/
 import { usePresenceDraft } from "./shared/ipc/presence";
 import { useSession } from "./shared/ipc/useSession";
 import { Icon } from "./shared/ui";
-import type { ApprovalDto, BrainGetDto, BrainStateDto, MemoryProfileDto, UiPreferencesDto } from "./shared/types";
+import type { ApprovalDto, BrainGetDto, BrainStateDto, ChatMode, MemoryProfileDto, UiPreferencesDto } from "./shared/types";
 import { SessionFailureStrip } from "./features/session/SessionState";
 import { INTRO_DURATION_MS, StartupScreen } from "./features/session/StartupScreen";
 import { ChatPanel } from "./features/chat/ChatPanel";
+import { HistoryNavigation } from './features/chat/HistoryNavigation';
 import { useChatTask } from "./features/chat/useChatTask";
+import { useVoiceInput } from "./features/voice/useVoiceInput";
+import { useVoiceWarmup } from "./features/voice/useVoiceWarmup";
+import { useHoldController } from "./features/voice/useHoldController";
 import { BrainPanel } from "./features/brain/BrainPanel";
 import { MemoryPanel } from "./features/memory/MemoryPanel";
 import type { MemoryProfileDraft } from "./features/memory/MemoryPanel";
@@ -24,6 +28,7 @@ import { WindowControls } from "./features/shell/WindowControls";
 import { RubberNavigation } from "./shared/RubberNavigation";
 import { getTheme } from "./shared/theme";
 import { applyTheme } from "./shared/themeDom";
+import "./shared/settings.css";
 
 const AppsPanel = lazy(() => import("./features/integrations/AppsPanel"));
 type View = "chat" | "brain" | "memory" | "preferences" | "apps";
@@ -43,6 +48,7 @@ export function App(): React.ReactElement {
   }, [session.sessionVersion]);
   const chat = useChatTask(sendCommand, session.session, session.sessionVersion);
   const [view, setView] = useState<View>("chat");
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const [brain, setBrain] = useState<BrainGetDto | null>(null);
   const [approval, setApproval] = useState<ApprovalDto | null>(null);
@@ -53,7 +59,7 @@ export function App(): React.ReactElement {
   const [memoryDraft, setMemoryDraft] = useState<{ sessionId: string } & MemoryProfileDraft | null>(null);
   // BACKGROUND V1: rascunho partilhado com o mini pelo main (mesma assinatura de setter; nunca
   // persistido; snapshot tardio não reverte edição mais nova).
-  const [draft, setDraft] = usePresenceDraft();
+  const [draft, setDraft] = usePresenceDraft(chat.conversationId);
   const [shellError, setShellError] = useState("");
   // Resultado final de uma troca de cérebro que demorou mais que a resposta do comando:
   // o backend publica o estado em `brain.updated` e é aqui que ele fica visível.
@@ -77,6 +83,23 @@ export function App(): React.ReactElement {
   const [fontReady, setFontReady] = useState(!document.fonts);
   const notifiedSession = useRef("");
   const sessionId = session.session?.session_id ?? "";
+  // VOICE REFINEMENTS V2: o ditado vive UMA única vez no App — o controlador de hold funciona
+  // com qualquer vista aberta, e o painel do compositor é consumidor da mesma instância (um só
+  // consumidor do `voice.input.result`). O modo reportado pelo ChatPanel é o modo do envio
+  // automático: a mesma `chat.send`, sem parser, fila ou retry próprios.
+  const voiceApi = useVoiceInput(sessionId || undefined, session.session?.capabilities.voice_input === true);
+  const warmup = useVoiceWarmup(sessionId || undefined);
+  const composerModeRef = useRef<ChatMode>("execute");
+  const reportVoiceMode = useCallback((mode: ChatMode) => { composerModeRef.current = mode; }, []);
+  const hold = useHoldController({
+    api: voiceApi,
+    sessionId: sessionId || undefined,
+    send: async (mode, text) => {
+      const outcome = await chat.send(mode, text);
+      return { accepted: outcome.accepted };
+    },
+    getMode: () => composerModeRef.current,
+  });
   // Identidade estável: o painel depende disto em useCallback; sem isto, cada render recria a
   // carga do perfil e transforma o `memory.profile.get` em loop de IPC.
   const onMemoryDraftChange = useCallback((next: MemoryProfileDraft | null) => {
@@ -112,7 +135,7 @@ export function App(): React.ReactElement {
   useEffect(() => {
     const mq = window.matchMedia?.("(max-width: 900px)");
     if (!mq) return;
-    const sync = (event: MediaQueryListEvent) => setNavCollapsed(event.matches);
+    const sync = (event: MediaQueryListEvent) => { setNavCollapsed(event.matches); setHistoryDrawerOpen(false); };
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
@@ -188,7 +211,8 @@ export function App(): React.ReactElement {
   }, [sendCommand, session.status, chat.memoryVersion, view, revision, sessionId]);
 
   const initialized = session.status === "ready" && Boolean(sessionId)
-    && controlsSession === sessionId && memorySession === sessionId && fontReady && !startupError;
+    && controlsSession === sessionId && memorySession === sessionId && fontReady && !startupError
+    && warmup.settled;
   useEffect(() => {
     if (!initialized || !introFinished || opened) { setLeaving(false); return; }
     const finish = () => { openedRef.current = true; setOpened(true); };
@@ -246,7 +270,9 @@ export function App(): React.ReactElement {
     leaving={leaving}
     error={session.status === "failed" || Boolean(startupError)}
     message={session.status === "failed" ? "Não foi possível iniciar o backend Python."
-      : startupError || (session.status === "ready" ? "Carregando preferências e memória…" : "Iniciando sistema…")}
+      : startupError || (session.status === "ready"
+        ? (warmup.settled ? "Carregando preferências e memória…" : "A preparar a voz…")
+        : "Iniciando sistema…")}
     onRetry={() => {
       setControlsSession("");
       setMemorySession("");
@@ -276,13 +302,23 @@ export function App(): React.ReactElement {
           <button type="button" className="lunmi-nav-collapse" data-testid="nav-collapse-toggle"
             aria-expanded={!navCollapsed} aria-label={navCollapsed ? "Expandir navegação" : "Recolher navegação"}
             title={navCollapsed ? "Expandir navegação" : "Recolher navegação"}
-            onClick={() => setNavCollapsed(value => !value)}>
+            onClick={() => { setNavCollapsed(value => !value); setHistoryDrawerOpen(false); }}>
             <Icon name={navCollapsed ? "expand" : "collapse"} size={20} />
           </button>
         </div>
         <GlassSurface radius={18} className="lunmi-sidebar-glass">
           <div className="lunmi-sidebar-inner">
-        <RubberNavigation items={NAV} value={view} disabled={modelBusy} onChange={next => setView(next as View)} />
+        <RubberNavigation items={NAV} value={view} disabled={modelBusy} onChange={next => {
+          setView(next as View);
+          if (next === 'chat' && navCollapsed) setHistoryDrawerOpen(true);
+        }} branch={session.session?.capabilities.chat_history === true ? {
+          id: 'chat', controls: 'conversation-history', expanded: navCollapsed ? historyDrawerOpen : view === 'chat',
+          content: <HistoryNavigation
+          sendCommand={sendCommand} activeId={chat.conversationId} collapsed={navCollapsed}
+          expanded={view === 'chat'} drawerOpen={historyDrawerOpen} onDrawerClose={() => setHistoryDrawerOpen(false)}
+          locked={chat.busy || chat.submitting || modelBusy || voiceApi.isActive}
+          onSelected={() => { setView('chat'); attachments.clear(); voiceApi.dismissTranscript(); }} />,
+        } : undefined} />
           </div>
         </GlassSurface>
       </aside>
@@ -298,6 +334,9 @@ export function App(): React.ReactElement {
             onRestart={() => void session.restart()} />
         )}
         {shellError && <p role="alert" className="lunmi-shell-error">{shellError}</p>}
+        {warmup.settledMessage && (
+          <p role="status" className="lunmi-shell-error" data-testid="voice-notice">{warmup.settledMessage}</p>
+        )}
         {brainNotice && (
           <p role={brainNotice.error ? "alert" : "status"} className="lunmi-shell-error"
             data-testid="brain-notice">{brainNotice.text}</p>
@@ -310,7 +349,17 @@ export function App(): React.ReactElement {
         <div className="lunmi-shell-body">
           <main className="lunmi-main">
             <div className="lunmi-chat-view" hidden={view !== "chat"}>
+              {chat.history && (chat.history.conversation.temporary || !chat.history.options.enabled) && <p className="lunmi-history-banner" role="status">
+                {chat.history.conversation.temporary ? 'Conversa temporária · as mensagens não são guardadas no histórico.'
+                  : !chat.history.options.enabled ? 'Gravação desligada · as próximas mensagens ficam só nesta sessão.'
+                  : chat.history.conversation.title}
+              </p>}
+              {chat.history?.error && <p className="lunmi-history-banner" role="alert">{chat.history.error}</p>}
+              {chat.history?.has_more && <button type="button" className="lunmi-link" disabled={chat.busy}
+                onClick={() => void sendCommand('chat.history.read', { conversation_id: chat.conversationId,
+                  before: chat.history?.before }).catch(err => setShellError(String(err.message ?? 'Não foi possível carregar mensagens.')))}>Carregar mensagens anteriores</button>}
               <ChatPanel chat={chat} session={session.session} draft={draft} setDraft={setDraft} modelChanging={modelBusy}
+                voiceInput={{ api: voiceApi, holdNotice: hold.notice }} reportVoiceMode={reportVoiceMode}
                 autoApprove={{ ready: Boolean(approval), enabled: approval?.auto_approve ?? false, busy: policyBusy || modelBusy, onToggle: next => void changePolicy(next) }}
                 attachments={attachments.items}
                 attachmentPayload={() => attachments.items.map(item => ({ name: item.name, text: attachments.contents.get(item.id) ?? "", size_bytes: item.size }))}
@@ -331,6 +380,7 @@ export function App(): React.ReactElement {
               draft={memoryDraft && memoryDraft.sessionId === sessionId ? { text: memoryDraft.text, baseRevision: memoryDraft.baseRevision } : null}
               onDraftChange={onMemoryDraftChange} />}
             {view === "preferences" && <PreferencesPanel sendCommand={sendCommand} session={session.session}
+              history={chat.history} historyLocked={chat.busy || chat.submitting}
               onThemeChanged={theme => { setPreferences(current => current ? { ...current, theme } : current); setRevision(r => r + 1); }} />}
           </main>
           {view === "chat" && (railCollapsed ? (

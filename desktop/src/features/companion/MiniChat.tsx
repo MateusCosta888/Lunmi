@@ -16,10 +16,14 @@
  * - O erro local é limpo em nova tentativa e em nova sessão (a árvore fica sempre montada).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowUp, Maximize2, Square, Volume2 } from "lucide-react";
+import { MessageBubble } from "../../components/ui/message-bubble";
+import { useAutoResizeTextarea } from "../../components/ui/use-auto-resize-textarea";
 import { useCompanionChat } from "../chat/useCompanionChat";
+import { WebSources } from "../web/WebSources";
 import { presenceAction, usePresenceDraft, usePresenceSession, usePresenceVoiceState } from "../../shared/ipc/presence";
 import { MAX_DRAFT_CHARS } from "../../shared/presence";
-import { Icon } from "../../shared/ui";
+import { BrandMark, Icon } from "../../shared/ui";
 import type { ChatMode } from "../../shared/types";
 
 const PHASE_TEXT: Record<string, string> = {
@@ -46,11 +50,11 @@ export interface MiniChatProps {
 export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProps = {}): React.ReactElement {
   const chat = useCompanionChat();
   const { session } = usePresenceSession();
-  const [draft, setDraft] = usePresenceDraft();
+  const [draft, setDraft] = usePresenceDraft(chat.conversationId);
   const voice = usePresenceVoiceState();
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useAutoResizeTextarea(draft, interactive);
   const stickToBottom = useRef(true);
   const lastFocusKey = useRef<number | undefined>(undefined);
 
@@ -107,8 +111,17 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
   return (
     <section className="lunmi-mini" aria-label="Mini chat da Lunmi" data-testid="mini-chat">
       <header className="lunmi-mini-head">
-        <strong>Lunmi</strong>
+        <div className="lunmi-mini-identity">
+          <span className="lunmi-mini-avatar" aria-hidden="true"><BrandMark size={24} /></span>
+          <div><strong>Lunmi</strong><span className="lunmi-mini-subtitle">{session ? "Conversa em segundo plano" : "A ligar…"}</span></div>
+        </div>
         <div className="lunmi-mini-head-actions">
+          <button type="button" data-testid="mini-expand" className="lunmi-mini-icon-button"
+            aria-label="Abrir conversa principal" title="Abrir conversa principal"
+            disabled={!interactive} tabIndex={interactive ? 0 : -1}
+            onClick={() => void presenceAction("show-main").catch(() => undefined)}>
+            <Maximize2 size={16} aria-hidden="true" />
+          </button>
           <button type="button" data-testid="mini-settings" className="lunmi-mini-icon-button"
             aria-label="Abrir definições" title="Abrir definições"
             disabled={!interactive} tabIndex={interactive ? 0 : -1}
@@ -149,12 +162,33 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
 
       <div className="lunmi-mini-messages" data-testid="mini-messages" ref={listRef} role="log" aria-live="polite"
         onScroll={onListScroll}>
-        {chat.messages.length === 0 && <p className="lunmi-mini-empty">Ainda não há conversa nesta sessão.</p>}
+        {chat.history?.conversation.temporary && <p role="status">Conversa temporária · não guardada no histórico.</p>}
+        {chat.history && !chat.history.options.enabled && <p role="status">Gravação do histórico desligada.</p>}
+        {chat.history?.error && <p role="alert">{chat.history.error}</p>}
+        {chat.messages.length === 0 && <div className="lunmi-mini-empty">
+          <span aria-hidden="true"><BrandMark size={40} /></span>
+          <strong>Em que posso ajudar?</strong>
+          <p>Ainda não há conversa nesta sessão.</p>
+        </div>}
         {chat.messages.map(message => (
-          <p key={`${message.task_id ?? "s"}:${message.message_id ?? message.text}`}
-            className="lunmi-mini-bubble" data-role={message.role} data-testid={`mini-message-${message.message_id ?? ""}`}>
-            {message.text}
-          </p>
+          <React.Fragment key={`${message.task_id ?? "s"}:${message.message_id ?? message.text}`}>
+            <MessageBubble variant={message.role === "user" ? "outgoing" : "incoming"} testId={`mini-message-${message.message_id ?? ""}`}>
+              {message.text}
+            </MessageBubble>
+            {message.role === "assistant" && ((message.sources?.length ?? 0) > 0 || message.search_source === "lunmi" || message.search_source === "provider") && (
+              <WebSources
+                compact
+                sources={message.sources ?? []}
+                sessionId={session?.session_id}
+                taskId={message.task_id}
+                searchSource={message.search_source}
+                evidenceStatus={message.evidence_status}
+                requestStatus={message.request_status}
+                fallbackTriggered={message.fallback_triggered}
+                webFallback={message.web_fallback}
+              />
+            )}
+          </React.Fragment>
         ))}
         {chat.task && (chat.task.phase === "running" || chat.task.phase === "awaiting_confirm" || chat.task.phase === "awaiting_input") && (
           <p className="lunmi-mini-phase" data-testid="mini-phase">{PHASE_TEXT[chat.task.phase] ?? chat.task.phase}</p>
@@ -166,8 +200,9 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
       )}
 
       <footer className="lunmi-mini-composer">
+        <div className="lunmi-mini-input-frame">
         <label className="lunmi-sr-only" htmlFor="mini-input">Mensagem</label>
-        <textarea id="mini-input" data-testid="mini-input" rows={2} value={draft} ref={inputRef}
+        <textarea id="mini-input" data-testid="mini-input" rows={1} value={draft} ref={inputRef}
           maxLength={MAX_DRAFT_CHARS} placeholder="Escreve para a Lunmi…"
           disabled={!interactive} tabIndex={interactive ? 0 : -1}
           onChange={event => setDraft(event.target.value)}
@@ -180,20 +215,24 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
             void submit();
           }} />
         <div className="lunmi-mini-actions">
-          {chat.busy ? (
-            <button type="button" data-testid="mini-stop" className="lunmi-mini-button"
-              disabled={!interactive} tabIndex={interactive ? 0 : -1}
-              onClick={() => void chat.stop().catch(() => undefined)}>Parar</button>
-          ) : (
-            <button type="button" data-testid="mini-send" className="lunmi-mini-button lunmi-mini-send"
-              disabled={!draft.trim() || chat.submitting || !interactive} tabIndex={interactive ? 0 : -1}
-              onClick={() => void submit()}>Enviar</button>
-          )}
-          <button type="button" data-testid="mini-stop-voice" className="lunmi-mini-button lunmi-mini-quiet"
+          <button type="button" data-testid="mini-stop-voice" className="lunmi-mini-icon-button lunmi-mini-quiet"
+            aria-label={speaking ? "Parar voz" : "Voz inativa"} title={speaking ? "Parar voz" : "Voz inativa"}
             disabled={!speaking || !interactive} tabIndex={interactive ? 0 : -1}
             onClick={() => void presenceAction("stop-voice").catch(() => undefined)}>
-            {speaking ? "Parar voz" : "Voz"}
+            <Volume2 size={18} aria-hidden="true" />
           </button>
+          {chat.busy ? (
+            <button type="button" data-testid="mini-stop" className="lunmi-mini-button lunmi-mini-submit"
+              aria-label="Parar tarefa" title="Parar tarefa"
+              disabled={!interactive} tabIndex={interactive ? 0 : -1}
+              onClick={() => void chat.stop().catch(() => undefined)}><Square size={16} aria-hidden="true" /></button>
+          ) : (
+            <button type="button" data-testid="mini-send" className="lunmi-mini-button lunmi-mini-send lunmi-mini-submit"
+              aria-label="Enviar mensagem" title="Enviar mensagem"
+              disabled={!draft.trim() || chat.submitting || !interactive} tabIndex={interactive ? 0 : -1}
+              onClick={() => void submit()}><ArrowUp size={20} aria-hidden="true" /></button>
+          )}
+        </div>
         </div>
       </footer>
     </section>

@@ -48,7 +48,7 @@ function setup({ setResult }: SetupOptions = {}) {
     notifyRendererReady: vi.fn(async () => ({})),
     sendCommand: vi.fn(async (type: string, payload: Record<string, unknown>): Promise<unknown> => {
       if (type === "brain.get") {
-        return { current, providers: [{ id: "custom", label: "Conexão local", location: "local_endpoint" }] };
+        return { current, providers: [{ id: "custom", label: "Conexão local", kind: "model_api", location: "local_endpoint", requires_api_key: false, supports_model_discovery: true, supports_interactive_login: false }] };
       }
       if (type === "brain.list") {
         current = { ...current, model: (payload.model as string) ?? current.model };
@@ -141,7 +141,7 @@ it("o painel do Brain diz que a seleção não foi gravada em vez de 'Cérebro a
   await screen.findByTestId("composer");
   fireEvent.click(screen.getByTestId("nav-brain"));
   await screen.findByTestId("brain-panel");
-  await waitFor(() => expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("custom"));
+  await waitFor(() => expect(screen.getByTestId("provider-select-btn-custom").getAttribute("aria-pressed")).toBe("true"));
   fireEvent.click(screen.getByTestId("apply-brain"));
   const status = await screen.findByTestId("brain-status");
   expect(status.textContent).toMatch(/não foi gravada/);
@@ -154,7 +154,7 @@ it("uma troca lenta no painel do Brain anuncia andamento, sem erro falso", async
   await screen.findByTestId("composer");
   fireEvent.click(screen.getByTestId("nav-brain"));
   await screen.findByTestId("brain-panel");
-  await waitFor(() => expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("custom"));
+  await waitFor(() => expect(screen.getByTestId("provider-select-btn-custom").getAttribute("aria-pressed")).toBe("true"));
   fireEvent.click(screen.getByTestId("apply-brain"));
   const status = await screen.findByTestId("brain-status");
   expect(status.getAttribute("role")).toBe("status");
@@ -189,7 +189,7 @@ it("o painel do Brain acompanha o evento final com o painel aberto, sem exigir n
   await screen.findByTestId("composer");
   fireEvent.click(screen.getByTestId("nav-brain"));
   await screen.findByTestId("brain-panel");
-  await waitFor(() => expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("custom"));
+  await waitFor(() => expect(screen.getByTestId("provider-select-btn-custom").getAttribute("aria-pressed")).toBe("true"));
   fireEvent.click(screen.getByTestId("apply-brain"));
   expect((await screen.findByTestId("brain-status")).textContent).toMatch(/continua em andamento/);
 
@@ -211,7 +211,7 @@ it("o painel do Brain mostra a falha do commit publicada no evento, sem ficar em
   await screen.findByTestId("composer");
   fireEvent.click(screen.getByTestId("nav-brain"));
   await screen.findByTestId("brain-panel");
-  await waitFor(() => expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("custom"));
+  await waitFor(() => expect(screen.getByTestId("provider-select-btn-custom").getAttribute("aria-pressed")).toBe("true"));
   fireEvent.click(screen.getByTestId("apply-brain"));
   expect((await screen.findByTestId("brain-status")).textContent).toMatch(/continua em andamento/);
 

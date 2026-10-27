@@ -9,6 +9,19 @@ from app.bridge.responses import PublicResponse
 from app.core.public_text import public_prefix
 
 
+def test_web_answer_self_admission_is_detected_without_flags() -> None:
+    from app.core.public_text import web_answer_admits_insufficiency
+
+    assert web_answer_admits_insufficiency(
+        "Os excertos disponíveis não contêm detalhes suficientes sobre o lançamento "
+        "e não é possível resumir novidades concretas.")
+    assert web_answer_admits_insufficiency(
+        "There is not enough information to confirm the release.")
+    assert web_answer_admits_insufficiency("Não foi possível responder com as fontes.")
+    assert not web_answer_admits_insufficiency(
+        "O Python 3.14 foi lançado e a documentação oficial confirma a data.")
+
+
 @pytest.mark.parametrize('message', ['Olá 🌙. Tudo bem?', 'Aspas " e barra \\.', 'Café\nOutra linha.'])
 def test_public_prefix_at_every_fragment_boundary(message):
     raw = json.dumps({'thought': 'PRIVATE_SENTINEL', 'action': None, 'status': 'FINISH', 'message': [message]}, ensure_ascii=True)

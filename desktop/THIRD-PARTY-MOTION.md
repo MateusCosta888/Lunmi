@@ -1,5 +1,15 @@
 # Motion references incorporated into Lunmi
 
+## beUI Agent Activity and Motion — 2026-10-27
+
+`src/components/ui/agent-activity.tsx` adapts the Agent Activity component supplied by the user from https://beui.dev/components/agents/agent-activity. It uses Lunmi's CSS tokens and public task states; it does not display private model reasoning. beUI is MIT, copyright 2026 Saurabh Chauhan: [full notice](licenses/beUI-MIT.txt). The animation library `motion` 14.6.0 (including Motion's React packages) is MIT, copyright Motion B.V.: [full notice](licenses/motion-MIT.txt).
+
+## 21st.dev — mini chat components
+
+`src/components/ui/message-bubble.tsx` adapts [Framecn Message Bubble](https://21st.dev/@framecn/components/message-bubble), [registry source](https://framecn.vercel.app/r/message-bubble.json), by Shadcn Labs (2026). The incoming/outgoing structure uses Lunmi CSS instead of Framecn theme/timeline dependencies; reactions are omitted. [MIT notice](licenses/Framecn-MIT.txt).
+
+`src/components/ui/use-auto-resize-textarea.ts` and the compact `MiniChat` composer adapt Kokonut UI's [AI Input](https://21st.dev/@kokonutd/components/ai-input-with-loading) and [auto-resize hook](https://github.com/kokonut-labs/kokonutui/blob/main/hooks/use-auto-resize-textarea.ts), by kokonutUI (2025). Changes: shared Lunmi draft, resize on external draft changes and reveal, 44–88px bounds, existing send/cancel commands, no simulated runs, uploads or extra dependencies. [MIT notice](licenses/KokonutUI-MIT.txt).
+
 ## React Bits — David Haz
 
 Adaptations: `src/shared/RubberNavigation.tsx` (RubberSegment two-edge dilation, vertical navigation and native Web Animations instead of Motion); `src/features/chat/ThoughtLine.tsx` and `src/shared/motion.css` (ThoughtLine shimmer, breathing, timer and folding public-state trace, using Lunmi icons). These are intentionally scoped adaptations, not unchanged copies or a claim of pixel identity.
@@ -62,6 +72,34 @@ The bounded pointer-light mechanism ("border glow", spotlight and a finite click
 Declared inert parts: `enableStars`/`particleCount` are not implemented (no canvas, no stars); tilt and magnetism are off (no card transforms); `textAutoHide` stays off (labels never hide); the intro is a single short wave per surface. Reduced motion and hidden windows are honored at runtime — the engine clears its variables and refuses new frames — and unmount removes listeners, timers and variables. Decorative wave/spotlight layers are `pointer-events: none`; they never capture click, drag or selection.
 
 
+## React Bits BranchedMenu — 2026-10-27
+
+The SVG branch geometry, selected-path stroke drawing (400 ms) and grid fold animation
+(300 ms) are adapted from the official `@react-bits/BranchedMenu-JS-CSS` registry:
+https://reactbits.dev/r/BranchedMenu-JS-CSS.json. Source inspected before integration;
+archived reference in `output/chat-history-ui/`. Lunmi's TypeScript integration lives in
+`src/shared/BranchedMenu.tsx` and `BranchedMenu.css`.
+
+The existing Conversation navigation button owns the expanded state; the backend owns
+the active conversation. The tree supports existing rename/delete controls, date groups
+and a single bounded scroll area. Colors/fonts use Lunmi tokens, Lucide icons remain,
+and reduced motion disables transitions. Demo content, Hugeicons and the standalone
+header/marker were omitted. No dependency or shadcn project configuration was added.
+License: MIT + Commons Clause, © David Haz; full upstream notice:
+[licenses/react-bits-BranchedMenu.txt](licenses/react-bits-BranchedMenu.txt).
+
 ## Galaxy Orb — 2026-10-21
 
+Integração histórica, substituída pelo Live Orb abaixo. O antigo `galaxyRenderer.js` já não faz parte do runtime atual.
+
 HTML visual fornecido pelo autor da Lunmi, extraído para `src/features/chat/orb/galaxyRenderer.js` com quatro shaders preservados. O comentário de origem atribui o vidro/efeito óptico Siri Sheet ao [VoiceOrbs](https://github.com/amunozdev/voiceorbs). Licença MIT oficial, copyright 2026 Alexis Munoz, arquivada em `licenses/voiceorbs-MIT.txt` (origem https://raw.githubusercontent.com/amunozdev/voiceorbs/main/LICENSE). Alterações Lunmi: ciclo React, limpeza GL/listeners/RAF, visibilidade/movimento reduzido, fallback e apresentação persistente no chat. Sem pacote ou código remoto em runtime.
+
+## Live Orb — 2026-10-27
+
+O motor atual `src/features/chat/orb/liveRenderer.js` adapta o Live Orb de radiumcoders
+(Jay Sharma), cuja [página do componente](https://preview.21st.dev/@radiumcoders/components/live-orb)
+declara MIT. Fonte pública: https://23rd.dev/r/live-orb.json. Aviso integral:
+[licenses/radiumcoders-LiveOrb-MIT.txt](licenses/radiumcoders-LiveOrb-MIT.txt).
+Integração Lunmi: material procedural de partículas, estados visuais da tarefa/voz, ciclo
+React, libertação de recursos GL, visibilidade, movimento reduzido e fallback. O componente
+fica incorporado na aplicação; não carrega código remoto nem o demo interativo do fornecedor.

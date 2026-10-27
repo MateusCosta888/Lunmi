@@ -1,10 +1,22 @@
 /**
- * Painel do Brain (`desktop/src/features/brain/BrainPanel.tsx`, redesign BYOK 2026-10-17).
+ * Painel do Brain (`desktop/src/features/brain/BrainPanel.tsx`, redesign 2026-10-27).
+ *
+ * Layout: a página usa o contrato partilhado da Root (`lunmi-settings-page` como único scroll
+ * owner + `lunmi-settings-content` centrado, `lunmi-settings-card`, `lunmi-settings-grid` e
+ * `lunmi-action-button`), por isso o conteúdo deixa de ficar preso à esquerda e acompanha a
+ * janela. A escolha de provedor passou de dropdown para pílulas com a marca real de cada
+ * provedor (`ProviderPicker`/`ProviderIcon`), agrupadas por tipo e localização canónicos —
+ * API em nuvem, endpoint local e CLI local — também no AppAgent.
  *
  * Fluxo: escolher provider → chave (sempre que existir rascunho) → catálogo pesquisável do
  * provider consultado → verificar (opcional) → aplicar. Modelo é SEMPRE escolhido do catálogo;
  * não há campo de ID. Composição inspirada no fluxo BYOK do Open Design (fonte pinada em
  * output/brain-provider-redesign/reference), implementação própria.
+ *
+ * Disponibilidade: `available === false` mantém o provedor visível, desativa a pílula e mostra o
+ * motivo (`unavailable_reason`); `installed === true` pode rotular "instalado". Estes campos são
+ * opcionais e ainda não estão no DTO partilhado — são lidos pelo tipo local `BrainProviderDto`
+ * (ProviderPicker), sem escrever em `shared/types.ts`. Um provedor nunca é escondido.
  *
  * Regras do contrato `.agents/BRAIN-PROVIDERS-OPENDESIGN-CONTRACT.md`:
  * - `brain.list` vai com `{provider-alvo, role, force, base_url, model, api_key?}`; `api_key` só
@@ -29,6 +41,7 @@ import type {
 } from "../../shared/types";
 import type { SessionReadyPayload } from "../../shared/protocol";
 import { ModelCatalogSelect, type CatalogState } from "./ModelCatalogSelect";
+import { ProviderPicker } from "./ProviderPicker";
 import "./brain.css";
 
 export interface BrainPanelProps {
@@ -135,17 +148,11 @@ export function BrainPanel({ sendCommand, session, onConfigured }: BrainPanelPro
   }, [sendCommand, session, applyState]);
 
   const sessionReady = Boolean(session);
-  const providers = brain?.providers ?? [];
+  const providers = useMemo(() => brain?.providers ?? [], [brain]);
   const currentProvider = useMemo(() => providers.find(item => item.id === provider) ?? null, [providers, provider]);
+  const requiresKey = currentProvider?.requires_api_key === true;
+  const hasConnectionFields = requiresKey || currentProvider?.location === "local_endpoint";
   const appProviderInfo = useMemo(() => providers.find(item => item.id === appProvider) ?? null, [providers, appProvider]);
-
-  const groups = useMemo(() => {
-    const cloud = providers.filter(p => p.location !== "local_endpoint" && p.kind === "api");
-    const local = providers.filter(p => p.location === "local_endpoint");
-    const cli = providers.filter(p => p.kind === "cli");
-    const other = providers.filter(p => !cloud.includes(p) && !local.includes(p) && !cli.includes(p));
-    return { cloud, local, cli, other };
-  }, [providers]);
 
   /**
    * Identidade do CATÁLOGO: provider-alvo + role + endpoint + credencial (impressão local, nunca
@@ -336,9 +343,9 @@ export function BrainPanel({ sendCommand, session, onConfigured }: BrainPanelPro
   const verifyForSelection = verifyResult && verifyResult.provider === provider;
 
   return (
-    <section aria-label="Brain" data-testid="brain-panel" className="lunmi-brain-page">
-      <header className="lunmi-brain-head">
-        <div>
+    <section aria-label="Brain" data-testid="brain-panel" className="lunmi-settings-page lunmi-brain-page">
+      <div className="lunmi-settings-content">
+        <div className="lunmi-settings-heading">
           <h2>Cérebro</h2>
           <p className="lunmi-brain-sub">
             Estado atual:{" "}
@@ -356,200 +363,185 @@ export function BrainPanel({ sendCommand, session, onConfigured }: BrainPanelPro
               Seleção efetiva Host/App: não reportada por esta versão do backend.
             </p>
           )}
-        </div>
-        <span className="lunmi-brain-seals" data-testid="brain-seals">
-          <span data-testid="catalog-seal" data-on={mainListing ? "true" : "false"}>
-            catálogo: {mainSlot.state === "loading" ? "consultando…" : mainListing ? `${mainListing.models.length} modelos${mainListing.cached ? " · cache" : ""}` : "não consultado"}
+          <span className="lunmi-brain-seals" data-testid="brain-seals">
+            <span data-testid="catalog-seal" data-on={mainListing ? "true" : "false"}>
+              catálogo: {mainSlot.state === "loading" ? "consultando…" : mainListing ? `${mainListing.models.length} modelos${mainListing.cached ? " · cache" : ""}` : "não consultado"}
+            </span>
+            <span data-testid="verified-seal" data-on={verifyForSelection && verifyResult?.ok ? "true" : "false"}>
+              verificado: {verifyForSelection && verifyResult ? (verifyResult.ok ? "sim" : "não") : "—"}
+            </span>
+            <span data-testid="applied-seal" data-on={brain ? "true" : "false"}>aplicado: {brain ? brain.current.provider_label : "…"}</span>
           </span>
-          <span data-testid="verified-seal" data-on={verifyForSelection && verifyResult?.ok ? "true" : "false"}>
-            verificado: {verifyForSelection && verifyResult ? (verifyResult.ok ? "sim" : "não") : "—"}
-          </span>
-          <span data-testid="applied-seal" data-on={brain ? "true" : "false"}>aplicado: {brain ? brain.current.provider_label : "…"}</span>
-        </span>
-      </header>
-
-      {hasEnvOverride(brain?.current ?? null) && (
-        <p role="status" data-testid="env-override-warning" className="lunmi-brain-warn">
-          Uma variável de ambiente (LLM_PROVIDER/LLM_MODEL/LLM_APP_*) está definida e prevalece
-          sobre a seleção salva.
-        </p>
-      )}
-      {loadError && <p role="alert" data-testid="brain-load-error" className="lunmi-brain-error-text">{loadError}</p>}
-      {(statusMessage || actionError) && (
-        <p role={actionError ? "alert" : "status"} data-testid="brain-status"
-          className={actionError ? "lunmi-brain-error-text" : "lunmi-brain-ok-text"}>
-          {actionError ?? statusMessage}
-        </p>
-      )}
-
-      <div className="lunmi-brain-card">
-        <h3 className="lunmi-brain-card-title">Ligação principal</h3>
-
-        <label htmlFor="brain-provider" className="lunmi-brain-label">Provedor</label>
-        <select id="brain-provider" data-testid="provider-select" value={provider} disabled={!sessionReady}
-          onChange={event => changeProvider(event.target.value)} className="lunmi-brain-control">
-          {!provider && <option value="">selecione…</option>}
-          {groups.cloud.length > 0 && (
-            <optgroup label="API em nuvem">
-              {groups.cloud.map(item => <option key={item.id} value={item.id}>{item.label}{item.requires_api_key ? " · chave" : ""}</option>)}
-            </optgroup>
-          )}
-          {groups.local.length > 0 && (
-            <optgroup label="Endpoint local">
-              {groups.local.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-            </optgroup>
-          )}
-          {groups.cli.length > 0 && (
-            <optgroup label="CLI">
-              {groups.cli.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-            </optgroup>
-          )}
-          {groups.other.length > 0 && (
-            <optgroup label="Outros">
-              {groups.other.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-            </optgroup>
-          )}
-        </select>
-
-        <label htmlFor="brain-api-key" className="lunmi-brain-label">
-          Chave de API
-        </label>
-        <div className="lunmi-brain-key-row">
-          <input id="brain-api-key" data-testid="api-key" type="password" autoComplete="off"
-            placeholder={brain?.current.provider === provider && brain.current.has_api_key
-              ? "Chave configurada — cola outra para substituir" : "Cola a chave de API"}
-            value={apiKey} disabled={!sessionReady}
-            onChange={event => setApiKey(event.target.value)} className="lunmi-brain-control" />
-          <button type="button" data-testid="api-key-clear" className="lunmi-brain-quiet"
-            disabled={!apiKey} onClick={() => setApiKey("")}>Limpar campo</button>
         </div>
-        <p className="lunmi-brain-hint">
-          Após aplicar, a chave deixa de ser mostrada. Podes guardá-la neste computador em Avançado.
-        </p>
 
-        {currentProvider?.location === "local_endpoint" && (
-          <>
-            <label htmlFor="brain-base-url" className="lunmi-brain-label">Endpoint local</label>
-            <input id="brain-base-url" data-testid="base-url" value={baseUrl} disabled={!sessionReady}
-              onChange={event => setBaseUrl(event.target.value)} className="lunmi-brain-control" />
-          </>
+        {hasEnvOverride(brain?.current ?? null) && (
+          <p role="status" data-testid="env-override-warning" className="lunmi-brain-warn">
+            Uma variável de ambiente (LLM_PROVIDER/LLM_MODEL/LLM_APP_*) está definida e prevalece
+            sobre a seleção salva.
+          </p>
         )}
-
-        <ModelCatalogSelect
-          label="Modelo"
-          testId="model-select"
-          value={model}
-          models={mainModels}
-          state={mainSlot.identity === catalogIdentRef.current.main ? mainSlot.state : "idle"}
-          detail={mainSlot.data?.detail}
-          cached={mainSlot.data?.cached}
-          disabled={!sessionReady || !provider}
-          allowDefault={currentProvider?.kind === "cli"}
-          unverified={Boolean(model) && !mainListing}
-          currentUnavailable={brain?.current.model && brain.current.provider === provider && brain.current.model !== model && !mainModels.some(m => m.id === brain.current.model) ? brain.current.model : undefined}
-          onSelect={setModel}
-          onRefresh={() => void loadModels("main", true)}
-          onOpenEmpty={() => void loadModels("main", false)}
-        />
-
-        {mainListing && (
-          <p data-testid="model-listing" className="lunmi-brain-muted">
-            {mainListing.label} · {mainListing.status}{mainListing.cached ? " · catálogo do cache (não revalidado)" : ""}
-            {mainListing.detail ? ` — ${mainListing.detail}` : ""}
-            {mainListing.selection_problem ? <span className="lunmi-brain-warn"> · {mainListing.selection_problem}</span> : null}
+        {loadError && <p role="alert" data-testid="brain-load-error" className="lunmi-brain-error-text">{loadError}</p>}
+        {(statusMessage || actionError) && (
+          <p role={actionError ? "alert" : "status"} data-testid="brain-status"
+            className={actionError ? "lunmi-brain-error-text" : "lunmi-brain-ok-text"}>
+            {actionError ?? statusMessage}
           </p>
         )}
 
-        <div className="lunmi-brain-actions">
-          <button type="button" data-testid="list-models"
-            disabled={!sessionReady || !provider || (mainSlot.state === "loading" && mainSlot.identity === catalogIdentRef.current.main)}
-            onClick={() => void loadModels("main", false)} className="lunmi-brain-quiet">
-            Listar modelos
-          </button>
-          <button type="button" data-testid="verify-button" disabled={!sessionReady || busy}
-            onClick={() => void verify()} className="lunmi-brain-secondary">
-            Verificar conexão
-          </button>
-          <button type="button" data-testid="apply-brain" disabled={!sessionReady || busy}
-            onClick={() => void applySelection()} className="lunmi-brain-primary">
-            Aplicar
-          </button>
-        </div>
+        <div className="lunmi-settings-card lunmi-brain-card">
+          <h3 className="lunmi-settings-section-title">Ligação principal</h3>
 
-        {verifyResult && verifyForSelection && (
-          <p data-testid="verify-result" className={verifyResult.ok ? "lunmi-brain-ok-text" : "lunmi-brain-error-text"}>
-            {verifyResult.ok ? "Verificado" : "Falha na verificação"} · {verifyResult.status}
-            {verifyResult.detail ? ` — ${verifyResult.detail}` : ""}
-          </p>
-        )}
-      </div>
+          <div className="lunmi-brain-provider-block">
+            <span className="lunmi-brain-label">Provedor</span>
+            <ProviderPicker label="Provedor" testId="provider-select" value={provider} providers={providers}
+              disabled={!sessionReady} onSelect={changeProvider} />
+          </div>
 
-      <details className="lunmi-brain-card lunmi-brain-advanced" data-testid="brain-advanced">
-        <summary className="lunmi-brain-card-title">Avançado — AppAgent, credenciais e teste real</summary>
+          <div className="lunmi-settings-grid lunmi-brain-grid" data-model-only={!hasConnectionFields}>
+            {hasConnectionFields && <div className="lunmi-brain-field">
+              {requiresKey && <>
+              <label htmlFor="brain-api-key" className="lunmi-brain-label">
+                Chave de API
+              </label>
+              <div className="lunmi-brain-key-row">
+                <input id="brain-api-key" data-testid="api-key" type="password" autoComplete="off"
+                  placeholder={brain?.current.provider === provider && brain.current.has_api_key
+                    ? "Chave configurada — cola outra para substituir" : "Cola a chave de API"}
+                  value={apiKey} disabled={!sessionReady}
+                  onChange={event => setApiKey(event.target.value)} className="lunmi-brain-control" />
+                <button type="button" data-testid="api-key-clear" className="lunmi-action-button lunmi-action-quiet"
+                  disabled={!apiKey} onClick={() => setApiKey("")}>Limpar campo</button>
+              </div>
+              <p className="lunmi-brain-hint">
+                Após aplicar, a chave deixa de ser mostrada. Podes guardá-la neste computador em Avançado.
+              </p>
+              </>}
 
-        <div data-testid="app-brain-card">
-          <p className="lunmi-brain-hint">Deixe vazio para usar o mesmo cérebro principal.</p>
-          <label htmlFor="app-brain-provider" className="lunmi-brain-label">Provider do AppAgent</label>
-          <select id="app-brain-provider" data-testid="app-provider-select" value={appProvider} disabled={!sessionReady}
-            onChange={event => { setAppProvider(event.target.value); setAppModel(""); setAppSlot(IDLE_SLOT); }}
-            className="lunmi-brain-control">
-            <option value="">(mesmo do principal)</option>
-            {providers.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select>
+              {currentProvider?.location === "local_endpoint" && (
+                <>
+                  <label htmlFor="brain-base-url" className="lunmi-brain-label">Endpoint local</label>
+                  <input id="brain-base-url" data-testid="base-url" value={baseUrl} disabled={!sessionReady}
+                    onChange={event => setBaseUrl(event.target.value)} className="lunmi-brain-control" />
+                </>
+              )}
+            </div>}
 
-          <ModelCatalogSelect
-            label="Modelo do AppAgent (do catálogo)"
-            testId="app-model-select"
-            value={appModel}
-            models={appModels}
-            state={appSlot.identity === catalogIdentRef.current.app ? appSlot.state : "idle"}
-            detail={appSlot.data?.detail}
-            cached={appSlot.data?.cached}
-            disabled={!sessionReady || !appProvider}
-            allowDefault={appProviderInfo?.kind === "cli"}
-            unverified={Boolean(appModel) && !(appSlot.data && appSlot.identity === catalogIdentRef.current.app)}
-            onSelect={setAppModel}
-            onRefresh={() => void loadModels("app", true)}
-            onOpenEmpty={() => void loadModels("app", false)}
-          />
-          {appProvider && appProvider !== provider ? (
-            <p className="lunmi-brain-hint" data-testid="app-credential-note">
-              AppAgent em provider diferente: a consulta e a aplicação usam a credencial canônica
-              já guardada desse provider; a chave principal em memória não é enviada.
-            </p>
-          ) : null}
+            <div className="lunmi-brain-field">
+              <ModelCatalogSelect
+                label="Modelo"
+                testId="model-select"
+                value={model}
+                models={mainModels}
+                state={mainSlot.identity === catalogIdentRef.current.main ? mainSlot.state : "idle"}
+                detail={mainSlot.data?.detail}
+                cached={mainSlot.data?.cached}
+                disabled={!sessionReady || !provider}
+                allowDefault={currentProvider?.kind === "agent_runtime"}
+                unverified={Boolean(model) && !mainListing}
+                currentUnavailable={brain?.current.model && brain.current.provider === provider && brain.current.model !== model && !mainModels.some(m => m.id === brain.current.model) ? brain.current.model : undefined}
+                onSelect={setModel}
+                onRefresh={() => void loadModels("main", true)}
+                onOpenEmpty={() => void loadModels("main", false)}
+              />
+
+              {mainListing && (
+                <p data-testid="model-listing" className="lunmi-brain-muted">
+                  {mainListing.label} · {mainListing.status}{mainListing.cached ? " · catálogo do cache (não revalidado)" : ""}
+                  {mainListing.detail ? ` — ${mainListing.detail}` : ""}
+                  {mainListing.selection_problem ? <span className="lunmi-brain-warn"> · {mainListing.selection_problem}</span> : null}
+                </p>
+              )}
+            </div>
+          </div>
 
           <div className="lunmi-brain-actions">
-            <button type="button" data-testid="list-app-models" disabled={!sessionReady || busy || !appProvider || (appSlot.state === "loading" && appSlot.identity === catalogIdentRef.current.app)}
-              onClick={() => void loadModels("app", false)} className="lunmi-brain-secondary">
-              Listar modelos do AppAgent
+            <button type="button" data-testid="list-models"
+              disabled={!sessionReady || !provider || (mainSlot.state === "loading" && mainSlot.identity === catalogIdentRef.current.main)}
+              onClick={() => void loadModels("main", false)} className="lunmi-action-button lunmi-action-quiet">
+              Listar modelos
+            </button>
+            <button type="button" data-testid="verify-button" disabled={!sessionReady || busy}
+              onClick={() => void verify()} className="lunmi-action-button">
+              Verificar conexão
+            </button>
+            <button type="button" data-testid="apply-brain" disabled={!sessionReady || busy}
+              onClick={() => void applySelection()} className="lunmi-action-button lunmi-action-primary">
+              Aplicar
             </button>
           </div>
+
+          {verifyResult && verifyForSelection && (
+            <p data-testid="verify-result" className={verifyResult.ok ? "lunmi-brain-ok-text" : "lunmi-brain-error-text"}>
+              {verifyResult.ok ? "Verificado" : "Falha na verificação"} · {verifyResult.status}
+              {verifyResult.detail ? ` — ${verifyResult.detail}` : ""}
+            </p>
+          )}
         </div>
 
-        <label htmlFor="remember-credentials" className="lunmi-brain-check">
-          <input id="remember-credentials" data-testid="remember-credentials" type="checkbox"
-            checked={remember} disabled={!sessionReady}
-            onChange={event => setRemember(event.target.checked)} />
-          Lembrar credenciais de forma protegida (DPAPI) neste computador
-        </label>
+        <details className="lunmi-settings-card lunmi-brain-advanced" data-testid="brain-advanced">
+          <summary className="lunmi-settings-section-title">Avançado — AppAgent, credenciais e teste real</summary>
 
-        <div className="lunmi-brain-actions">
-          <button type="button" data-testid="probe-button" disabled={!sessionReady || busy}
-            onClick={() => void probe()} className="lunmi-brain-warn-button">
-            Testar modelo (gasta 1 chamada real)
-          </button>
-        </div>
-        {probeResult && (
-          <p data-testid="probe-result" className={probeResult.ok ? "lunmi-brain-ok-text" : "lunmi-brain-error-text"}>
-            {probeResult.summary} · {Math.round(probeResult.latency_ms)} ms
-            {probeResult.error_kind ? ` · ${probeResult.error_kind}` : ""}
-          </p>
-        )}
-        {appProviderInfo?.supports_model_discovery === false ? (
-          <p className="lunmi-brain-muted">Este provider não expõe catálogo; o AppAgent usará o padrão anunciado.</p>
-        ) : null}
-      </details>
+          <div data-testid="app-brain-card">
+            <p className="lunmi-brain-hint">Deixe vazio para usar o mesmo cérebro principal.</p>
+            <span className="lunmi-brain-label">Provider do AppAgent</span>
+            <ProviderPicker label="Provider do AppAgent" testId="app-provider-select" value={appProvider}
+              providers={providers} disabled={!sessionReady} allowInherit
+              onSelect={next => { setAppProvider(next); setAppModel(""); setAppSlot(IDLE_SLOT); }} />
+
+            <ModelCatalogSelect
+              label="Modelo do AppAgent (do catálogo)"
+              testId="app-model-select"
+              value={appModel}
+              models={appModels}
+              state={appSlot.identity === catalogIdentRef.current.app ? appSlot.state : "idle"}
+              detail={appSlot.data?.detail}
+              cached={appSlot.data?.cached}
+              disabled={!sessionReady || !appProvider}
+              allowDefault={appProviderInfo?.kind === "agent_runtime"}
+              unverified={Boolean(appModel) && !(appSlot.data && appSlot.identity === catalogIdentRef.current.app)}
+              onSelect={setAppModel}
+              onRefresh={() => void loadModels("app", true)}
+              onOpenEmpty={() => void loadModels("app", false)}
+            />
+            {appProvider && appProvider !== provider ? (
+              <p className="lunmi-brain-hint" data-testid="app-credential-note">
+                AppAgent em provider diferente: a consulta e a aplicação usam a credencial canônica
+                já guardada desse provider; a chave principal em memória não é enviada.
+              </p>
+            ) : null}
+
+            <div className="lunmi-brain-actions">
+              <button type="button" data-testid="list-app-models" disabled={!sessionReady || busy || !appProvider || (appSlot.state === "loading" && appSlot.identity === catalogIdentRef.current.app)}
+                onClick={() => void loadModels("app", false)} className="lunmi-action-button">
+                Listar modelos do AppAgent
+              </button>
+            </div>
+          </div>
+
+          {requiresKey && <label htmlFor="remember-credentials" className="lunmi-brain-check">
+            <input id="remember-credentials" data-testid="remember-credentials" type="checkbox"
+              checked={remember} disabled={!sessionReady}
+              onChange={event => setRemember(event.target.checked)} />
+            Lembrar credenciais de forma protegida (DPAPI) neste computador
+          </label>}
+
+          <div className="lunmi-brain-actions">
+            <button type="button" data-testid="probe-button" disabled={!sessionReady || busy}
+              onClick={() => void probe()} className="lunmi-action-button lunmi-brain-probe">
+              Testar modelo (gasta 1 chamada real)
+            </button>
+          </div>
+          {probeResult && (
+            <p data-testid="probe-result" className={probeResult.ok ? "lunmi-brain-ok-text" : "lunmi-brain-error-text"}>
+              {probeResult.summary} · {Math.round(probeResult.latency_ms)} ms
+              {probeResult.error_kind ? ` · ${probeResult.error_kind}` : ""}
+            </p>
+          )}
+          {appProviderInfo?.supports_model_discovery === false ? (
+            <p className="lunmi-brain-muted">Este provider não expõe catálogo; o AppAgent usará o padrão anunciado.</p>
+          ) : null}
+        </details>
+      </div>
     </section>
   );
 }

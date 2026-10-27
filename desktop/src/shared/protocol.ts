@@ -44,6 +44,16 @@ export const COMMAND_TYPES = [
   "integrations.disconnect",
 
   "chat.send",
+  "chat.history.get",
+  "chat.history.list",
+  "chat.history.read",
+  "chat.history.create",
+  "chat.history.select",
+  "chat.history.rename",
+  "chat.history.delete",
+  "chat.history.clear",
+  "chat.history.options.get",
+  "chat.history.options.set",
   "task.cancel",
   "task.confirm",
   "task.answer",
@@ -80,6 +90,26 @@ export const COMMAND_TYPES = [
   "voice.test",
   "voice.speak_last",
   "voice.stop",
+  /** VOICE REFINEMENTS V2: warmup de introdução e release hold; ver `.agents/VOICE-REFINEMENTS-V2-CONTRACT.md`. */
+  "voice.warmup",
+  "voice.warmup.get",
+  /** VOICE INPUT V1 (aditivo): ditado revisto; ver `.agents/VOICE-INPUT-V1-CONTRACT.md`. */
+  "voice.input.get",
+  "voice.input.start",
+  "voice.input.finish",
+  "voice.input.cancel",
+  "voice.input.result",
+  /** WEB-SEARCH-V1 (aditivo): estado/definições; ver `.agents/WEB-SEARCH-V1-CONTRACT.md`. */
+  "web.get",
+  "web.set",
+  /** SPOTIFY INTEGRAÇÃO V1 (I0): nomes congelados; handlers só em I1. */
+  "spotify.get",
+  "spotify.plan",
+  "spotify.apply",
+  "spotify.cancel",
+  "spotify.connect",
+  "spotify.disconnect",
+  "spotify.open",
   "app.shutdown",
 ] as const;
 
@@ -100,6 +130,7 @@ export const EVENT_TYPES = [
   "response.cancelled",
   "session.ready",
   "chat.message",
+  "chat.history.changed",
   "task.started",
   "task.progress",
   "task.finished",
@@ -111,6 +142,14 @@ export const EVENT_TYPES = [
   "memory.changed",
   /** VOICE V1: estado público de voz; nunca carrega texto de conversa. */
   "voice.state",
+  /** VOICE REFINEMENTS V2: readiness de TTS+STT; sem texto, áudio ou teclas. */
+  "voice.readiness",
+  /** VOICE INPUT V1: estado público do ditado; nunca carrega transcrição/áudio. */
+  "voice.input.state",
+  /** SPOTIFY INTEGRAÇÃO V1 (aditivo): payload fechado `{spotify}`; ver `shared/spotify.ts`. */
+  "spotify.changed",
+  /** WEB-SEARCH-V1: payload `WebStateDto` exato, com `session_id` e `revision`. */
+  "web.changed",
   "log.append",
 ] as const;
 
@@ -130,6 +169,16 @@ export interface Capabilities {
    * seis chaves de sempre. O índice de string mantém o contrato extensível.
    */
   file_read?: boolean;
+  /**
+   * SPOTIFY INTEGRAÇÃO V1: `true` só quando os seis comandos `spotify.*` estão realmente
+   * registados na sessão. Aditiva e opcional: um cliente antigo ignora-a.
+   */
+  spotify?: boolean;
+  /**
+   * VOICE INPUT V1/V2: `true` só quando os cinco comandos `voice.input.*` (incluindo
+   * `finish`) estão registados. Aditiva e opcional; não reutiliza `capture_supported`.
+   */
+  voice_input?: boolean;
   web_search: boolean;
   browser_use: boolean;
   [key: string]: boolean | undefined;
@@ -154,6 +203,7 @@ export interface ProtocolLimits {
 }
 
 export interface SessionReadyPayload {
+  chat_history?: import('./types').ChatHistorySnapshotDto;
   v: number;
   session_id: string;
   pid: number;

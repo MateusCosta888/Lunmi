@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -45,7 +46,8 @@ SKIP_SUFFIXES = {".pyc", ".pyo", ".pdb", ".log", ".sqlite", ".sqlite3", ".db", "
 # Sidecars de SQLite não são cobertos por `suffix` (`.sqlite3-wal` termina em `-wal`).
 SKIP_NAME_SUFFIXES = ("-wal", "-shm", "-journal", ".sqlite3-wal", ".sqlite3-shm",
                       ".sqlite3-journal", ".db-wal", ".db-shm")
-SKIP_NAMES = {".env", "Thumbs.db", "desktop.ini", ".gitignore", ".gitattributes"}
+SKIP_NAMES = {".env", "Thumbs.db", "desktop.ini", ".gitignore", ".gitattributes",
+              "secret.bin", "install.json", "state.json"}
 
 # Diretórios de `vendor/UFO` copiados inteiros como recursos de runtime comprovados: o
 # carregador de configuração (yaml/template) e os prompts/recursos do pacote `ufo`.
@@ -70,6 +72,23 @@ def _relative_is_clean(relative: Path) -> bool:
     return not any(_forbidden_component(part) for part in relative.parts)
 
 
+# Bundle privado gerado no setup: contém a chave de pareamento (32 bytes em hex).
+# O JS público valida `secretHex`, mas nunca o contém como literal. Um ficheiro que
+# o contenha não pode entrar no payload, mesmo que o nome pareça público.
+_PRIVATE_PAIRING_SECRET = re.compile(
+    rb'secretHex"?\s*[:=]\s*["\'][0-9a-fA-F]{64}["\']'
+)
+
+
+def _contains_pairing_secret(path: Path) -> bool:
+    if path.suffix.lower() not in {".js", ".mjs", ".cjs", ".json"}:
+        return False
+    try:
+        return _PRIVATE_PAIRING_SECRET.search(path.read_bytes()) is not None
+    except OSError:
+        return True
+
+
 def _copy_tree(src: Path, dst: Path, written: list[Path], predicate=None) -> None:
     for root, dirs, files in os.walk(src):
         # Poda de verdade: um diretório proibido não é percorrido, então nada abaixo dele entra.
@@ -82,6 +101,8 @@ def _copy_tree(src: Path, dst: Path, written: list[Path], predicate=None) -> Non
             if not _relative_is_clean(relative):
                 continue
             if predicate is not None and not predicate(relative):
+                continue
+            if _contains_pairing_secret(source):
                 continue
             target = dst / relative
             target.parent.mkdir(parents=True, exist_ok=True)

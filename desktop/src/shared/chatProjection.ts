@@ -18,6 +18,7 @@ import type {
   PublicResponseDto,
   TaskResultDto,
   TaskStateDto,
+  ChatHistorySnapshotDto,
 } from "./types";
 
 export const MAX_RECENT_TASKS = 6;
@@ -34,6 +35,8 @@ export interface ChatEventLike {
 }
 
 export interface ChatProjectionState {
+  conversationId?: string;
+  history?: ChatHistorySnapshotDto;
   sessionId: string;
   cursor: number;
   messages: ChatMessageDto[];
@@ -66,6 +69,7 @@ export function createChatProjection(sessionId = ""): ChatProjectionState {
 /** DTO público do snapshot: sem `stream` e sem nada que o backend não publicou. */
 export function projectChat(state: ChatProjectionState): ChatProjectionDto {
   return {
+    ...(state.conversationId ? { conversation_id: state.conversationId, history: state.history } : {}),
     session_id: state.sessionId,
     cursor: state.cursor,
     messages: state.messages,
@@ -79,6 +83,8 @@ export function projectChat(state: ChatProjectionState): ChatProjectionDto {
 /** Renderer: estado local a partir do snapshot do main (o reconciliador fica no main). */
 export function chatStateFromDto(dto: ChatProjectionDto): ChatProjectionState {
   return {
+    conversationId: dto.conversation_id,
+    history: dto.history,
     sessionId: dto.session_id,
     cursor: dto.cursor,
     messages: dto.messages,
@@ -147,6 +153,8 @@ export function applyChatEvent(
   if (typeof sessionId === "string" && sessionId && state.sessionId && sessionId !== state.sessionId) {
     return null;
   }
+  if (event.type !== 'chat.history.changed' && typeof payload.conversation_id === 'string'
+      && state.conversationId && payload.conversation_id !== state.conversationId) return null;
 
   const commit = (
     next: Partial<ChatProjectionState> & {
@@ -168,6 +176,31 @@ export function applyChatEvent(
       delta: { ...delta, cursor, session_id: merged.sessionId },
     };
   };
+
+  if (event.type === 'chat.history.changed') {
+    const reason = payload.reason;
+    const conversationId = payload.conversation_id as string;
+    if (!conversationId) return null;
+    if (reason === 'selected') {
+      const history = payload as unknown as ChatHistorySnapshotDto;
+      const fresh = createChatProjection(state.sessionId);
+      return commit({ ...fresh, conversationId, history,
+        recent_tasks: [],
+        messages: history.messages ?? [],
+        delta: { reset: true, conversation_id: conversationId, history,
+          messages: history.messages ?? [], recent_tasks: [], task: null, confirm: null, input: null } });
+    }
+    if (state.conversationId && conversationId !== state.conversationId) return null;
+    const history = { ...state.history, ...payload } as unknown as ChatHistorySnapshotDto;
+    if (reason === 'page') {
+      const older = payload.messages as ChatMessageDto[];
+      const messages = state.messages.reduce(upsertMessage, older ?? []);
+      return commit({ history, messages, delta: { reset: true, conversation_id: conversationId,
+        history, messages, task: state.task, recent_tasks: state.recentTasks,
+        confirm: state.confirm, input: state.input } });
+    }
+    return commit({ conversationId, history, delta: { conversation_id: conversationId, history } });
+  }
 
   if (event.type.startsWith("response.") || event.type.startsWith("operation.")) {
     if (payload.task_id !== state.task?.task_id) return null;
@@ -193,6 +226,7 @@ export function applyChatEvent(
       const interrupted = state.stream?.stop("interrupted") ?? [];
       const messages = interrupted.reduce(upsertMessage, state.messages);
       const started: TaskStateDto = {
+        ...(typeof payload.conversation_id === 'string' ? { conversation_id: payload.conversation_id } : {}),
         task_id: taskId,
         mode,
         instruction: String(payload.instruction ?? ""),
@@ -331,6 +365,8 @@ export function applyChatDelta(
     const fresh = createChatProjection(delta.session_id);
     fresh.cursor = delta.cursor;
     fresh.messages = (delta.messages ?? []).reduce(upsertMessage, [] as ChatMessageDto[]);
+    fresh.conversationId = delta.conversation_id;
+    fresh.history = delta.history;
     fresh.recentTasks = delta.recent_tasks ?? [];
     fresh.task = has("task") ? (delta.task ?? null) : null;
     fresh.confirm = has("confirm") ? (delta.confirm ?? null) : null;
@@ -340,6 +376,8 @@ export function applyChatDelta(
   const messages = (delta.messages ?? []).reduce(upsertMessage, state.messages);
   return {
     ...state,
+    conversationId: delta.conversation_id ?? state.conversationId,
+    history: delta.history ?? state.history,
     sessionId: delta.session_id,
     cursor: delta.cursor,
     messages,

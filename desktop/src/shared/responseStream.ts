@@ -33,6 +33,7 @@ export class ResponseStream {
       this.activeId = id;
       this.responses.set(id, {
         message: { role: "assistant", text: "", task_id: this.taskId, message_id: payload.message_id,
+          ...(payload.conversation_id ? { conversation_id: payload.conversation_id } : {}),
           response_id: id, state: "streaming" },
         seq: payload.seq, terminal: false, gap: false, offset: 0,
       });

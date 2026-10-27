@@ -11,28 +11,35 @@
 .lunmi-rubber-nav .lunmi-nav-item[aria-current="page"]:focus-visible { outline-color: var(--lunmi-on-accent); }
 .lunmi-rubber-nav .lunmi-nav-item:hover:not([aria-current="page"]) { background: color-mix(in srgb, var(--lunmi-surface-hover) 45%, transparent); }
 .lunmi-rubber-nav .lunmi-nav-item:focus-visible { outline-offset: -2px; }
-.lunmi-thought-line { align-self: flex-start; max-width: 100%; margin: 4px 0 10px; color: var(--lunmi-text-secondary); font-size: 13px; }
-.lunmi-thought-head { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 10px 4px;
-  border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.lunmi-thought-head:not(button) { cursor: default; }
-.lunmi-thought-glyph { display: inline-flex; flex-shrink: 0; }
-.lunmi-thought-label { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
-.lunmi-thought-timer { flex-shrink: 0; color: var(--lunmi-text-muted); font-variant-numeric: tabular-nums; font-size: 12px; }
-.lunmi-thought-head > svg { flex-shrink: 0; transition: transform 200ms cubic-bezier(.23,1,.32,1); }
-.lunmi-thought-line[data-open="true"] .lunmi-thought-head > svg { transform: rotate(90deg); }
-.lunmi-thought-line[data-working="true"] .lunmi-thought-label { background: linear-gradient(100deg, var(--lunmi-text-muted) 30%, var(--lunmi-text-primary) 50%, var(--lunmi-text-muted) 70%);
+.lunmi-activity { align-self: flex-start; width: min(100%, 480px); margin: 4px 0 10px; color: var(--lunmi-text-secondary); font-size: 13px; }
+.lunmi-activity-head { display: flex; align-items: center; gap: 9px; max-width: 100%; min-height: 40px; padding: 8px 4px; color: inherit; }
+.lunmi-activity-trigger { border: 0; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; }
+.lunmi-main > section .lunmi-activity-trigger { min-height: 44px; }
+.lunmi-activity-trigger:hover { color: var(--lunmi-text-primary); }
+.lunmi-activity-trigger:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-activity-icon { display: inline-flex; flex-shrink: 0; }
+.lunmi-activity-label { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; font-weight: 500; }
+.lunmi-activity-timer { flex-shrink: 0; color: var(--lunmi-text-muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.lunmi-activity-chevron { flex-shrink: 0; transition: transform 200ms cubic-bezier(.23,1,.32,1); }
+.lunmi-activity[data-open="true"] .lunmi-activity-chevron { transform: rotate(180deg); }
+.lunmi-activity[data-working="true"] .lunmi-activity-label { background: linear-gradient(100deg, var(--lunmi-text-muted) 30%, var(--lunmi-text-primary) 50%, var(--lunmi-text-muted) 70%);
   background-size: 250% 100%; background-position: 125% 0; background-clip: text; color: transparent;
   animation: lunmi-thought-shimmer 1.8s linear infinite; }
-.lunmi-thought-line[data-working="true"] .lunmi-thought-glyph { animation: lunmi-thought-breathe 1.6s cubic-bezier(.77,0,.175,1) infinite; }
-.lunmi-thought-trace { margin: 0 0 0 14px; padding: 4px 0 6px 18px; border-left: 1px solid var(--lunmi-border-subtle); }
-.lunmi-thought-trace p { margin: 4px 0 8px; font-size: 12px; color: var(--lunmi-text-muted); }
-.lunmi-thought-trace ul { display: grid; gap: 10px; margin: 0; padding: 0 0 0 14px; font-size: 12px; line-height: 1.5; }
-.lunmi-thought-trace li { padding-left: 2px; overflow-wrap: anywhere; }
+.lunmi-activity[data-working="true"] .lunmi-activity-icon { animation: lunmi-thought-breathe 1.6s cubic-bezier(.77,0,.175,1) infinite; }
+.lunmi-activity-disclosure { overflow: hidden; }
+.lunmi-activity-viewport { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--lunmi-border-subtle) transparent; }
+.lunmi-activity-viewport[data-capped="true"][data-live="true"] { mask-image: linear-gradient(to bottom, transparent, black 14px); }
+.lunmi-activity-list { display: grid; gap: 2px; margin: 0 0 0 9px; padding: 3px 0 7px 20px; list-style: none; border-left: 1px solid var(--lunmi-border-subtle); }
+.lunmi-activity-row { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 4px 0; color: var(--lunmi-text-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.lunmi-activity-row[data-current="true"] { color: var(--lunmi-text-secondary); }
+.lunmi-activity-meta { color: var(--lunmi-text-muted); }
+.lunmi-activity-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--lunmi-border-subtle); }
+.lunmi-activity-row[data-current="true"] .lunmi-activity-dot { background: var(--lunmi-accent); }
 .lunmi-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes lunmi-thought-shimmer { to { background-position: -125% 0; } }
 @keyframes lunmi-thought-breathe { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .lunmi-thought-label, .lunmi-thought-glyph { animation: none !important; }
-  .lunmi-thought-label { background: none !important; color: var(--lunmi-text-secondary) !important; }
-  .lunmi-thought-head > svg { transition: none; }
+  .lunmi-activity-label, .lunmi-activity-icon { animation: none !important; }
+  .lunmi-activity-label { background: none !important; color: var(--lunmi-text-secondary) !important; }
+  .lunmi-activity-chevron { transition: none; }
 }

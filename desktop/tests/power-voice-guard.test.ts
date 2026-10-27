@@ -37,6 +37,20 @@ it("lock-screen e suspend param a fala pelo stop existente", () => {
   expect(stop).toHaveBeenCalledTimes(2);
 });
 
+it("cancela a entrada antes de parar a voz, uma vez por evento", () => {
+  const fake = fakeMonitor();
+  const calls: string[] = [];
+  registerPowerVoiceGuards(
+    fake.monitor,
+    () => calls.push("stop"),
+    () => calls.push("cancel-input")
+  );
+
+  fake.emit("lock-screen");
+  fake.emit("suspend");
+  expect(calls).toEqual(["cancel-input", "stop", "cancel-input", "stop"]);
+});
+
 it("desbloquear/retomar não retoma áudio nem repete nada", () => {
   const fake = fakeMonitor();
   const stop = vi.fn();

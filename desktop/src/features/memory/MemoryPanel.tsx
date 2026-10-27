@@ -32,7 +32,7 @@ import type {
 } from "../../shared/types";
 
 const MEMORY_LABELS: Record<string, string> = {
-  enabled: "Usar memória", episodes: "Episódios", proposals: "Propostas", history: "Histórico",
+  enabled: "Usar memória", episodes: "Episódios", proposals: "Propostas", history: "Excertos legados da memória (400 caracteres)",
   auto_learn: "Aprender com as conversas",
   preference: "Preferência", fact: "Fato", habit: "Hábito", decision: "Decisão", episode: "Episódio", conversation: "Conversa",
 };
@@ -398,8 +398,9 @@ export function MemoryPanel({ sendCommand, session, refreshToken, draft: draftPr
 
   return (
     <section aria-label="Memória" data-testid="memory-panel"
-      data-enabled={profile?.enabled === false ? "false" : "true"} className="lunmi-memory-page">
-      <header className="lunmi-memory-head">
+      data-enabled={profile?.enabled === false ? "false" : "true"} className="lunmi-memory-page lunmi-settings-page">
+      <div className="lunmi-settings-content">
+      <header className="lunmi-memory-head lunmi-settings-heading">
         <div>
           <h2>O que a Lunmi deve saber sobre ti</h2>
           <p className="lunmi-memory-sub">
@@ -570,7 +571,7 @@ export function MemoryPanel({ sendCommand, session, refreshToken, draft: draftPr
                 </div>
                 <p className="lunmi-memory-muted">Índice derivado do documento acima. Esquecer um
                   trecho aqui remove o parágrafo e não é desfazível.</p>
-                <ul data-testid="memory-list" className="lunmi-memory-list">
+                <ul data-testid="memory-list" className="lunmi-memory-list lunmi-memory-records">
                   {items.length === 0 && <li className="lunmi-memory-muted">Nenhum parágrafo indexado.</li>}
                   {items.map(entry => (
                     <li key={entry.id} data-testid={`memory-item-${entry.id}`} className="lunmi-memory-item">
@@ -616,7 +617,7 @@ export function MemoryPanel({ sendCommand, session, refreshToken, draft: draftPr
                   <h3>Propostas antigas</h3>
                   <span className="lunmi-memory-count">{proposals.length}</span>
                 </div>
-                <ul data-testid="memory-proposals" className="lunmi-memory-list">
+                <ul data-testid="memory-proposals" className="lunmi-memory-list lunmi-memory-records">
                   {proposals.length === 0 && <li className="lunmi-memory-muted">Nenhuma proposta pendente.</li>}
                   {proposals.map(proposal => (
                     <li key={proposal.id} data-testid={`proposal-${proposal.id}`} className="lunmi-memory-item lunmi-memory-proposal">
@@ -691,6 +692,7 @@ export function MemoryPanel({ sendCommand, session, refreshToken, draft: draftPr
           </div>
         )}
       </section>
+      </div>
     </section>
   );
 }

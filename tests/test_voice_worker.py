@@ -25,6 +25,7 @@ class _FakePlayback:
         self.writes: list[Any] = []
         self.begun = 0
         self.stopped = 0
+        self.drained = 0
 
     def begin(self) -> None:
         self.begun += 1
@@ -34,6 +35,9 @@ class _FakePlayback:
 
     def stop(self) -> None:
         self.stopped += 1
+
+    def drain(self) -> None:
+        self.drained += 1
 
     def close(self) -> None:
         self.stop()
@@ -277,14 +281,18 @@ def make_worker(tmp_path, engine=None) -> tuple[VoiceWorker, list[dict], _FakePl
     return worker, events, worker.playback
 
 
-def test_chunk_text_splits_sentences_and_respects_bounds() -> None:
-    assert chunk_text("Olá. Tudo bem? Sim!") == ["Olá.", "Tudo bem?", "Sim!"]
+def test_chunk_text_groups_sentences_and_respects_bounds() -> None:
+    assert chunk_text("Olá. Tudo bem? Sim!") == ["Olá. Tudo bem? Sim!"]
     long_sentence = "palavra " * 100
     chunks = chunk_text(long_sentence, max_chars=120, max_chunks=3)
     assert len(chunks) == 3
     assert all(0 < len(chunk) <= 120 for chunk in chunks)
     assert chunk_text("   ") == []
-    assert chunk_text("a. b. c.", max_chunks=2) == ["a.", "b."]
+    assert chunk_text("a. b. c.", max_chunks=2) == ["a. b. c."]
+    text = "Uma frase curta. Outra frase clara. Mais uma frase."
+    grouped = chunk_text(text, max_chars=35, max_chunks=2)
+    assert " ".join(grouped) == text
+    assert len(grouped) <= 2 and all(len(chunk) <= 35 for chunk in grouped)
 
 
 def test_parse_args_requires_a_model_dir_and_keeps_pinned_defaults(tmp_path) -> None:
@@ -292,8 +300,8 @@ def test_parse_args_requires_a_model_dir_and_keeps_pinned_defaults(tmp_path) -> 
     assert args.model_dir == str(tmp_path)
     assert args.sample_rate == DEFAULT_SAMPLE_RATE
     assert args.voice == "F4"
-    assert args.total_steps == 7
-    assert args.speed == pytest.approx(1.10)
+    assert args.total_steps == 10
+    assert args.speed == pytest.approx(1.0)
     assert args.lang == "pt"
     with pytest.raises(SystemExit):
         parse_args([])
@@ -314,10 +322,13 @@ def test_handle_command_validates_speak_and_recognizes_stop_and_shutdown(tmp_pat
 def test_render_speaks_chunks_and_emits_playing_then_done(tmp_path) -> None:
     engine = _FakeEngine()
     worker, events, playback = make_worker(tmp_path, engine)
-    render(worker, 4, "Primeira frase. Segunda frase.")
+    first = "Primeira frase " + "longa " * 25 + "termina."
+    second = "Segunda frase " + "longa " * 25 + "termina."
+    render(worker, 4, first + " " + second)
 
-    assert engine.texts == ["Primeira frase.", "Segunda frase."]
+    assert engine.texts == [first, second]
     assert playback.begun == 1
+    assert playback.drained == 1
     assert len(playback.writes) == 2
     assert events == [
         {"type": "state", "generation": 4, "state": "synthesizing"},
@@ -327,6 +338,60 @@ def test_render_speaks_chunks_and_emits_playing_then_done(tmp_path) -> None:
         {"type": "ready", "generation": 4},
     ]
     assert all("text" not in event for event in events)
+
+
+def test_short_sentences_render_with_one_prosody_context(tmp_path) -> None:
+    engine = _FakeEngine()
+    worker, events, playback = make_worker(tmp_path, engine)
+    text = "Primeira frase. Segunda frase."
+    render(worker, 5, text)
+    assert engine.texts == [text]
+    assert len(playback.writes) == 1
+    assert events[-2:] == [{"type": "done", "generation": 5},
+                           {"type": "ready", "generation": 5}]
+
+
+def test_playback_drain_waits_for_reported_latency_and_is_stop_aware() -> None:
+    from app.voice.worker_main import Playback
+
+    class Stream(_NativeStream):
+        @property
+        def latency(self) -> float:
+            entered.set()
+            return 0.05
+
+    entered = threading.Event()
+    playback = Playback()
+    stream = Stream([], block_until_abort=False)
+    playback._stream = stream
+    started = time.monotonic()
+    playback.drain()
+    assert time.monotonic() - started >= 0.05
+    assert not stream.closed
+
+    entered.clear()
+    outcomes: list[str] = []
+
+    def drain() -> None:
+        try:
+            playback.drain()
+        except Cancelled:
+            outcomes.append("cancelled")
+
+    thread = threading.Thread(target=drain)
+    thread.start()
+    assert entered.wait(0.5)
+    playback.stop()
+    thread.join(0.5)
+    assert not thread.is_alive() and outcomes == ["cancelled"]
+
+
+def test_stop_during_drain_never_announces_done_or_ready(tmp_path) -> None:
+    worker, events, playback = make_worker(tmp_path, _FakeEngine())
+    playback.drain = worker.stop
+    render(worker, 6, "Uma frase completa.")
+    assert len(playback.writes) == 1
+    assert not any(event["type"] in {"done", "ready"} for event in events)
 
 
 def test_stop_during_synthesis_prevents_playback_and_done(tmp_path) -> None:
@@ -384,3 +449,37 @@ def test_synthesis_failure_is_sanitized(tmp_path) -> None:
     assert events[-1] == {"type": "error", "generation": 5, "code": "synthesis_failed"}
     assert playback.writes == []
     assert "Users" not in repr(events)
+
+
+def test_warmup_synthesizes_fixed_text_without_playback() -> None:
+    from app.voice.worker_main import WARMUP_TEXT
+
+    worker = VoiceWorker(model_dir="missing")
+    engine = _FakeEngine()
+    worker._engine = engine
+    worker.playback = _FakePlayback()
+    events: list[dict[str, Any]] = []
+    worker.emit = events.append  # type: ignore[method-assign]
+    worker.warm_up()
+    assert engine.texts == [WARMUP_TEXT]
+    assert len(WARMUP_TEXT) <= 32
+    assert worker.playback.writes == []  # nada chega ao dispositivo de saída
+    assert events == [{"type": "warmup_done"}]
+    worker.warm_up()
+    assert engine.texts == [WARMUP_TEXT]  # idempotente, sem segunda inferência
+    assert events == [{"type": "warmup_done"}, {"type": "warmup_done"}]
+
+
+def test_warmup_failure_is_sanitized_and_does_not_touch_playback() -> None:
+    worker = VoiceWorker(model_dir="missing")
+    worker.playback = _FakePlayback()
+    events: list[dict[str, Any]] = []
+    worker.emit = events.append  # type: ignore[method-assign]
+
+    def fail() -> Any:
+        raise RuntimeError("driver detail")
+
+    worker._ensure_engine = fail  # type: ignore[method-assign]
+    worker.warm_up()
+    assert events == [{"type": "warmup_failed", "code": "model_unavailable"}]
+    assert worker.playback.writes == []

@@ -16,6 +16,8 @@ const REASON_TEXT: Record<string, string> = {
   disabled: "Ative a voz para ouvir.",
   unavailable: "Voz indisponível: runtime ou modelos de voz não instalados.",
   no_last_response: "Ainda não há resposta elegível para ouvir.",
+  // VOICE INPUT V1 (aditivo): microfone aberto recusa fala nova; mantém-se a guarda de geração.
+  input_active: "O microfone está aberto; a fala fica indisponível enquanto o ditado decorre.",
 };
 
 export interface VoiceApi {

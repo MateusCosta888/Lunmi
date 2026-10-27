@@ -13,6 +13,7 @@ import os
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from app.brain.cli.process import (
@@ -35,6 +36,7 @@ from app.brain.contracts import (
     ModelInfo,
     events_for,
 )
+from app.brain.web import NativeWebCapability, NativeWebResult
 from app.llm import Completion
 from app.settings import Settings
 
@@ -153,9 +155,22 @@ class HeadlessCliBrain:
         self._call_started = 0.0
         self._first_byte_ms: float | None = None
         self._first_text_ms: float | None = None
+        # Kiro 2.34 has a real native-web surface only under V3 and a private agent.
+        # The runtime is lazy on disk (no profile is written until a turn/capability
+        # is asked for), but it is created here so the same Brain object exposes it.
+        self._kiro_web: Any | None = None
+        if spec.id == "kiro":
+            from app.brain.kiro_web import KiroNativeWebRuntime
+            self._kiro_web = KiroNativeWebRuntime(
+                settings, spec, executable,
+                cwd=settings.state_root / ".local" / "kiro-agents",
+            )
 
     # -- argv -----------------------------------------------------------------
     def inference_argv(self) -> list[str]:
+        if self._kiro_web is not None:
+            # Never fall back to Kiro's default agent: that agent can carry tools.
+            return self._kiro_web.off_argv()
         argv = [self.executable, *self.inference_flags()]
         argv.extend(self.effort_flags())
         if self.model and self.spec.model_args:
@@ -209,6 +224,9 @@ class HeadlessCliBrain:
         self._first_byte_ms = None
         self._first_text_ms = None
         prompt = render_prompt(messages)
+        if self._kiro_web is not None:
+            argv, cwd = self._kiro_web.off_turn()
+            return await self._complete_once(prompt, started, argv=argv, cwd=cwd)
         # FASE 4: only a spec that declared a *verified* multi-turn protocol reuses the
         # process; every other CLI keeps the one-shot path below, unchanged.
         if self.spec.session_args and self.spec.session_end:
@@ -216,7 +234,9 @@ class HeadlessCliBrain:
         return await self._complete_once(prompt, started)
 
     async def _complete_once(self, prompt: str, started: float, *,
-                             on_text: Callable[[str], Awaitable[None]] | None = None) -> Completion:
+                             on_text: Callable[[str], Awaitable[None]] | None = None,
+                             argv: list[str] | None = None,
+                             cwd: str | Path | None = None) -> Completion:
         """One process per call: the behaviour every catalogued CLI has today."""
         handle: CliProcess | None = None
         spawn_ms = 0.0
@@ -227,7 +247,7 @@ class HeadlessCliBrain:
         try:
             if not prompt.strip():
                 raise BrainError(ErrorKind.CONFIGURATION, "Nada a enviar ao agente local.")
-            argv = self.inference_argv()
+            argv = list(argv) if argv is not None else self.inference_argv()
             if on_text is not None:
                 argv[argv.index("--output-format") + 1] = "stream-json"
             if not self.spec.prompt_on_stdin:
@@ -249,7 +269,10 @@ class HeadlessCliBrain:
                     "Tente uma tarefa mais curta ou escolha um cérebro que leia o prompt por stdin.",
                     detail=f"argv={length} UTF-16 units, prompt={len(prompt)} chars")
             spawn_started = time.perf_counter()
-            handle = await spawn(argv, cwd=self.settings.ufo_path.parent)
+            handle = await spawn(
+                argv,
+                cwd=cwd if cwd is not None else self.settings.ufo_path.parent,
+            )
             # Measured the moment the process exists, not at the end of the call:
             # otherwise this number silently equals the whole round and proves nothing.
             spawn_ms = (time.perf_counter() - spawn_started) * 1000
@@ -603,8 +626,42 @@ class HeadlessCliBrain:
                                "no momento.")
         return None
 
+    # -- native web ------------------------------------------------------------
+    # These are properties, not methods on every HeadlessCliBrain: the C0 helper
+    # inspects ``getattr(brain, "complete_web", None)`` and must see it only on a
+    # provider that actually implements native web. Returning ``None`` for every other
+    # CLI keeps the existing fallback semantics intact without a subclass or a registry
+    # special case.
+    @property
+    def native_web_capability(self) -> Callable[[], NativeWebCapability] | None:
+        runtime = self._kiro_web
+        if runtime is None or self._closed:
+            raise AttributeError("native web is not available")
+
+        def capability() -> NativeWebCapability:
+            return runtime.capability()
+
+        return capability
+
+    @property
+    def complete_web(self) -> Callable[[list[dict[str, Any]]], Awaitable[NativeWebResult]]:
+        runtime = self._kiro_web
+        if runtime is None or self._closed:
+            raise AttributeError("native web is not available")
+        return runtime.complete
+
+    @property
+    def cancel_web(self) -> Callable[[], Awaitable[bool]]:
+        """C1's cleanup gate; absent on every CLI without the native web runtime."""
+        runtime = self._kiro_web
+        if runtime is None or self._closed:
+            raise AttributeError("native web is not available")
+        return runtime.cancel_web
+
     async def close(self) -> None:
         self._closed = True
+        if self._kiro_web is not None:
+            await self._kiro_web.close()
         handle, self._process = self._process, None
         if handle is not None:
             await handle.stop()

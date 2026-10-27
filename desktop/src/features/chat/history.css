@@ -1,0 +1,38 @@
+.lunmi-history-dialog button, .lunmi-history-settings button { color: var(--lunmi-text-primary); background: var(--lunmi-bg-card); border: 1px solid var(--lunmi-border-subtle); border-radius: 10px; min-height: 36px; padding: 6px 10px; cursor: pointer; }
+.lunmi-history-dialog button:hover:not(:disabled), .lunmi-history-settings button:hover:not(:disabled) { background: var(--lunmi-surface-hover); }
+.lunmi-history-footer p, .lunmi-history-settings p { margin: 0; color: var(--lunmi-text-secondary); font-size: 12px; line-height: 1.5; }
+.lunmi-history-footer [role=alert], .lunmi-history-dialog [role=alert], .lunmi-history-settings [role=alert] { color: var(--lunmi-error); }
+.lunmi-history-dialog label, .lunmi-history-settings label { display: flex; flex-direction: column; gap: 6px; }
+.lunmi-history-dialog input, .lunmi-history-settings select { width: 100%; min-width: 0; padding: 8px; color: var(--lunmi-text-primary); background: var(--lunmi-bg-input); border: 1px solid var(--lunmi-border-subtle); border-radius: 8px; }
+.lunmi-history-row { display: flex; align-items: center; width: 100%; height: 100%; gap: 2px; }
+.branched-menu .lunmi-history-row button, .branched-menu .lunmi-history-action { background: transparent; border: 0; border-radius: 8px; color: var(--lunmi-text-secondary); padding: 0; cursor: pointer; }
+.branched-menu .lunmi-history-action { display: flex; align-items: center; gap: 8px; width: 100%; height: 100%; font-size: 13px; text-align: start; }
+.branched-menu .lunmi-history-open { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; text-align: start; flex: 1; height: 100%; min-width: 0; gap: 2px; font-size: 13px; }
+.lunmi-history-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.lunmi-history-open time { font-size: 10px; color: var(--lunmi-text-muted); font-variant-numeric: tabular-nums; }
+.branched-menu .lunmi-history-row[data-active=true] .lunmi-history-open { color: var(--lunmi-text-primary); font-weight: 500; }
+.branched-menu .lunmi-history-row > button:not(.lunmi-history-open) { display: grid; place-items: center; width: 28px; min-height: 28px; flex-shrink: 0; opacity: 0; }
+.lunmi-history-row:hover > button, .lunmi-history-row:focus-within > button { opacity: 1 !important; }
+.branched-menu button:hover:not(:disabled) { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); filter: none; }
+.branched-menu button:focus-visible { outline-offset: -2px; }
+.lunmi-history-footer { display: grid; gap: 8px; padding: 6px 6px 6px 40px; }
+.lunmi-history-footer:empty { display: none; }
+.lunmi-history-footer > button { border: 0; background: transparent; color: var(--lunmi-text-secondary); font-size: 12px; text-align: start; padding: 6px 0; cursor: pointer; }
+.lunmi-sidebar-inner:has(.branched-menu) { --lunmi-history-height: max(88px, calc(var(--lunmi-panel-h) - 284px)); overflow: hidden; }
+.lunmi-sidebar-inner:has(.branched-menu[data-open]) { justify-content: flex-start; }
+.lunmi-nav-group > .lunmi-nav-item { flex-shrink: 0; }
+.lunmi-nav-group > .branched-menu { margin-top: -8px; }
+.lunmi-history-backdrop { position: fixed; inset: 0; z-index: 120; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.lunmi-history-dialog { display: flex; flex-direction: column; gap: 16px; width: min(420px, 100%); max-height: calc(100dvh - 40px); padding: 20px; border-radius: 16px; background: var(--lunmi-bg-card); border: 1px solid var(--lunmi-border-subtle); box-shadow: 0 12px 36px #0006; color: var(--lunmi-text-primary); }
+.lunmi-history-dialog header, .lunmi-history-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lunmi-history-dialog h2 { margin: 0; font-size: 18px; }
+.lunmi-history-dialog form { display: flex; flex-direction: column; gap: 16px; }
+.lunmi-history-dialog p { font-size: 13px; line-height: 1.6; }
+.lunmi-history-dialog .branched-menu { --lunmi-history-height: calc(100dvh - 142px); min-height: 0; }
+.lunmi-history-settings { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--lunmi-border-subtle); border-radius: 16px; font-size: 13px; }
+.lunmi-history-settings h3 { margin: 0; font-size: 15px; }
+.lunmi-history-settings label:has(input[type=checkbox]) { flex-direction: row; align-items: center; }
+.lunmi-history-banner { padding: 6px 20px; margin: 0; font-size: 12px; color: var(--lunmi-text-secondary); }
+.lunmi-history-banner[role=alert] { color: var(--lunmi-error); }
+@media (hover: none) { .branched-menu .lunmi-history-row > button:not(.lunmi-history-open) { opacity: 1; } }
+@media (max-width: 900px) { .lunmi-history-backdrop:has(.branched-menu) { justify-content: flex-start; padding: 12px; } .lunmi-history-dialog:has(.branched-menu) { height: calc(100dvh - 24px); max-width: 340px; } }

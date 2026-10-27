@@ -33,6 +33,12 @@
 !/desktop/licenses/
 # Scripts de empacotamento/verificação: sem eles a entrega não é reproduzível.
 !/desktop/scripts/
+# One-off local diagnostic, not a maintained product regression.
+/desktop/tests/scratch-gate-probe.test.tsx
+# Hook NSIS de remoção: o build no clone precisa dele; o resto de build/ fica fora.
+!/desktop/build/
+/desktop/build/*
+!/desktop/build/installer.nsh
 # Rastreabilidade do runtime empacotado (origem/hashes e lock transitivo). O runtime binário
 # e o payload montado continuam fora do controle de versão.
 !/desktop/resources/
@@ -67,6 +73,11 @@
 !/tests/transport_child.py
 !/tests/desktop_fixture.py
 !/tests/prompt_contract_check.py
+# Superfície JS pública do Spotify: o teste e os dois fixtures exigidos pelo build.
+!/tests/spotify_js/
+/tests/spotify_js/*
+!/tests/spotify_js/client.test.mjs
+!/tests/spotify_js/fake-spicetify.js
 /tests/test_f2_acceptance_cleanup.py
 /tests/test_f2_acceptance_consent.py
 /tests/test_uia_v2_oracle.py

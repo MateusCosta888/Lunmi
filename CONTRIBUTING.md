@@ -8,7 +8,7 @@ Siga o [README](README.md#começar), com Python 3.11 e Node.js 24. Instale ferra
 - Mantenha apresentação, Brain, bridge, memória e ferramentas Windows em suas camadas.
 - Não crie outro planner, shell genérico no renderer ou nova persistência de credenciais para resolver uma mudança visual.
 - Verifique falha, carregamento, cancelamento e confirmação, além de sucesso.
-- Para UI, confira os dois temas, teclado, movimento reduzido, janela pequena e rascunhos durante tarefas.
+- Para UI, confira os três temas, teclado, movimento reduzido, janela pequena e rascunhos durante tarefas.
 - Preserve lockfiles e revise as licenças de código incorporado.
 
 ## Verificações

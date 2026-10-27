@@ -38,3 +38,19 @@ A auditoria Python (`pip-audit -r requirements.lock --no-deps --disable-pip`), r
 | langchain-text-splitters 0.3.11 | [GHSA-fv5p-p927-qmxr](https://github.com/advisories/GHSA-fv5p-p927-qmxr) | `split_text_from_url` não é chamado. Worker desativa RAG online/offline, experiência e demonstração. |
 
 Triagem estática do caminho atual, não prova de ausência de toda exploração. Versões continuam fixadas por compatibilidade com a revisão UFO²; sem upgrade forçado de major. Reavaliar antes de habilitar novas rotas upstream e até **2026-11-15**. Esta triagem não autoriza habilitar Hub, RAG ou loaders adicionais.
+
+### Nova consulta dos avisos — 2026-10-27
+
+Na atualização do código-fonte, `npm audit` reportou três entradas: duas altas (`electron`
+e `undici`) e uma moderada (`fast-uri`), sem críticas. As versões destes pacotes não foram
+alteradas neste envio; há correções indicadas pelo audit que exigem nova validação do runtime
+e da cadeia de build. Não aplicar `audit fix --force` sem essa validação.
+
+`pip-audit -r requirements.lock --no-deps --disable-pip` reportou 57 avisos em 11 pacotes:
+authlib, certifi, dnspython, fastmcp, filelock, Flask, langchain, langchain-core,
+langchain-text-splitters, opentelemetry-api e Pillow. O lock Python não mudou neste envio.
+A triagem anterior não cobre automaticamente estes avisos novos. A análise de alcance e as
+atualizações compatíveis ficam pendentes antes de uma nova distribuição binária.
+
+Esta publicação atualiza código-fonte e testes, sem gerar ou anunciar um instalador seguro.
+Não constitui certificação de ausência de vulnerabilidades nas dependências.

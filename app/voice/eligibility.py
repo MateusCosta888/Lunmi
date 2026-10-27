@@ -12,12 +12,15 @@ Regras (contrato `.agents/VOICE-V1-OUTPUT-CONTRACT.md` §6):
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping
 
 from app.voice.filter import MAX_SPEECH_CHARS, speakable_text
 
 CONVERSATIONAL_SCOPES = frozenset({"conversation"})
 VERIFIED_OPERATION_STATE = "completed_verified"
+# Citações de fonte são metadados, não fala: nunca se lê `[src-…]` em voz alta.
+_WEB_CITATION = re.compile(r"\[src-[0-9a-f]{16}\]", re.IGNORECASE)
 
 
 def operations_block_speech(operations: Iterable[Mapping[str, Any]] | None) -> bool:
@@ -46,6 +49,8 @@ def speakable_reply(
     attachments: bool = False,
     evidence_count: int = 0,
     operations: Iterable[Mapping[str, Any]] | None = None,
+    web_outcome: str | None = None,
+    web_sources: int = 0,
 ) -> str:
     """Texto pronto a sintetizar, ou `""` quando nada está provado como falável."""
     if status != "SUCCESS":
@@ -58,6 +63,16 @@ def speakable_reply(
     if prefix:
         # Operação/consulta verificada: o template é a única coisa com prova; resumo/corpo nunca.
         return prefix
+    if web_outcome is not None:
+        # WEB-SEARCH-V1 §6: só um resumo web SUCCESS com pelo menos uma fonte válida pode ser
+        # falado; não é template verificado (`verified_result` continua falso).
+        web_only = all(op.get('category') == 'read_only' and op.get('tool') in {
+            'web.search', 'web.open', 'web.research',
+        } for op in operation_list)
+        if (web_outcome == "SUCCESS" and web_sources > 0 and scope in CONVERSATIONAL_SCOPES
+                and not attachments and web_only):
+            return speakable_text(_WEB_CITATION.sub("", message or ""), max_chars=MAX_SPEECH_CHARS)
+        return ""
     if evidence_count:
         # Evidência sem template fixo não autoriza fala (leitura de dados, resumo do agente).
         return ""

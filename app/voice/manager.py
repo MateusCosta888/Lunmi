@@ -24,6 +24,7 @@ from app.voice.runtime import VoiceEnvironment, resolve_environment
 
 MAX_WORKER_LINE_BYTES = 64 * 1024
 WORKER_EXIT_TIMEOUT_SECONDS = 2.0
+WARMUP_TIMEOUT_SECONDS = 30.0
 TEST_PHRASE = "Olá. A voz da Lunmi está a funcionar."
 
 STATES = ("disabled", "loading", "ready", "synthesizing", "playing", "error")
@@ -34,6 +35,7 @@ MESSAGE_WORKER_LOST = "Motor de voz encerrou inesperadamente."
 MESSAGE_SYNTHESIS = "Falha ao sintetizar a resposta."
 MESSAGE_AUDIO = "Áudio de saída indisponível."
 MESSAGE_MODEL = "Modelo de voz indisponível."
+MESSAGE_WARMUP_TIMEOUT = "A preparação da voz demorou demasiado."
 
 _WORKER_ERROR_MESSAGES = {
     "synthesis_failed": MESSAGE_SYNTHESIS,
@@ -91,6 +93,15 @@ class VoiceManager:
         self._reader: threading.Thread | None = None
         self._stderr_reader: threading.Thread | None = None
         self._closing = False
+        # Warmup é ortogonal a `enabled`/`auto_speak`: prepara motor/pesos e descarta uma síntese
+        # fixa, sem tocar no playback nem na geração de fala.
+        self._warmup_done = False
+        self._warmup_pending = False
+        self._warmup_message = ""
+        self._warmup_event = threading.Event()
+        # VOICE INPUT V1: meio-duplex — microfone aberto recusa fala nova, sem mexer no
+        # contrato de saída (`voice.state` e `capture_supported` ficam iguais).
+        self._input_active = False
 
     # ------------------------------------------------------------- ambiente --
     def environment(self) -> VoiceEnvironment:
@@ -127,6 +138,11 @@ class VoiceManager:
             "message": message,
         }
 
+    def set_input_active(self, active: bool) -> None:
+        """Gate de meia-duplex aplicado pelo gestor de entrada (nunca abre microfone)."""
+        with self._lock:
+            self._input_active = bool(active)
+
     @property
     def worker_pid(self) -> int | None:
         """PID vivo do worker (diagnóstico/teste); `None` quando não há processo."""
@@ -139,6 +155,50 @@ class VoiceManager:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._snapshot_locked(self.environment()))
+
+    def warm_up(self, timeout: float = WARMUP_TIMEOUT_SECONDS) -> tuple[str, str]:
+        """Prepara modelo + primeira inferência descartada sem reproduzir áudio.
+
+        Devolve `(estado, mensagem)` com estado em `ready|unavailable|error`. Idempotente: uma
+        segunda chamada concorrente espera pelo mesmo pedido; depois de pronto responde já.
+        """
+        with self._lock:
+            if self._closing:
+                return "unavailable", MESSAGE_WORKER
+            if self._warmup_done:
+                return "ready", ""
+            env = self.environment()
+            if not env.available:
+                return "unavailable", MESSAGE_UNAVAILABLE
+            if self._warmup_pending:
+                event = self._warmup_event
+            else:
+                self._warmup_pending = True
+                self._warmup_message = ""
+                self._warmup_event.clear()
+                if not self._ensure_worker_locked(env):
+                    self._warmup_pending = False
+                    self._warmup_event.set()
+                    return "error", MESSAGE_WORKER
+                if not self._send_locked({"type": "warmup"}):
+                    self._warmup_pending = False
+                    self._warmup_message = MESSAGE_WORKER
+                    self._kill_worker_locked()
+                    self._warmup_event.set()
+                    return "error", MESSAGE_WORKER
+                event = self._warmup_event
+        if not event.wait(max(0.01, float(timeout))):
+            with self._lock:
+                if self._warmup_pending:
+                    self._warmup_pending = False
+                    self._warmup_message = MESSAGE_WARMUP_TIMEOUT
+                    self._kill_worker_locked()
+                    self._warmup_event.set()
+                    return "error", MESSAGE_WARMUP_TIMEOUT
+        with self._lock:
+            if self._warmup_done:
+                return "ready", ""
+            return "error", self._warmup_message or MESSAGE_WORKER
 
     def _ack_locked(self, accepted: bool, reason: str = "") -> dict[str, Any]:
         env = self.environment()
@@ -222,6 +282,9 @@ class VoiceManager:
             env = self.environment()
             if not self._prefs.enabled:
                 return self._ack_locked(False, "disabled")
+            if self._input_active:
+                # Fala não inicia enquanto o microfone do ditado está aberto.
+                return self._ack_locked(False, "input_active")
             if not env.available:
                 return self._ack_locked(False, "unavailable")
             self._generation += 1
@@ -345,6 +408,21 @@ class VoiceManager:
         kind = data.get("type")
         generation = data.get("generation")
         kill_worker = False
+        if kind in {"warmup_done", "warmup_failed"}:
+            with self._lock:
+                if self._closing or self._proc is not proc:
+                    return
+                self._warmup_pending = False
+                if kind == "warmup_done":
+                    self._warmup_done = True
+                    self._warmup_message = ""
+                else:
+                    self._warmup_done = False
+                    self._warmup_message = (MESSAGE_MODEL
+                                            if data.get("code") == "model_unavailable"
+                                            else MESSAGE_SYNTHESIS)
+                self._warmup_event.set()
+            return
         with self._lock:
             if self._closing or self._proc is not proc:
                 return
@@ -382,6 +460,11 @@ class VoiceManager:
                 return
             self._proc = None
             self._stdin = None
+            self._warmup_done = False
+            if self._warmup_pending:
+                self._warmup_pending = False
+                self._warmup_message = MESSAGE_WORKER_LOST
+                self._warmup_event.set()
             if self._closing:
                 return
             self._generation += 1
@@ -394,6 +477,11 @@ class VoiceManager:
         self._stdin = None
         if proc is None:
             return
+        self._warmup_done = False
+        if self._warmup_pending:
+            self._warmup_pending = False
+            self._warmup_message = MESSAGE_WORKER_LOST
+            self._warmup_event.set()
         stream = getattr(proc, "stdin", None)
         if stream is not None:
             try:

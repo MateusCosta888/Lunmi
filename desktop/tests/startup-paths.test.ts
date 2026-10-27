@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as path from "path";
+import * as fs from "fs";
+vi.mock("fs", { spy: true });
 import { resolvePythonExecutable } from "../electron/backend";
 
 const runtime = vi.hoisted(() => ({
@@ -13,6 +15,7 @@ const originalDefaultApp = Object.getOwnPropertyDescriptor(process, "defaultApp"
 const originalResources = Object.getOwnPropertyDescriptor(process, "resourcesPath");
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   if (originalDefaultApp) Object.defineProperty(process, "defaultApp", originalDefaultApp);
   else Reflect.deleteProperty(process, "defaultApp");
@@ -37,6 +40,8 @@ describe("startup paths for branded development and installed builds", () => {
     // Vitest imports the source main; the real boot check uses dist-electron/electron/main.js.
     const sourceRelativeRoot = path.resolve(__dirname, "../../..");
     const checkout = path.resolve(__dirname, "../..");
+    const venvPython = path.join(checkout, ".venv", "Scripts", "python.exe");
+    vi.mocked(fs.existsSync).mockImplementation(file => file === venvPython);
     expect(getRepoRoot()).toBe(sourceRelativeRoot);
     expect(getResourcesRoot()).toBeNull();
     expect(getUserDataRoot()).toBe(sourceRelativeRoot);

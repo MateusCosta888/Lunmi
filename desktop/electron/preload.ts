@@ -21,6 +21,10 @@ import type {
   PresenceEventDto,
   PresencePreferencesDto,
   PresenceSnapshotDto,
+  VoiceInputHoldPhaseDto,
+  VoiceInputShortcutControlDto,
+  VoiceInputShortcutResultDto,
+  WebSourceOpenResultDto,
 } from "../src/shared/types";
 
 export interface PickedAttachmentDto {
@@ -60,6 +64,16 @@ export interface LunmiBridgeApi {
   pickLocation(kind: "folder" | "file", query: string): Promise<{ path: string }>;
   pickAttachments(): Promise<PickAttachmentsResultDto>;
   windowControl(action: WindowControlActionDto): Promise<WindowControlDto>;
+  /** VOICE INPUT V1/V2: só a janela principal recebe `lunmi`; o companheiro não a vê. */
+  voiceInputShortcut: {
+    get(): Promise<VoiceInputShortcutResultDto>;
+    set(accelerator: string | null): Promise<VoiceInputShortcutResultDto>;
+    /** Fases sanitizadas do helper; devolve a função de cancelamento da subscrição. */
+    onHold(listener: (phase: VoiceInputHoldPhaseDto) => void): () => void;
+    /** Só a janela principal confiável; suspende o observer durante o key-recorder. */
+    pause(): Promise<VoiceInputShortcutControlDto>;
+    resume(): Promise<VoiceInputShortcutControlDto>;
+  };
   restartBackend(): Promise<SessionReadyPayload>;
   shutdown(): Promise<{ status: string; session_id: string }>;
   onEvent(callback: (event: Envelope) => void): () => void;
@@ -108,6 +122,30 @@ const lunmiApi: LunmiBridgeApi = Object.freeze({
   windowControl(action: WindowControlActionDto): Promise<WindowControlDto> {
     return ipcRenderer.invoke("lunmi:window-control", { action });
   },
+  voiceInputShortcut: Object.freeze({
+    get(): Promise<VoiceInputShortcutResultDto> {
+      return ipcRenderer.invoke("lunmi:voice-input-shortcut-get");
+    },
+    set(accelerator: string | null): Promise<VoiceInputShortcutResultDto> {
+      // O main revalida remetente, frame, documento e o accelerator; aqui só se transporta.
+      return ipcRenderer.invoke("lunmi:voice-input-shortcut-set", { accelerator });
+    },
+    onHold(listener: (phase: VoiceInputHoldPhaseDto) => void): () => void {
+      const handler = (_evt: IpcRendererEvent, phase: VoiceInputHoldPhaseDto) => {
+        listener(phase);
+      };
+      ipcRenderer.on("lunmi:voice-input-hold", handler);
+      return () => {
+        ipcRenderer.removeListener("lunmi:voice-input-hold", handler);
+      };
+    },
+    pause(): Promise<VoiceInputShortcutControlDto> {
+      return ipcRenderer.invoke("lunmi:voice-input-shortcut-pause");
+    },
+    resume(): Promise<VoiceInputShortcutControlDto> {
+      return ipcRenderer.invoke("lunmi:voice-input-shortcut-resume");
+    },
+  }),
   restartBackend(): Promise<SessionReadyPayload> {
     return ipcRenderer.invoke("lunmi:restart-backend");
   },
@@ -134,8 +172,17 @@ const presenceApi: LunmiPresenceApi = Object.freeze({
     // main (`shared/node.ts` é a fonte canónica do enum). Aqui só se transporta a ação.
     return ipcRenderer.invoke("lunmi:presence-action", { action });
   },
-  setDraft(text: string): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke("lunmi:presence-draft", { text });
+  setDraft(text: string, conversationId?: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke("lunmi:presence-draft", { text,
+      ...(conversationId ? { conversation_id: conversationId } : {}) });
+  },
+  openWebSource(input: {
+    session_id: string;
+    task_id: string;
+    source_id: string;
+  }): Promise<WebSourceOpenResultDto> {
+    // O main revalida o sender, resolve a URL na projeção canónica e valida-a antes de abrir.
+    return ipcRenderer.invoke("lunmi:web-open-source", input);
   },
   sendCommand<TResult = Record<string, unknown>>(
     type: string,

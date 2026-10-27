@@ -4,8 +4,9 @@ import { Icon, type IconName } from "./ui";
 import { useVisualActivity } from "./useVisualActivity";
 
 type Item = { id: string; label: string; icon: IconName };
-export function RubberNavigation({ items, value, disabled, onChange }: {
+export function RubberNavigation({ items, value, disabled, onChange, branch }: {
   items: readonly Item[]; value: string; disabled: boolean; onChange: (value: string) => void;
+  branch?: { id: string; content: React.ReactNode; expanded: boolean; controls: string };
 }): React.ReactElement {
   const track = useRef<HTMLElement>(null), thumb = useRef<HTMLSpanElement>(null);
   const animation = useRef<Animation | null>(null);
@@ -16,7 +17,7 @@ export function RubberNavigation({ items, value, disabled, onChange }: {
     if (!nav || !indicator) return;
     let previous: { top: number; bottom: number } | null = null;
     const place = (move: boolean) => {
-      const button = nav.querySelector<HTMLButtonElement>('[aria-current="page"]');
+      const button = nav.querySelector<HTMLButtonElement>('.lunmi-nav-item[aria-current="page"]');
       if (!button) return;
       const navBox = nav.getBoundingClientRect(), box = button.getBoundingClientRect();
       const next = { top: box.top - navBox.top, bottom: navBox.bottom - box.bottom };
@@ -43,18 +44,21 @@ export function RubberNavigation({ items, value, disabled, onChange }: {
   return <nav ref={track} className="lunmi-nav-group lunmi-rubber-nav" aria-label="Seções"
     onKeyDown={event => {
       if (disabled || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      if (event.target !== event.currentTarget && !(event.target as HTMLElement).closest('.lunmi-nav-item')) return;
       event.preventDefault();
       const focused = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
       const selected = items.findIndex(item => item.id === current.current);
-      const index = focused ? Array.from(track.current?.querySelectorAll("button") ?? []).indexOf(focused) : selected;
+      const index = focused ? Array.from(track.current?.querySelectorAll(".lunmi-nav-item") ?? []).indexOf(focused) : selected;
       const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      onChange(items[next].id); track.current?.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
+      onChange(items[next].id); track.current?.querySelectorAll<HTMLButtonElement>(".lunmi-nav-item")[next]?.focus();
     }}>
     <span className="lunmi-rubber-thumb" ref={thumb} aria-hidden="true" />
-    {items.map(item => <button key={item.id} type="button" className="lunmi-nav-item"
+    {items.map(item => <React.Fragment key={item.id}><button type="button" className="lunmi-nav-item"
       data-testid={`nav-${item.id}`} aria-label={item.label} title={item.label} aria-current={value === item.id ? "page" : undefined}
+      aria-expanded={branch?.id === item.id ? branch.expanded : undefined}
+      aria-controls={branch?.id === item.id ? branch.controls : undefined}
       disabled={disabled} onClick={() => onChange(item.id)}>
       <span className="lunmi-nav-icon"><Icon name={item.icon} /></span><span className="lunmi-nav-text">{item.label}</span>
-    </button>)}
+    </button>{branch?.id === item.id && branch.content}</React.Fragment>)}
   </nav>;
 }

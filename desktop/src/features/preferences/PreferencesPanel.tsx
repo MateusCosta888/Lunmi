@@ -11,6 +11,10 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useNodePreferences, useResidentOption } from "../../shared/ipc/presence";
+import { VoiceSettingsCard } from "../voice/VoiceSettingsCard";
+import { HistorySettings } from '../chat/HistoryNavigation';
+import type { ChatHistorySnapshotDto } from '../../shared/types';
+import { WebSearchCard } from "../web/WebSearchCard";
 import { TOKENS, THEMES, getTheme } from "../../shared/theme";
 import { Icon } from "../../shared/ui";
 import { describeError, type SendCommandFn } from "../../shared/ipc/client";
@@ -18,6 +22,8 @@ import type { ApprovalDto, NodePreferencesDto, QuickActionDto, UiPreferencesDto 
 import type { SessionReadyPayload } from "../../shared/protocol";
 
 export interface PreferencesPanelProps {
+  history?: ChatHistorySnapshotDto;
+  historyLocked?: boolean;
   sendCommand: SendCommandFn;
   session: SessionReadyPayload | null;
   onThemeChanged?: (theme: string) => void;
@@ -43,7 +49,7 @@ function ResidentCard(): React.ReactElement | null {
     if (!saved) setError("Não foi possível guardar a preferência de segundo plano. O valor anterior mantém-se.");
   };
   return (
-    <div style={cardStyle} data-testid="resident-card">
+    <div className="lunmi-settings-card" style={cardStyle} data-testid="resident-card">
       <h3 style={subHeadingStyle}>Segundo plano</h3>
       <label
         htmlFor="resident-toggle"
@@ -96,7 +102,7 @@ function NodeCard(): React.ReactElement | null {
       ? "Fechar (X) esconde a janela e mostra o Node no canto escolhido; «Sair» na bandeja termina a aplicação."
       : "Fechar (X) esconde para a bandeja sem Node; abre de novo pela bandeja. O Node desligado nunca termina a sessão.";
   return (
-    <div style={cardStyle} data-testid="node-card">
+    <div className="lunmi-settings-card" style={cardStyle} data-testid="node-card">
       <h3 style={subHeadingStyle}>Lunmi Node</h3>
       <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
         <input type="checkbox" data-testid="node-enabled" checked={preferences.enabled} disabled={busy}
@@ -110,7 +116,9 @@ function NodeCard(): React.ReactElement | null {
         </span>
       </label>
 
-      <div role="radiogroup" aria-label="Canto do Node" style={{ display: "flex", gap: "14px", margin: "10px 0 0", fontSize: "13px" }}>
+      <details className="lunmi-settings-disclosure">
+      <summary>Personalizar o Node</summary>
+      <div role="radiogroup" aria-label="Canto do Node" style={{ display: "flex", flexWrap: "wrap", gap: "14px", margin: "10px 0 0", fontSize: "13px" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
           <input type="radio" name="node-side" data-testid="node-side-left" value="left"
             checked={preferences.side === "left"} disabled={busy || !preferences.enabled}
@@ -133,11 +141,23 @@ function NodeCard(): React.ReactElement | null {
       <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", marginTop: "6px" }}>
         <input type="checkbox" data-testid="node-show-activity" checked={preferences.show_activity} disabled={busy}
           onChange={() => apply({ show_activity: !preferences.show_activity })} />
-        Mostrar atividade no Node
-        <span style={{ color: TOKENS.textMuted, fontSize: "12px" }}>
-          — confirmações pendentes e erros continuam visíveis mesmo desligado.
+        <span>Mostrar atividade no Node
+          <small style={{ display: "block", color: TOKENS.textMuted, fontSize: "12px" }}>
+            Confirmações pendentes e erros continuam visíveis mesmo desligado.
+          </small>
         </span>
       </label>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
+        <label htmlFor="node-chat-appearance" style={{ fontSize: "13px" }}>Cores do chat de segundo plano</label>
+        <select id="node-chat-appearance" data-testid="node-chat-appearance"
+          value={preferences.chat_appearance ?? "theme"} disabled={busy}
+          style={{ ...controlStyle, minHeight: "44px" }}
+          onChange={event => apply({ chat_appearance: event.target.value as "theme" | "black" })}>
+          <option value="theme">Seguir o tema</option>
+          <option value="black">Preto</option>
+        </select>
+      </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
         <label htmlFor="node-shortcut-input" style={{ fontSize: "12px", color: TOKENS.textMuted }}>Atalho</label>
@@ -151,12 +171,12 @@ function NodeCard(): React.ReactElement | null {
           onChange={event => setShortcutDraft(event.target.value)}
           style={{ ...controlStyle, width: "200px" }}
         />
-        <button type="button" data-testid="node-shortcut-apply" style={secondaryButtonStyle} disabled={busy || !shortcutDraft.trim()}
+        <button type="button" data-testid="node-shortcut-apply" className="lunmi-action-button lunmi-action-quiet" style={secondaryButtonStyle} disabled={busy || !shortcutDraft.trim()}
           onClick={() => { apply({ shortcut: shortcutDraft.trim() }); setShortcutDraft(""); }}>
           Definir atalho
         </button>
         {preferences.shortcut && (
-          <button type="button" data-testid="node-shortcut-clear" style={secondaryButtonStyle} disabled={busy}
+          <button type="button" data-testid="node-shortcut-clear" className="lunmi-action-button lunmi-action-quiet" style={secondaryButtonStyle} disabled={busy}
             onClick={() => { setShortcutDraft(""); apply({ shortcut: null }); }}>
             Remover atalho
           </button>
@@ -165,6 +185,7 @@ function NodeCard(): React.ReactElement | null {
       <p style={{ margin: "6px 0 0", color: TOKENS.textMuted, fontSize: "12px" }}>
         O atalho abre e recolhe o chat do Node. Se outro programa já o usar, o teu atalho anterior fica intacto.
       </p>
+      </details>
 
       <p style={{ margin: "10px 0 0", fontSize: "12px", color: TOKENS.textSecondary }} data-testid="node-semantics">{semantics}</p>
       {error && <p role="alert" style={errorStyle} data-testid="node-error">{NODE_ERROR_TEXT[error] ?? "A preferência não foi guardada; os valores anteriores mantêm-se."}</p>}
@@ -172,7 +193,7 @@ function NodeCard(): React.ReactElement | null {
   );
 }
 
-export function PreferencesPanel({ sendCommand, session, onThemeChanged }: PreferencesPanelProps): React.ReactElement {
+export function PreferencesPanel({ sendCommand, session, onThemeChanged, history, historyLocked = false }: PreferencesPanelProps): React.ReactElement {
   const [approval, setApproval] = useState<ApprovalDto | null>(null);
   const [actions, setActions] = useState<QuickActionDto[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
@@ -278,17 +299,12 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
     <section
       aria-label="Preferências"
       data-testid="preferences-panel"
-      style={{
-        flex: "1 1 auto",
-        overflowY: "auto",
-        padding: "20px",
-        display: "grid",
-        gap: "16px",
-        alignContent: "start",
-      }}
+      className="lunmi-settings-page lunmi-preferences-page"
     >
-      <header>
-        <h2 style={headingStyle}>Preferências</h2>
+      <div className="lunmi-settings-content">
+      <header className="lunmi-settings-heading">
+        <h2 style={headingStyle}>Configurações</h2>
+        <p>Personaliza o espaço, a voz e os controlos da Lunmi.</p>
         {error && (
           <p role="alert" data-testid="preferences-error" style={errorStyle}>
             {error}
@@ -301,7 +317,7 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
         )}
       </header>
 
-      <div style={cardStyle} data-testid="theme-card">
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="theme-card">
         <h3 style={subHeadingStyle}><Icon name="palette" /> Aparência</h3>
         <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Escolha o tema. A mudança é aplicada sem reiniciar.</p>
         <div className="lunmi-theme-grid" role="group" aria-label="Tema da interface">
@@ -318,29 +334,29 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
         </div>
       </div>
 
-      <div style={cardStyle} data-testid="session-card">
-        <h3 style={subHeadingStyle}>Sessão atual</h3>
-        {session ? (
-          <details className="lunmi-session-details">
-            <summary>Conexão segura · Python local</summary>
-            <span style={{ color: TOKENS.textMuted }} data-testid="session-summary">
-              sessão {session.session_id} · pid {session.pid} · capacidades{" "}
-              {Object.entries(session.capabilities ?? {})
-                .filter(([, enabled]) => Boolean(enabled))
-                .map(([name]) => name)
-                .join(", ") || "nenhuma"}
-            </span>
-          </details>
-        ) : (
-          <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Nenhuma sessão ativa para detalhar.</p>
-        )}
-      </div>
-
+      <section className="lunmi-settings-section" aria-label="Ambiente de trabalho">
+      <h3 className="lunmi-settings-section-title">Ambiente de trabalho</h3>
+      <div className="lunmi-settings-grid">
       <ResidentCard />
 
       <NodeCard />
+      </div>
+      </section>
 
-      <div style={cardStyle} data-testid="approval-card">
+      <section className="lunmi-settings-section" aria-label="Voz e pesquisa">
+      <h3 className="lunmi-settings-section-title">Voz e pesquisa</h3>
+      <div className="lunmi-settings-grid">
+      <VoiceSettingsCard sessionId={session?.session_id} />
+      <WebSearchCard sessionId={session?.session_id} supportedBySession={session?.capabilities?.web_search === true} />
+      </div>
+      </section>
+
+      <section className="lunmi-settings-section" aria-label="Dados e controlo">
+      <h3 className="lunmi-settings-section-title">Dados e controlo</h3>
+      <div className="lunmi-settings-grid">
+      {history && <HistorySettings sendCommand={sendCommand} history={history} locked={historyLocked} />}
+
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="approval-card">
         <h3 style={subHeadingStyle}>Autoaprovação</h3>        <label
           htmlFor="auto-approve"
           style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}
@@ -366,18 +382,21 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
         </p>
       </div>
 
-      <div style={cardStyle} data-testid="actions-card">
+      </div>
+      </section>
+
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="actions-card">
         <h3 style={subHeadingStyle}>Atalhos do painel</h3>
         <p style={{ margin: "0 0 10px", color: TOKENS.textMuted, fontSize: "12px" }}>
           Até {MAX_ACTIONS} atalhos. O texto é o rascunho que o atalho coloca no campo de escrita.
         </p>
 
-        <div data-testid="action-list" style={{ display: "grid", gap: "10px" }}>
+        <div data-testid="action-list" className="lunmi-shortcut-grid">
           {actions.map((action, index) => (
             <div
               key={`action-${index}`}
               data-testid={`action-row-${index}`}
-              style={{ display: "grid", gap: "6px" }}
+              className="lunmi-shortcut-editor"
             >
               <label htmlFor={`action-label-${index}`} style={labelStyle}>
                 Rótulo
@@ -408,7 +427,7 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
                 data-testid={`action-remove-${index}`}
                 disabled={!sessionReady || busy}
                 onClick={() => removeAction(index)}
-                style={secondaryButtonStyle}
+                className="lunmi-action-button lunmi-action-quiet" style={secondaryButtonStyle}
               >
                 Remover
               </button>
@@ -422,7 +441,7 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
             data-testid="action-add"
             disabled={!sessionReady || busy || actions.length >= MAX_ACTIONS}
             onClick={addAction}
-            style={secondaryButtonStyle}
+            className="lunmi-action-button lunmi-action-quiet" style={secondaryButtonStyle}
           >
             Adicionar atalho
           </button>
@@ -431,11 +450,30 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged }: Prefe
             data-testid="save-preferences"
             disabled={!sessionReady || busy}
             onClick={() => void savePreferences()}
-            style={primaryButtonStyle}
+            className="lunmi-action-button lunmi-action-primary" style={primaryButtonStyle}
           >
             Salvar preferências
           </button>
         </div>
+      </div>
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="session-card">
+        <h3 style={subHeadingStyle}>Sessão atual</h3>
+        {session ? (
+          <details className="lunmi-session-details">
+            <summary>Conexão segura · Python local</summary>
+            <span style={{ color: TOKENS.textMuted }} data-testid="session-summary">
+              sessão {session.session_id} · pid {session.pid} · capacidades{" "}
+              {Object.entries(session.capabilities ?? {})
+                .filter(([, enabled]) => Boolean(enabled))
+                .map(([name]) => name)
+                .join(", ") || "nenhuma"}
+            </span>
+          </details>
+        ) : (
+          <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Nenhuma sessão ativa para detalhar.</p>
+        )}
+      </div>
+
       </div>
     </section>
   );
@@ -467,11 +505,10 @@ const controlStyle: React.CSSProperties = {
   fontSize: "13px",
 };
 const cardStyle: React.CSSProperties = {
-  padding: "16px",
-  borderRadius: "12px",
+  padding: "20px",
+  borderRadius: "16px",
   border: `1px solid ${TOKENS.borderSubtle}`,
   backgroundColor: TOKENS.bgCard,
-  maxWidth: "660px",
 };
 const errorStyle: React.CSSProperties = { margin: "8px 0 0", color: TOKENS.error, fontSize: "13px" };
 const statusStyle: React.CSSProperties = { margin: "8px 0 0", color: TOKENS.success, fontSize: "13px" };

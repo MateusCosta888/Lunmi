@@ -8,9 +8,12 @@ Executado pelo runtime externo preparado pelo Root:
 Contrato JSONL (stdin/stdout, UTF-8, uma mensagem por linha):
 
   entrada  {"type":"speak","generation":N,"text":"..."}
+           {"type":"warmup"}
            {"type":"stop"}
            {"type":"shutdown"}
   saída    {"type":"state","generation":N,"state":"loading|synthesizing|playing"}
+           {"type":"warmup_done"}
+           {"type":"warmup_failed","code":"model_unavailable|synthesis_failed"}
            {"type":"ready","generation":N}
            {"type":"done","generation":N}
            {"type":"error","generation":N,"code":"model_unavailable|synthesis_failed|audio_failed"}
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import threading
@@ -40,6 +44,10 @@ STOP_DRAIN_TIMEOUT_S = 1.0
 MAX_CHUNKS = 6
 MAX_OUTPUT_MS = 20_000
 DEFAULT_SAMPLE_RATE = 44_100
+DEFAULT_TOTAL_STEPS = 10
+DEFAULT_SPEED = 1.0
+# Texto fixo, curto e descartado: paga a primeira inferência sem play, ficheiro ou áudio audível.
+WARMUP_TEXT = "Olá."
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
 
@@ -50,29 +58,35 @@ class Cancelled(Exception):
 
 def chunk_text(text: str, *, max_chars: int = MAX_CHUNK_CHARS,
                max_chunks: int = MAX_CHUNKS) -> list[str]:
-    """Divide em frases limitadas; corta em vírgula/espaço e nunca passa de `max_chunks`."""
+    """Agrupa frases para manter prosódia; respeita tamanho e número máximos de blocos."""
     cleaned = " ".join((text or "").split())
     if not cleaned:
         return []
-    chunks: list[str] = []
+    pieces: list[str] = []
     for sentence in _SENTENCE_SPLIT.split(cleaned):
         sentence = sentence.strip()
         while sentence:
             if len(sentence) <= max_chars:
-                chunks.append(sentence)
+                pieces.append(sentence)
                 sentence = ""
                 break
             window = sentence[:max_chars]
             cut = max(window.rfind(", "), window.rfind("; "), window.rfind(" "))
             if cut < max_chars // 3:
                 cut = max_chars
-            chunks.append(sentence[:cut].strip())
+            pieces.append(sentence[:cut].strip())
             sentence = sentence[cut:].strip()
-            if len(chunks) >= max_chunks:
-                return chunks[:max_chunks]
-        if len(chunks) >= max_chunks:
-            return chunks[:max_chunks]
-    return [chunk for chunk in chunks if chunk]
+    chunks: list[str] = []
+    for piece in pieces:
+        if not piece:
+            continue
+        if chunks and len(chunks[-1]) + 1 + len(piece) <= max_chars:
+            chunks[-1] += " " + piece
+        elif len(chunks) < max_chunks:
+            chunks.append(piece)
+        else:
+            break
+    return chunks
 
 
 class Playback:
@@ -167,6 +181,31 @@ class Playback:
                 entry["active"] = False
         self._space.notify_all()
 
+    def drain(self) -> None:
+        """Espera a cauda enfileirada sem tocar no handle nativo; Parar continua imediato."""
+        with self._lock:
+            if self._stopped:
+                raise Cancelled()
+            stream = self._stream
+            if stream is None:
+                return
+            try:
+                latency = float(stream.latency)
+            except (AttributeError, TypeError, ValueError):
+                latency = 0.1
+        if not math.isfinite(latency) or latency < 0:
+            latency = 0.1
+        # shortcut: usa latência reportada, limitada a 1 s; revalidar drivers de alta latência.
+        deadline = time.monotonic() + min(1.0, latency + 0.02)
+        while True:
+            with self._lock:
+                if self._stopped or self._stream is not stream:
+                    raise Cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.01, remaining))
+
     def stop(self) -> None:
         with self._lock:
             self._stopped = True
@@ -227,7 +266,8 @@ class AudioUnavailable(RuntimeError):
 
 class VoiceWorker:
     def __init__(self, *, model_dir: str, sample_rate: int = DEFAULT_SAMPLE_RATE,
-                 voice: str = "F4", total_steps: int = 7, speed: float = 1.10,
+                 voice: str = "F4", total_steps: int = DEFAULT_TOTAL_STEPS,
+                 speed: float = DEFAULT_SPEED,
                  lang: str = "pt") -> None:
         self.model_dir = model_dir
         self.sample_rate = int(sample_rate)
@@ -244,6 +284,7 @@ class VoiceWorker:
         self._active_generation = 0
         self._stop_generation = -1
         self._shutdown = False
+        self._warmed_up = False
         self.playback = Playback(sample_rate=self.sample_rate)
         self._thread: threading.Thread | None = None
 
@@ -302,6 +343,30 @@ class VoiceWorker:
         except Exception:
             return False
         return True
+
+    def warm_up(self) -> None:
+        """Carrega o modelo e paga a primeira inferência com texto fixo, sem reproduzir.
+
+        A síntese descartada não abre dispositivo de saída nem guarda áudio. Repetir o pedido
+        depois de pronto só confirma o estado; o motor/pesos continuam em cache.
+        """
+        if self._warmed_up:
+            self.emit({"type": "warmup_done"})
+            return
+        try:
+            engine = self._ensure_engine()
+        except Exception:
+            self.emit({"type": "warmup_failed", "code": "model_unavailable"})
+            return
+        try:
+            samples = self._synthesize(engine, WARMUP_TEXT)
+        except Exception:
+            self.emit({"type": "warmup_failed", "code": "synthesis_failed"})
+            return
+        # As amostras vivem só nesta frame e são descartadas; nunca chegam a Playback.
+        del samples
+        self._warmed_up = True
+        self.emit({"type": "warmup_done"})
 
     def _ensure_engine(self) -> Any:
         with self._engine_lock:
@@ -380,6 +445,16 @@ class VoiceWorker:
                 return
         if self._cancelled(generation):
             return
+        try:
+            self.playback.drain()
+        except Cancelled:
+            return
+        except Exception:
+            if not self._cancelled(generation):
+                self.emit({"type": "error", "generation": generation, "code": "audio_failed"})
+            return
+        if self._cancelled(generation):
+            return
         self.emit({"type": "done", "generation": generation})
         self.emit({"type": "ready", "generation": generation})
 
@@ -408,6 +483,9 @@ class VoiceWorker:
             cleaned = " ".join(text.split())[:MAX_TEXT_CHARS]
             if cleaned:
                 self.submit(generation, cleaned)
+            return True
+        if kind == "warmup":
+            self.warm_up()
             return True
         if kind == "stop":
             self.stop()
@@ -441,8 +519,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--sample-rate", type=int, default=DEFAULT_SAMPLE_RATE)
     parser.add_argument("--voice", default="F4")
-    parser.add_argument("--total-steps", type=int, default=7)
-    parser.add_argument("--speed", type=float, default=1.10)
+    parser.add_argument("--total-steps", type=int, default=DEFAULT_TOTAL_STEPS)
+    parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
     parser.add_argument("--lang", default="pt")
     return parser.parse_args(list(argv) if argv is not None else None)
 

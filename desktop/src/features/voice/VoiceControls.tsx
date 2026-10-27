@@ -1,111 +1,51 @@
 /**
- * Controlos de saída de voz (`desktop/src/features/voice/VoiceControls.tsx`, VOICE-V1-OUTPUT).
+ * Controlos de saída de voz no compositor (`desktop/src/features/voice/VoiceControls.tsx`).
  *
- * Um botão compacto no compositor abre o popover: Ativar voz, Falar respostas, Testar voz,
- * Ouvir última resposta e Parar voz. Parar voz é distinto de Parar tarefa (comando próprio
- * `voice.stop`, nunca `task.cancel`). Não existe qualquer controlo de captura: o microfone é
- * indicado como pendente de validação (`capture_supported` é sempre `false` nesta entrega).
- * Estados e mensagens vêm do backend; nada de texto de conversa, paths ou segredos no DOM.
+ * VOICE REFINEMENTS V2: o chat mantém apenas o operacional mínimo — estado de fala e «Parar voz»
+ * (comando próprio `voice.stop`, nunca `task.cancel`). As opções (Ativar voz, Falar respostas,
+ * Testar, Ouvir última resposta, atalho de ditado) vivem em Configurações → Voz, porque o GO
+ * remove os ajustes do compositor. Estados e mensagens vêm do backend; nada de texto de conversa,
+ * paths ou segredos no DOM; nenhum áudio automático de arranque.
  */
-import React, { useEffect, useRef, useState } from "react";
-import { Volume2, VolumeX } from "lucide-react";
+import React from "react";
 import { useVoice } from "./useVoice";
-import type { VoiceStateName } from "../../shared/types";
 import "./voice.css";
-
-const STATE_LABEL: Record<VoiceStateName, string> = {
-  disabled: "desligada",
-  loading: "carregando motor…",
-  ready: "pronta",
-  synthesizing: "sintetizando…",
-  playing: "falando…",
-  error: "indisponível",
-};
 
 export interface VoiceControlsProps {
   sessionId: string | undefined;
 }
 
-export function VoiceControls({ sessionId }: VoiceControlsProps): React.ReactElement {
-  const { voice, supported, busy, error, setEnabled, setAutoSpeak, test, speakLast, stopVoice } = useVoice(sessionId);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape" && open) {
-      event.preventDefault();
-      setOpen(false);
-      triggerRef.current?.focus();
-    }
-  };
-
+export function VoiceControls({ sessionId }: VoiceControlsProps): React.ReactElement | null {
+  const { voice, supported, busy, error, stopVoice } = useVoice(sessionId);
+  if (!supported) return null;
   const state = voice?.state ?? "disabled";
   const speaking = state === "synthesizing" || state === "playing" || state === "loading";
   const enabled = Boolean(voice?.enabled);
-  const unavailableMessage = !supported
-    ? "Voz indisponível: ponte ausente."
-    : error ?? voice?.message ?? "";
-
+  const label = speaking ? "a falar…"
+    : state === "error" ? "voz indisponível"
+    : enabled ? "voz pronta"
+    : "voz desligada";
   return (
-    <div className="lunmi-voice" ref={rootRef} onKeyDown={onKeyDown}>
-      <button type="button" data-testid="voice-toggle" className="lunmi-voice-trigger"
-        ref={triggerRef} aria-expanded={open} aria-haspopup="dialog"
-        onClick={() => setOpen(value => !value)}>
-        {enabled ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
-        <span>Voz</span>
-        <span className="lunmi-voice-state" data-state={state} data-testid="voice-state-label">
-          {supported ? STATE_LABEL[state] : "indisponível"}
-        </span>
-      </button>
-
-      {open ? (
-        <div className="lunmi-voice-pop" role="dialog" aria-label="Controles de voz" data-testid="voice-popover">
-          <label className="lunmi-voice-check">
-            <input type="checkbox" data-testid="voice-enabled" checked={enabled} disabled={!supported || busy}
-              onChange={event => setEnabled(event.target.checked)} />
-            Ativar voz
-          </label>
-          <label className="lunmi-voice-check">
-            <input type="checkbox" data-testid="voice-auto-speak" checked={Boolean(voice?.auto_speak)}
-              disabled={!supported || busy || !enabled}
-              onChange={event => setAutoSpeak(event.target.checked)} />
-            Falar respostas
-          </label>
-          <div className="lunmi-voice-actions">
-            <button type="button" data-testid="voice-test" className="lunmi-voice-button"
-              disabled={!supported || busy || !enabled || voice?.available !== true}
-              onClick={test}>
-              Testar voz
-            </button>
-            <button type="button" data-testid="voice-speak-last" className="lunmi-voice-button"
-              disabled={!supported || busy || !enabled || !voice?.can_speak_last}
-              onClick={speakLast}>
-              Ouvir última resposta
-            </button>
-            <button type="button" data-testid="voice-stop" className="lunmi-voice-button lunmi-voice-stop"
-              disabled={!supported || busy || !speaking}
-              onClick={stopVoice}>
-              Parar voz
-            </button>
-          </div>
-          <p className="lunmi-voice-status" data-testid="voice-status" role="status">
-            {unavailableMessage || `Estado: ${STATE_LABEL[state]}`}
-          </p>
-          <p className="lunmi-voice-mic-note" data-testid="voice-mic-note">
-            Microfone: pendente de validação. Esta versão apenas fala; nada é gravado.
-          </p>
-        </div>
-      ) : null}
+    <div className="lunmi-voice lunmi-voice-min">
+      {/* VOICE/NODE V3: sem texto de estado normal no chat; a etiqueta canónica vive em
+          Configurações → Voz. O estado continua acessível (sr-only + aria-live) e o erro é
+          sempre visível. Parar voz permanece comando próprio, distinto de Parar tarefa. */}
+      <span className="lunmi-sr-only" role="status" data-state={state} data-testid="voice-state-label">{label}</span>
+      {error && <p className="lunmi-voice-input-message" role="alert" data-testid="voice-error">{error}</p>}
+      {speaking && (
+        <button type="button" data-testid="voice-stop-min" className="lunmi-mic-round lunmi-mic-stop"
+          aria-label="Parar voz" title="Parar voz" disabled={busy} onClick={stopVoice}>
+          <StopIcon />
+        </button>
+      )}
     </div>
+  );
+}
+
+function StopIcon(): React.ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+      <rect x="2.5" y="2.5" width="9" height="9" rx="2" fill="currentColor" />
+    </svg>
   );
 }

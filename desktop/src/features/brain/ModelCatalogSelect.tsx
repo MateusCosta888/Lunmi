@@ -119,7 +119,7 @@ export function ModelCatalogSelect({
           {unverified && value ? <span className="lunmi-brain-badge" data-testid={`${testId}-unverified`}>lista por atualizar</span> : null}
           {cached && state === "ready" && !unverified ? <span className="lunmi-brain-badge">cache</span> : null}
         </button>
-        <button type="button" data-testid={`${testId}-refresh`} className="lunmi-brain-quiet"
+        <button type="button" data-testid={`${testId}-refresh`} className="lunmi-action-button lunmi-action-quiet"
           disabled={disabled || state === "loading"} onClick={onRefresh}>
           Atualizar catálogo
         </button>

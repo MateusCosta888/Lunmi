@@ -123,6 +123,28 @@ describe("CompanionApp — a janela do Node", () => {
 });
 
 describe("MiniChat — conteúdo real", () => {
+  it("abre a conversa principal pelo botão expandir sem enviar comandos", async () => {
+    const harness = presence();
+    render(<MiniChat />);
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir conversa principal" }));
+    expect(harness.actions).toEqual(["show-main"]);
+    expect(harness.commands).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Enviar mensagem" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("o campo cresce até ao limite e volta a encolher quando o rascunho é limpo", async () => {
+    presence();
+    render(<MiniChat />);
+    const input = await screen.findByTestId("mini-input") as HTMLTextAreaElement;
+    let contentHeight = 180;
+    Object.defineProperty(input, "scrollHeight", { get: () => contentHeight });
+    fireEvent.change(input, { target: { value: "primeira linha\nsegunda linha\nterceira linha" } });
+    expect(input.style.height).toBe("88px");
+    contentHeight = 24;
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input.style.height).toBe("44px");
+  });
+
   it("mostra a projeção do snapshot: três turnos, uma bolha por message_id", async () => {
     presence({ chat: chatProjection({ cursor: 3, messages: [
       { role: "user", text: "um", message_id: "m1", task_id: "t1" },

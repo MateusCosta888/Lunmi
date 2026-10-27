@@ -119,6 +119,27 @@ afterEach(() => {
   fake.failNextIgnore = false;
 });
 
+it("automatic voice-result chat opens without native focus, then remains clickable", () => {
+  const { manager, win } = setup();
+  manager.setSurface("chat", { focus: false });
+  vi.advanceTimersByTime(1200);
+  expect(manager.currentSurface).toBe("chat");
+  expect(win.focused).toBe(0);
+  expect(win.focusable).toBe(true);
+  manager.handleAction("node-open");
+  expect(win.focused).toBe(1);
+});
+
+it("automatic chat never overrides passive input ownership", () => {
+  const { manager, win } = setup();
+  manager.setPassive(true);
+  manager.setSurface("chat", { focus: false });
+  vi.advanceTimersByTime(1200);
+  expect(win.focused).toBe(0);
+  expect(win.focusable).toBe(false);
+  expect(win.ignoreCalls.at(-1)).toBe(true);
+});
+
 it("a guarda é a fase RAW: show_activity não entra na decisão", () => {
   expect(nodePassiveFromTaskPhase("running")).toBe(true);
   expect(nodePassiveFromTaskPhase("awaiting_confirm")).toBe(false);

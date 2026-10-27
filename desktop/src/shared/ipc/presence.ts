@@ -67,7 +67,7 @@ export function presenceAction(action: PresenceAction): Promise<PresenceActionRe
  * `App.tsx`/`ChatPanel` sem adaptadores: aceita texto ou função e o valor resolvido (string) é
  * o que segue para o main. Um snapshot tardio não reverte uma edição/evento mais novo.
  */
-export function usePresenceDraft(): [string, Dispatch<SetStateAction<string>>] {
+export function usePresenceDraft(conversationId?: string): [string, Dispatch<SetStateAction<string>>] {
   const api = getPresenceApi();
   const [draft, setDraftState] = useState("");
   const draftRef = useRef("");
@@ -109,9 +109,9 @@ export function usePresenceDraft(): [string, Dispatch<SetStateAction<string>>] {
       draftRef.current = next;
       // Eco local imediato; o main publica o texto canónico às duas janelas.
       setDraftState(next);
-      if (api) void api.setDraft(next).catch(() => undefined);
+      if (api) void (conversationId ? api.setDraft(next, conversationId) : api.setDraft(next)).catch(() => undefined);
     },
-    [api]
+    [api, conversationId]
   );
 
   return [draft, setDraft];

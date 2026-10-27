@@ -289,6 +289,8 @@ class BridgeServer:
                 "max_host_pids": protocol.MAX_HOST_PIDS,
             },
         }
+        if self._service is not None:
+            ready_payload['chat_history'] = self._service.history.snapshot()
         self.emit_event("session.ready", ready_payload)
         self.send_message(protocol.make_result(env.id, ready_payload))
 

@@ -16,14 +16,19 @@ html[data-companion="companion"] body { background: transparent; }
   font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif; font-size: 14px;
   box-shadow: var(--lunmi-depth-raised); }
 
-.lunmi-mini-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 10px 12px; border-bottom: 1px solid var(--lunmi-border-hairline); flex: 0 0 auto; }
-.lunmi-mini-head strong { letter-spacing: .08em; font-size: 13px; }
-.lunmi-mini-head-actions { display: flex; gap: 4px; }
+.lunmi-mini-head { display: flex; align-items: center; justify-content: space-between; gap: 4px;
+  padding: 12px 8px 12px 16px; border-bottom: 1px solid var(--lunmi-border-hairline); flex: 0 0 auto; }
+.lunmi-mini-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lunmi-mini-avatar { display: grid; place-items: center; flex: 0 0 28px; }
+.lunmi-mini-identity > div { min-width: 0; }
+.lunmi-mini-head strong { display: block; font-size: 14px; font-weight: 600; letter-spacing: -.02em; }
+.lunmi-mini-subtitle { display: block; margin-top: 3px; color: var(--lunmi-text-muted); font-size: 11px; white-space: nowrap; }
+.lunmi-mini-head-actions { display: flex; gap: 0; flex-shrink: 0; }
 /* Alvos de 44px (N3): os botões de ícone são pequenos mas tocáveis. */
 .lunmi-mini-icon-button { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 8px;
   background: transparent; color: var(--lunmi-text-secondary); font-size: 15px; cursor: pointer; }
-.lunmi-mini-icon-button:hover { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
+.lunmi-mini-icon-button:hover:not(:disabled) { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
+.lunmi-mini-icon-button:disabled { opacity: .4; cursor: not-allowed; }
 .lunmi-mini-icon-button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
 
 /* A pendência fica FIXADA fora da lista (N3): continua acessível sem scroll e sem puxar o
@@ -31,25 +36,32 @@ html[data-companion="companion"] body { background: transparent; }
 .lunmi-mini-pending-dock { flex: 0 0 auto; padding: 8px 12px 0; }
 
 .lunmi-mini-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
-  gap: 8px; padding: 12px; }
-.lunmi-mini-empty { margin: auto 0; color: var(--lunmi-text-muted); text-align: center; }
-.lunmi-mini-bubble { margin: 0; max-width: 86%; padding: 8px 11px; border-radius: 12px; line-height: 1.5;
-  white-space: pre-wrap; overflow-wrap: anywhere; align-self: flex-start;
-  background: var(--lunmi-bg-card-subtle); border: 1px solid var(--lunmi-border-hairline); }
-.lunmi-mini-bubble[data-role="user"] { align-self: flex-end; background: var(--lunmi-bg-user); border-color: var(--lunmi-border-on-user); }
-.lunmi-mini-phase { margin: 0; color: var(--lunmi-text-muted); font-size: 12px; }
+  gap: 14px; padding: 18px 16px; scrollbar-width: thin; scrollbar-color: var(--lunmi-border-subtle) transparent; }
+.lunmi-mini-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: auto 0; padding: 20px 12px; color: var(--lunmi-text-muted); text-align: center; }
+.lunmi-mini-empty strong { color: var(--lunmi-text-primary); font-size: 16px; font-weight: 500; letter-spacing: -.02em; }
+.lunmi-mini-empty p { margin: 0; max-width: 25ch; font-size: 12px; line-height: 1.5; }
+.lunmi-mini-message { display: flex; width: 100%; min-width: 0; flex-shrink: 0; animation: lunmi-mini-message-in 180ms cubic-bezier(.23,1,.32,1); }
+.lunmi-mini-message[data-role="user"] { justify-content: flex-end; }
+.lunmi-mini-bubble { margin: 0; max-width: 100%; min-width: 0; padding: 2px 0; border-radius: 14px; line-height: 1.65;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: transparent; border: 0; }
+.lunmi-mini-bubble[data-role="user"] { max-width: 88%; padding: 10px 13px; background: var(--lunmi-bg-user); border-radius: 14px 14px 4px 14px; }
+.lunmi-mini-phase { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--lunmi-text-muted); font-size: 12px; }
+.lunmi-mini-phase::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .lunmi-mini-pending { display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 10px; border: 1px solid var(--lunmi-warning); border-radius: 10px; color: var(--lunmi-text-secondary); font-size: 12px; }
 .lunmi-mini-error { margin: 0 12px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lunmi-error);
   color: var(--lunmi-error); font-size: 12px; }
 
-.lunmi-mini-composer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px;
-  border-top: 1px solid var(--lunmi-border-hairline); }
-.lunmi-mini-composer textarea { resize: none; min-height: 44px; padding: 8px 10px; border-radius: 10px;
-  border: 1px solid var(--lunmi-border-subtle); background: var(--lunmi-bg-input);
-  color: var(--lunmi-text-primary); font: inherit; }
-.lunmi-mini-composer textarea:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 1px; }
-.lunmi-mini-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.lunmi-mini-composer { flex: 0 0 auto; padding: 8px 12px 12px; }
+.lunmi-mini-input-frame { display: flex; align-items: flex-end; gap: 2px; border: 1px solid var(--lunmi-border-subtle); border-radius: 16px; background: var(--lunmi-bg-input); padding: 4px; }
+.lunmi-mini-input-frame:focus-within { border-color: var(--lunmi-accent); }
+.lunmi-mini-composer textarea { resize: none; min-height: 44px; flex: 1; min-width: 0; display: block; box-sizing: border-box; width: 100%; max-height: 88px; padding: 9px 8px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--lunmi-text-primary); caret-color: var(--lunmi-accent); font: inherit; line-height: 1.5; scrollbar-width: thin; }
+.lunmi-mini-composer textarea::placeholder { color: var(--lunmi-text-muted); opacity: 1; }
+.lunmi-mini-composer textarea:focus-visible { outline: none; }
+.lunmi-mini-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.lunmi-mini-actions .lunmi-mini-quiet { background: transparent; }
+.lunmi-mini-actions .lunmi-mini-submit { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; flex: 0 0 44px; padding: 0; border-radius: 50%; }
 .lunmi-mini-button { min-height: 44px; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--lunmi-accent);
   background: var(--lunmi-accent); color: var(--lunmi-on-accent); font: inherit; font-size: 14px; cursor: pointer; }
 .lunmi-mini-button:hover:not(:disabled) { background: var(--lunmi-accent-hover); border-color: var(--lunmi-accent-hover); }
@@ -57,3 +69,7 @@ html[data-companion="companion"] body { background: transparent; }
 .lunmi-mini-button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
 .lunmi-mini-quiet { border-color: var(--lunmi-border-subtle); background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); }
 .lunmi-mini-quiet:hover:not(:disabled) { background: var(--lunmi-surface-hover); border-color: var(--lunmi-border-subtle); color: var(--lunmi-text-primary); }
+
+@keyframes lunmi-mini-message-in { from { opacity: .5; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .lunmi-mini-message { animation: none; } }
+@media (max-width: 350px) { .lunmi-mini-avatar { display: none; } .lunmi-mini-subtitle { font-size: 10px; } }

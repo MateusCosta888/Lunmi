@@ -6,6 +6,25 @@
  * o acesso, normaliza erros de comando (`code: message`) e mantém uma assinatura de eventos.
  */
 import type { Envelope, SessionReadyPayload } from "../protocol";
+import type {
+  VoiceInputHoldPhaseDto,
+  VoiceInputShortcutControlDto,
+  VoiceInputShortcutResultDto,
+} from "../types";
+
+/**
+ * VOICE INPUT V1 — atalho de ditado (API opcional exposta pelo preload). O DTO vive em
+ * `shared/types.ts`; este módulo só o referencia para tipar o renderer.
+ */
+export interface VoiceInputShortcutApi {
+  get(): Promise<VoiceInputShortcutResultDto>;
+  set(accelerator: string | null): Promise<VoiceInputShortcutResultDto>;
+  /** Fases sanitizadas do helper; devolve a função de cancelamento da subscrição. */
+  onHold(listener: (phase: VoiceInputHoldPhaseDto) => void): () => void;
+  /** Só a janela principal confiável; falha fechada com `hold_unavailable`. */
+  pause(): Promise<VoiceInputShortcutControlDto>;
+  resume(): Promise<VoiceInputShortcutControlDto>;
+}
 
 export interface PickedAttachmentDto {
   id: string;
@@ -45,6 +64,8 @@ export interface LunmiBridgeApi {
   pickAttachments?(): Promise<PickAttachmentsResultDto>;
   windowControl?(action: WindowControlAction): Promise<WindowStateDto>;
   restartBackend?(): Promise<SessionReadyPayload>;
+  /** Aditiva/opcional: builds sem atalho de ditado simplesmente não a expõem. */
+  voiceInputShortcut?: VoiceInputShortcutApi;
   shutdown(): Promise<{ status: string; session_id: string }>;
   onEvent(callback: (event: Envelope) => void): () => void;
 }
