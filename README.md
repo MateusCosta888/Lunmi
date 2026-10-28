@@ -13,15 +13,27 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 [![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-242938?style=flat-square&logo=electron&logoColor=white)](desktop/)
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
 
-[Começar](#começar) · [Funcionalidades](#o-que-a-lunmi-faz) · [Arquitetura](docs/ARCHITECTURE.md) · [Privacidade](SECURITY.md) · [Contribuir](CONTRIBUTING.md)
+[**Baixar Lunmi Alpha 4 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.4/Lunmi-0.1.0-alpha.4-Setup.exe)
+
+[Instalar](#instalar-o-alpha-4) · [Executar pelo código](#começar) · [Funcionalidades](#o-que-a-lunmi-faz) · [Arquitetura](docs/ARCHITECTURE.md) · [Privacidade](SECURITY.md) · [Contribuir](CONTRIBUTING.md)
 
 </div>
 
 <p align="center">
-  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi no tema Celestial, com navegação recolhida e painel de memória" />
+  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi Alpha 4 no tema Celestial, com conversa de demonstração e histórico na barra lateral" />
 </p>
 
-> **Em desenvolvimento.** A Lunmi funciona a partir do código-fonte e tem um instalador alpha Windows x64 para testes. O atualizador preparado para o Alpha 4 usa GitHub Releases e pede um reinício antes de instalar. Não há certificado de editor Windows; a autenticidade das atualizações é verificada por assinatura Ed25519. Não há garantia de automação universal. Consulte [Atualizações](docs/UPDATES.md).
+> **Alpha 4 disponível para testes.** Inclui atualizações pelo GitHub Releases, com verificação Ed25519 e confirmação antes de reiniciar para instalar. O setup ainda não tem certificado de editor Windows. A automação depende do aplicativo e da verificação disponível. Consulte [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.4) e [os limites de segurança](SECURITY.md).
+
+## Instalar o Alpha 4
+
+1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.4/Lunmi-0.1.0-alpha.4-Setup.exe), com cerca de 249 MB.
+2. Execute o setup e abra a Lunmi. O Python necessário acompanha o instalador; não precisa instalar Python, Node.js ou Git para usar esta versão.
+3. Em **Brain**, escolha uma API, endpoint ou CLI suportado e configure o seu próprio acesso. Créditos e chaves de IA não estão incluídos. Voz e ditado precisam de recursos opcionais preparados separadamente.
+
+Quem usa o Alpha 3 precisa instalar o Alpha 4 manualmente uma vez. Depois, a Lunmi procura novas versões e baixa em segundo plano, aproveitando blocos existentes quando possível. Em **Configurações → Atualizações**, pode procurar manualmente e escolher **Reiniciar e atualizar** quando estiver pronta. Tarefas e operações de voz ativas bloqueiam a instalação; histórico, memória e configurações continuam fora da pasta instalada.
+
+As atualizações chegam quando publicamos uma **Release**. Um envio de código a `main` executa testes; a distribuição exige preparar e publicar uma versão. O modo `run.bat` continua sem auto-update. [Funcionamento, publicação e recuperação →](docs/UPDATES.md)
 
 ## O que a Lunmi faz
 
@@ -39,8 +51,9 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 | **Controle do usuário** | Confirmações, perguntas, cancelamento e indicação de falhas fazem parte da execução. |
 | **Interface adaptável** | Temas Celestial, Claro suave e Red Velvet, laterais com vidro, navegação recolhível e compositor multilinha com seleção de modelo. |
 | **Lunmi Node** | Ao fechar a principal, pode continuar na bandeja com um Node num canto superior. Abre um mini chat sincronizado e mostra atividade/atenção. Fica passivo durante tarefas para não intercetar cliques. |
-| **Saída de voz local** | Controlos para testar, ouvir a última resposta elegível e parar a fala. Requer runtime e modelos preparados separadamente; começa desligada. Captura de microfone ainda não está disponível. |
+| **Voz e ditado opcionais** | Saída de voz local e microfone acionado pelo utilizador, com runtimes e modelos preparados separadamente. Sem escuta contínua; o chat funciona sem esses recursos. |
 | **GalaxyOrb** | Presença visual persistente na conversa principal, preservada quando chegam mensagens. |
+| **Atualizações pelo GitHub** | No Alpha 4 instalado: download automático, verificação de assinatura e instalação após confirmação de reinício. |
 
 A execução combina caminhos determinísticos para tarefas reconhecidas e agentes UFO² para as demais. Um despacho de ação não prova sucesso: confira o resultado e a evidência apresentados.
 
@@ -119,15 +132,25 @@ Chaves lembradas pela interface usam DPAPI do Windows. O repositório não cont�
 
 [Memória: uso e limites →](docs/MEMORY.md) · [Segurança e dados locais →](SECURITY.md)
 
-## Claro suave
+## A interface atual
 
-Troque o tema em **Configurações → Aparência**, sem reiniciar ou apagar o rascunho. A escolha é lembrada na próxima abertura.
+### Brain no Red Velvet
+
+Provedores aparecem em botões com as suas marcas, separados entre APIs, endpoints e CLIs. O campo de chave aparece apenas quando o provedor selecionado precisa dele. Disponibilidade e autenticação dependem da instalação de cada utilizador.
 
 <p align="center">
-  <img src="docs/assets/lunmi-light.png" width="1100" alt="Interface real da Lunmi no tema Claro suave" />
+  <img src="docs/assets/lunmi-brain.png" width="1100" alt="Seletor de provedores do Brain no tema Red Velvet, com botões por API, endpoint e CLI e configuração de chave" />
 </p>
 
-As imagens mostram o aplicativo real em ambiente de demonstração, sem dados pessoais. Não representam modelos ou integrações adicionais disponíveis por padrão.
+### Memória no Claro suave
+
+O documento de memória pode ser editado e guardado no próprio painel. Troque o tema em **Configurações → Aparência**, sem reiniciar ou apagar o rascunho; a escolha é lembrada na próxima abertura.
+
+<p align="center">
+  <img src="docs/assets/lunmi-light.png" width="1100" alt="Editor de memória da Lunmi Alpha 4 no tema Claro suave, com perfil fictício de demonstração" />
+</p>
+
+As capturas mostram a interface real do Alpha 4, com conversas e perfil fictícios preparados para demonstração, sem dados pessoais ou credenciais. O texto do chat não é prova de inferência ou de ações executadas. Modelos, CLIs e integrações não são fornecidos nem autenticados por estas imagens.
 
 ## Estrutura
 
@@ -180,7 +203,7 @@ Os testes usam fixtures e sandboxes; não certificam qualquer aplicativo externo
 - Anexos aceitam texto/código UTF-8. Imagens, PDF e binários são recusados; anexos e respostas desse turno não viram memória automática.
 - Streaming depende da capacidade do transporte. Voz e ditado requerem runtimes externos preparados; pesquisa web não equivale a controlo completo de um navegador.
 - Gmail é experimental: a ligação e a leitura reais foram exercitadas numa conta de testes; o diálogo e as confirmações de envio foram testados com simulações. Envio/entrega reais, todos os formatos MIME e todas as combinações de modelos não estão certificados. Cada utilizador usa a sua conta Composio e Gmail; os limites desses serviços continuam a aplicar-se.
-- A distribuição empacotada está em alpha Windows x64, sem assinatura ou atualização automática. Outra máquina/VM e provedores reais ainda precisam de validação; não há suporte a macOS/Linux ou certificação geral de múltiplos monitores e DPIs.
+- A distribuição está em alpha Windows x64, com atualizador desde o Alpha 4 e sem certificado Authenticode. As atualizações exigem assinatura Ed25519 válida. Outra máquina/VM e todas as combinações de provedores ainda precisam de validação; não há suporte a macOS/Linux ou certificação geral de múltiplos monitores e DPIs.
 - Há dependências upstream legadas; avisos conhecidos e triagem estão em [Segurança](SECURITY.md#dependências-upstream).
 
 ## Créditos e licenças
