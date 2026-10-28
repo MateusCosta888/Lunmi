@@ -299,6 +299,51 @@ def test_concurrent_task_rejected_and_cancel_emits_single_terminal(tmp_path: Pat
         svc.close()
 
 
+def test_cancel_before_controller_starts_is_not_lost(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    finished = threading.Event()
+    loop_blocked = threading.Event()
+    release_loop = threading.Event()
+
+    def emit(kind: str, payload: dict[str, Any]) -> None:
+        events.append((kind, payload))
+        if kind == 'task.finished':
+            finished.set()
+
+    def block_loop() -> None:
+        loop_blocked.set()
+        assert release_loop.wait(5)
+
+    svc = BridgeService(emit=emit, sandbox_dir=tmp_path, controller_factory=_TaskFakeController)
+    try:
+        svc._loop.call_soon_threadsafe(block_loop)
+        assert loop_blocked.wait(3)
+        started = svc.dispatch(protocol.Envelope(
+            v=1, id='send', type='chat.send', payload={'text': 'tarefa lenta', 'mode': 'execute'},
+        ))
+        cancelled = svc.dispatch(protocol.Envelope(
+            v=1, id='cancel', type='task.cancel', payload={'task_id': started['task_id']},
+        ))
+        assert cancelled['cancelled'] is True
+        release_loop.set()
+        assert finished.wait(3)
+        terminal = [p for kind, p in events if kind == 'task.finished']
+        assert len(terminal) == 1
+        assert terminal[0]['status'] == 'CANCELLED'
+        assert svc.controller.engine.started_calls == 0
+        assert not svc._is_task_running()
+
+        finished.clear()
+        svc.dispatch(protocol.Envelope(
+            v=1, id='next', type='chat.send', payload={'text': 'seguinte', 'mode': 'converse'},
+        ))
+        assert finished.wait(3)
+        assert [p for kind, p in events if kind == 'task.finished'][-1]['status'] == 'SUCCESS'
+    finally:
+        release_loop.set()
+        svc.close()
+
+
 def test_confirm_accept_decline_duplicate_and_unsolicited(tmp_path: Path) -> None:
     events: list[tuple[str, dict[str, Any]]] = []
     confirm_ready = threading.Event()

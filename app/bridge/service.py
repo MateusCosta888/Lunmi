@@ -411,6 +411,7 @@ class BridgeService:
         self.controller.spotify = self.spotify_install
 
         self._active_task_id: str | None = None
+        self._cancelled_task_id: str | None = None
         self._active_task_future: concurrent.futures.Future[TaskResult] | None = None
         self._reconfiguring = False
         # Commit da troca de cérebro em voo. A guarda `_reconfiguring` é liberada só no
@@ -1171,6 +1172,7 @@ class BridgeService:
                 )
             task_id = f"tsk-{uuid.uuid4().hex[:16]}"
             self._active_task_id = task_id
+            self._cancelled_task_id = None
 
             conversation = mode == "converse"
             user_msg: dict[str, Any] = {
@@ -1248,7 +1250,12 @@ class BridgeService:
             if attachments:
                 run_kwargs["attachments"] = attachments
             before_revision = self.memory.profile_revision()
-            res = await self.controller.run(instruction, **run_kwargs)
+            # Cancellation may arrive before the loop has entered controller.run.
+            if self._cancelled_task_id == task_id:
+                res = TaskResult(status='CANCELLED', failure_kind='CANCELLED',
+                                 message='Tarefa interrompida.', scope='conversation' if conversation else 'end_to_end')
+            else:
+                res = await self.controller.run(instruction, **run_kwargs)
             after_revision = self.memory.profile_revision()
             if after_revision != before_revision:
                 # Aprendizagem ou pedido explícito aplicado durante o turno.
@@ -1363,6 +1370,7 @@ class BridgeService:
                                         'conversation_id': self.history.active['id']})
             if self._active_task_id == result.task_id:
                 self._active_task_id = None
+                self._cancelled_task_id = None
                 self._active_task_future = None
 
     def _handle_task_cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1373,11 +1381,14 @@ class BridgeService:
                 return {"cancelled": False, "reason": "task_mismatch", "active_task_id": active_id}
             if not self._is_task_running():
                 return {"cancelled": False, "reason": "no_active_task"}
+            self._cancelled_task_id = active_id
             self._deny_all_pending_questions()
             active_response = self._public_response
             if active_response:
                 self._loop.call_soon_threadsafe(lambda: active_response.fail('cancelled', cancelled=True))
-            self._loop.call_soon_threadsafe(self.controller.cancel)
+            self._loop.call_soon_threadsafe(
+                lambda: self.controller.cancel() if self._active_task_id == active_id else None,
+            )
             return {"cancelled": True, "task_id": active_id or ""}
 
     def _handle_task_confirm(self, payload: dict[str, Any]) -> dict[str, Any]:
