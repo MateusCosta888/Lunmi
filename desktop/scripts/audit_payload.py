@@ -21,6 +21,7 @@ Uso:  python desktop/scripts/audit_payload.py [raiz]
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import struct
@@ -40,6 +41,16 @@ ALLOWED_NAMES = {"cacert.pem"}
 PERSONAL_PATHS = tuple(value.encode("utf-8")
                        for base in (str(Path.home()), str(Path(__file__).resolve().parents[2]))
                        for value in {base, base.replace("\\", "/"), base.replace("\\", "\\\\")})
+# Exact public wheel bytes only: upstream CI also uses the username "runneradmin".
+# PyPI cp311-win_amd64 wheels: numpy 2.4.6 (1e254a00...1500147), pandas 2.2.3 (3fc6873a...5ab2c5).
+PUBLIC_BUILD_METADATA_SHA256 = {
+    "resources/python/Lib/site-packages/numpy/__config__.py":
+        "7ff3893d0f50f52c748988bbc88bfe970a052fd81e4dfa65bc536d61d20ae18d",
+    "resources/python/Lib/site-packages/numpy-2.4.6.dist-info/DELVEWHEEL":
+        "0399822db132f754a7e3ba5eac8e564e4049b30df55d53bfeba6d38b812de58d",
+    "resources/python/Lib/site-packages/pandas-2.2.3.dist-info/DELVEWHEEL":
+        "dde7fd56615a1f7cf30d97ff48643e3c1a980e7a43ab7846fe64365231b89891",
+}
 SECRET_PATTERNS = (
     re.compile(rb"sk-[A-Za-z0-9]{20,}"),
     re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
@@ -75,7 +86,8 @@ def _name_finding(relative: Path) -> str | None:
 
 
 def _scan_bytes(relative: Path, blob: bytes) -> str | None:
-    if any(token in blob for token in PERSONAL_PATHS):
+    public_metadata = PUBLIC_BUILD_METADATA_SHA256.get(relative.as_posix()) == hashlib.sha256(blob).hexdigest()
+    if any(token in blob for token in PERSONAL_PATHS) and not public_metadata:
         return f"caminho pessoal: {relative}"
     if _inside_site_packages(relative) and relative.suffix == ".py":
         return None

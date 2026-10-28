@@ -67,3 +67,5 @@ Electron passa a 44.10.0; `undici` e `fast-uri` transitivos foram atualizados se
 O lock de runtime usa pins PyPI para pip e setuptools, em vez de URLs locais da máquina que construiu o Python. Setuptools passa a 84.1.0 para corrigir `GHSA-xmj3-9gf7-h52w`, identificado quando deixou de ser ignorado pela auditoria como URL local.
 
 O atualizador usa descritores assinados com Ed25519 e hash do instalador. Só aceita a origem fixa e uma versão superior; não instala ao sair normalmente. Chave privada e tokens GitHub nunca entram no cliente ou nos artefactos. Ver [Atualizações](docs/UPDATES.md).
+
+Na auditoria do pacote, três metadados de build dos wheels públicos Windows CPython 3.11 de [NumPy 2.4.6](https://pypi.org/project/numpy/2.4.6/#files) e [pandas 2.2.3](https://pypi.org/project/pandas/2.2.3/#files) contêm o nome comum de runner `runneradmin`. A exceção exige caminho e SHA-256 exatos, conferidos contra os wheels oficiais e os hashes publicados no PyPI. Alterar qualquer byte ou mover o conteúdo para outro caminho volta a bloquear; a exceção não desliga a procura de credenciais. Não há uma exclusão geral para `site-packages` ou nomes de utilizadores.

@@ -8,6 +8,7 @@ a poda de verdade na cópia e os sidecars de SQLite sem sufixo próprio.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 
@@ -40,6 +41,28 @@ def test_payload_auditor_rejects_local_paths_without_hardcoded_usernames() -> No
         for value in (str(base), str(base).replace("\\", "/"), str(base).replace("\\", "\\\\")):
             assert audit._scan_bytes(Path("resources/app/sample.py"), value.encode("utf-8"))
     assert audit._scan_bytes(Path("resources/app/sample.py"), b"print('hello')") is None
+
+
+def test_public_build_metadata_exception_requires_exact_path_and_bytes(monkeypatch) -> None:
+    audit = _load_script("audit_payload.py")
+    relative = Path("resources/python/Lib/site-packages/numpy/__config__.py")
+    content = b"public wheel build path: fixture-build-home"
+    monkeypatch.setattr(audit, "PERSONAL_PATHS", (b"fixture-build-home",))
+    monkeypatch.setitem(audit.PUBLIC_BUILD_METADATA_SHA256, relative.as_posix(),
+                        hashlib.sha256(content).hexdigest())
+    assert audit._scan_bytes(relative, content) is None
+    assert audit._scan_bytes(relative, content + b" changed")
+    assert audit._scan_bytes(Path("resources/app/sample.py"), content)
+
+
+def test_public_build_metadata_exception_does_not_skip_secret_checks(monkeypatch) -> None:
+    audit = _load_script("audit_payload.py")
+    relative = Path("resources/python/Lib/site-packages/numpy-2.4.6.dist-info/DELVEWHEEL")
+    content = b"fixture-build-home sk-" + b"x" * 30
+    monkeypatch.setattr(audit, "PERSONAL_PATHS", (b"fixture-build-home",))
+    monkeypatch.setitem(audit.PUBLIC_BUILD_METADATA_SHA256, relative.as_posix(),
+                        hashlib.sha256(content).hexdigest())
+    assert "credencial" in audit._scan_bytes(relative, content)
 
 
 def test_a_forbidden_component_anywhere_in_the_path_is_rejected() -> None:
