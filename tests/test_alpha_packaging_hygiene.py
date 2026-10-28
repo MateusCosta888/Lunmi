@@ -55,6 +55,14 @@ def test_public_build_metadata_exception_requires_exact_path_and_bytes(monkeypat
     assert audit._scan_bytes(Path("resources/app/sample.py"), content)
 
 
+def test_payload_auditor_checks_ci_runner_paths_on_developer_machines() -> None:
+    audit = _load_script("audit_payload.py")
+    relative = Path("resources/voice/runtime/Lib/site-packages/unreviewed/metadata.txt")
+    for value in (r"C:\Users\runneradmin\build", "C:/Users/runneradmin/build",
+                  r"C:\\Users\\runneradmin\\build"):
+        assert audit._scan_bytes(relative, value.encode("utf-8"))
+
+
 def test_public_build_metadata_exception_does_not_skip_secret_checks(monkeypatch) -> None:
     audit = _load_script("audit_payload.py")
     relative = Path("resources/python/Lib/site-packages/numpy-2.4.6.dist-info/DELVEWHEEL")

@@ -39,7 +39,8 @@ FORBIDDEN_NAME_SUFFIXES = ("-wal", "-shm", "-journal", ".sqlite3", ".sqlite3-wal
 ALLOWED_NAMES = {"cacert.pem"}
 
 PERSONAL_PATHS = tuple(value.encode("utf-8")
-                       for base in (str(Path.home()), str(Path(__file__).resolve().parents[2]))
+                       for base in (str(Path.home()), str(Path(__file__).resolve().parents[2]),
+                                    r"C:\Users\runneradmin")
                        for value in {base, base.replace("\\", "/"), base.replace("\\", "\\\\")})
 # Exact public wheel bytes only: upstream CI also uses the username "runneradmin".
 # PyPI cp311-win_amd64 wheels: numpy 2.4.6 (1e254a00...1500147), pandas 2.2.3 (3fc6873a...5ab2c5).
@@ -54,6 +55,12 @@ PUBLIC_BUILD_METADATA_SHA256 = {
         "7ff3893d0f50f52c748988bbc88bfe970a052fd81e4dfa65bc536d61d20ae18d",
     "resources/voice/runtime/Lib/site-packages/numpy-2.4.6.dist-info/DELVEWHEEL":
         "0399822db132f754a7e3ba5eac8e564e4049b30df55d53bfeba6d38b812de58d",
+    "resources/voice/runtime/Lib/site-packages/av-18.1.0.dist-info/DELVEWHEEL":
+        "6d5497e1c1f3801d70a6b64498f582486a72ada94fc133fe547aa49462a78433",
+    "resources/voice/runtime/Lib/site-packages/scipy/__config__.py":
+        "ee1de88617d5488d192044e28dd47ceb4c31632c30e4c98d317a7458dbb25645",
+    "resources/voice/runtime/Lib/site-packages/scipy-1.17.1.dist-info/DELVEWHEEL":
+        "bfde4e6a348d78f3cfb5ac14c6af2d312ba63bbcb29f1cd16103dbb0a65d20a1",
 }
 SECRET_PATTERNS = (
     re.compile(rb"sk-[A-Za-z0-9]{20,}"),
