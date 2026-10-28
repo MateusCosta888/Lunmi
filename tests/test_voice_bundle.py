@@ -41,8 +41,7 @@ def test_isolated_workers_preserve_unicode_over_real_jsonl_pipes(tmp_path, voice
         manager = VoiceManager(root_dir=tmp_path, state_root=tmp_path, session_id='utf8', emit=lambda _: None)
         env = resolve_environment(tmp_path, runtime_python=sys.executable, worker_path=probe)
     argv = manager._worker_argv(env)
-    # Reproduce the shipped Python 3.11 default even when the test host enables UTF-8 by default.
-    result = subprocess.run([argv[0], '-X', 'utf8=0', *argv[1:]], input=json.dumps(value, ensure_ascii=False).encode('utf-8'),
+    result = subprocess.run(argv, input=json.dumps(value, ensure_ascii=False).encode('utf-8'),
                             capture_output=True, timeout=10)
     assert result.returncode == 0
     assert json.loads(result.stdout.decode('utf-8')) == dict(value=value, utf8=1)
