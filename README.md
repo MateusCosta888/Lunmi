@@ -13,25 +13,25 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 [![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-242938?style=flat-square&logo=electron&logoColor=white)](desktop/)
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
 
-[**Baixar Lunmi Alpha 4 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.4/Lunmi-0.1.0-alpha.4-Setup.exe)
+[**Baixar Lunmi Alpha 5 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.5/Lunmi-0.1.0-alpha.5-Setup.exe)
 
-[Instalar](#instalar-o-alpha-4) · [Executar pelo código](#começar) · [Funcionalidades](#o-que-a-lunmi-faz) · [Arquitetura](docs/ARCHITECTURE.md) · [Privacidade](SECURITY.md) · [Contribuir](CONTRIBUTING.md)
+[Instalar](#instalar-o-alpha-5) · [Executar pelo código](#começar) · [Funcionalidades](#o-que-a-lunmi-faz) · [Arquitetura](docs/ARCHITECTURE.md) · [Privacidade](SECURITY.md) · [Contribuir](CONTRIBUTING.md)
 
 </div>
 
 <p align="center">
-  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi Alpha 4 no tema Celestial, com conversa de demonstração e histórico na barra lateral" />
+  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi Alpha 5 instalada no tema Celestial, com o orb e o ecrã inicial da conversa" />
 </p>
 
-> **Alpha 4 disponível para testes.** Inclui atualizações pelo GitHub Releases, com verificação Ed25519 e confirmação antes de reiniciar para instalar. O setup ainda não tem certificado de editor Windows. A automação depende do aplicativo e da verificação disponível. Consulte [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.4) e [os limites de segurança](SECURITY.md).
+> **Alpha 5 disponível para testes.** Inclui voz e ditado offline por CPU e atualizações pelo GitHub Releases, com verificação Ed25519 e confirmação antes de reiniciar para instalar. O setup ainda não tem certificado de editor Windows. A automação depende do aplicativo e da verificação disponível. Consulte [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.5) e [os limites de segurança](SECURITY.md).
 
-## Instalar o Alpha 4
+## Instalar o Alpha 5
 
-1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.4/Lunmi-0.1.0-alpha.4-Setup.exe), com cerca de 249 MB.
+1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.5/Lunmi-0.1.0-alpha.5-Setup.exe), com cerca de 2,08 GB. Inclui os modelos de voz; a instalação pode demorar vários minutos.
 2. Execute o setup e abra a Lunmi. O Python necessário acompanha o instalador; não precisa instalar Python, Node.js ou Git para usar esta versão.
-3. Em **Brain**, escolha uma API, endpoint ou CLI suportado e configure o seu próprio acesso. Créditos e chaves de IA não estão incluídos. Voz e ditado precisam de recursos opcionais preparados separadamente.
+3. Em **Brain**, escolha uma API, endpoint ou CLI suportado e configure o seu próprio acesso. Créditos e chaves de IA não estão incluídos. O setup inclui voz e ditado por CPU, sem exigir NVIDIA; a ativação continua opcional.
 
-Quem usa o Alpha 3 precisa instalar o Alpha 4 manualmente uma vez. Depois, a Lunmi procura novas versões e baixa em segundo plano, aproveitando blocos existentes quando possível. Em **Configurações → Atualizações**, pode procurar manualmente e escolher **Reiniciar e atualizar** quando estiver pronta. Tarefas e operações de voz ativas bloqueiam a instalação; histórico, memória e configurações continuam fora da pasta instalada.
+Quem usa o Alpha 3 precisa instalar o Alpha 5 manualmente uma vez. Quem tem o Alpha 4 recebe esta versão pelo atualizador; o primeiro download com os modelos será grande. Depois, a Lunmi procura novas versões e baixa em segundo plano, aproveitando blocos existentes quando possível. Em **Configurações → Atualizações**, pode procurar manualmente e escolher **Reiniciar e atualizar** quando estiver pronta. Tarefas e operações de voz ativas bloqueiam a instalação; histórico, memória e configurações continuam fora da pasta instalada.
 
 As atualizações chegam quando publicamos uma **Release**. Um envio de código a `main` executa testes; a distribuição exige preparar e publicar uma versão. O modo `run.bat` continua sem auto-update. [Funcionamento, publicação e recuperação →](docs/UPDATES.md)
 
@@ -51,9 +51,9 @@ As atualizações chegam quando publicamos uma **Release**. Um envio de código 
 | **Controle do usuário** | Confirmações, perguntas, cancelamento e indicação de falhas fazem parte da execução. |
 | **Interface adaptável** | Temas Celestial, Claro suave e Red Velvet, laterais com vidro, navegação recolhível e compositor multilinha com seleção de modelo. |
 | **Lunmi Node** | Ao fechar a principal, pode continuar na bandeja com um Node num canto superior. Abre um mini chat sincronizado e mostra atividade/atenção. Fica passivo durante tarefas para não intercetar cliques. |
-| **Voz e ditado opcionais** | Saída de voz local e microfone acionado pelo utilizador, com runtimes e modelos preparados separadamente. Sem escuta contínua; o chat funciona sem esses recursos. |
+| **Voz e ditado locais** | Recursos de voz e ditado por CPU incluídos no setup completo. Ativação opcional e microfone acionado pelo utilizador; sem escuta contínua. |
 | **GalaxyOrb** | Presença visual persistente na conversa principal, preservada quando chegam mensagens. |
-| **Atualizações pelo GitHub** | No Alpha 4 instalado: download automático, verificação de assinatura e instalação após confirmação de reinício. |
+| **Atualizações pelo GitHub** | A partir do Alpha 4 instalado: download automático, verificação de assinatura e instalação após confirmação de reinício. |
 
 A execução combina caminhos determinísticos para tarefas reconhecidas e agentes UFO² para as demais. Um despacho de ação não prova sucesso: confira o resultado e a evidência apresentados.
 
