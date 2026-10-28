@@ -30,7 +30,7 @@ Conserva setups e blockmaps antigos. Corrige problemas com uma versão superior.
 
 ## Build local e testes
 
-Num checkout de release novo: instala as dependências de desenvolvimento, executa `install_ufo.py`, `npm ci` em `desktop`, `desktop/scripts/fetch_runtime.py` e `desktop/scripts/assemble_resources.py`. Executa os testes, `npm run dist -- --publish never`, `verify_package.py` e `audit_payload.py` antes de assinar.
+Num checkout de release novo: instala as dependências de desenvolvimento, executa `install_ufo.py`, `npm ci` em `desktop`, `desktop/scripts/fetch_runtime.py`, `desktop/scripts/fetch_voice.py` e `desktop/scripts/assemble_resources.py`. Executa os testes, `npm run dist -- --publish never`, `verify_installer_defaults.py`, `verify_package.py` e `audit_payload.py` antes de assinar. O setup completo desde o Alpha 5 inclui os recursos de voz CPU; os modelos são obtidos de revisões públicas fixas e conferidos por SHA-256. Nunca copies o ambiente de desenvolvimento ou dados pessoais para o pacote.
 
 Define **LUNMI_UPDATE_PRIVATE_KEY_FILE** com o caminho externo do PEM e executa `node desktop/scripts/update-release.mjs`. Apenas descritor e assinatura são escritos em `desktop/release`. O PEM nunca deve entrar nessa pasta.
 

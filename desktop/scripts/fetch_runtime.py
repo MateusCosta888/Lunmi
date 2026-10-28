@@ -14,9 +14,8 @@ REPO = Path(__file__).resolve().parents[2]
 RESOURCES = REPO / "desktop" / "resources"
 
 
-def main() -> None:
+def fetch_python(destination: Path) -> None:
     pin = json.loads((RESOURCES / "RUNTIME-SOURCE.json").read_text(encoding="utf-8"))["python_runtime"]
-    destination = RESOURCES / "python"
     if destination.exists():
         raise SystemExit("Runtime destination already exists; use a fresh release checkout.")
     with tempfile.TemporaryDirectory(prefix="lunmi-runtime-") as directory:
@@ -28,6 +27,11 @@ def main() -> None:
         with tarfile.open(archive) as runtime:
             runtime.extractall(Path(directory) / "unpacked", filter="data")
         shutil.copytree(Path(directory) / "unpacked" / "python", destination)
+
+
+def main() -> None:
+    destination = RESOURCES / "python"
+    fetch_python(destination)
     subprocess.run([
         str(destination / "python.exe"), "-m", "pip", "install", "--no-warn-script-location",
         "--disable-pip-version-check", "--no-input", "-r", str(RESOURCES / "requirements-runtime.lock"),

@@ -1,3 +1,22 @@
+!ifndef BUILD_UNINSTALLER
+  !macro customInit
+    ; Manual setups start in the standard per-user folder; updates keep /D and the installed path.
+    ${IfNot} ${isUpdated}
+      !insertmacro GetDParameter $R0
+      ${If} $R0 == ""
+        StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_FILENAME}"
+      ${EndIf}
+    ${EndIf}
+  !macroend
+
+  !macro customInstallMode
+    ; The application only supports per-user installation; do not reload an old test destination.
+    ${If} $installMode == "CurrentUser"
+      Abort
+    ${EndIf}
+  !macroend
+!endif
+
 ; Remoção Spotify depois de o builder fechar a Lunmi e antes de apagar o runtime.
 ; O script Python chama o MESMO job consentido de `SpotifyInstaller`; o NSIS não
 ; replica remoção de ficheiros. Código 2 = job falhou/adiou: parar e conservar

@@ -28,7 +28,7 @@ RUNTIME = REPO / "desktop" / "resources" / "python"
 # motivo para remover ferramenta, e o vazamento de caminho não está nele.
 DROP_DIRS = ("Scripts", "Lib/venv/scripts")
 # Padrões de arquivo removidos por sufixo.
-DROP_SUFFIXES = (".pdb",)
+DROP_SUFFIXES = (".pdb", ".pyc", ".pyo")
 
 # `comtypes` cria `comtypes/gen/__init__.py` na **primeira** importação de `comtypes.client`
 # (ver `comtypes/client/_code_cache.py`), e no pacote isso é uma escrita dentro de `resources/`.
@@ -82,6 +82,13 @@ def main() -> int:
         print(f"[runtime] intérprete ausente em {RUNTIME}", file=sys.stderr)
         return 1
     removed: list[str] = []
+    # Bytecode contains build filenames; workers compile in RAM without writing installed resources.
+    for cached in list(RUNTIME.rglob('__pycache__')):
+        if cached.exists():
+            if not cached.resolve().is_relative_to(RUNTIME.resolve()) or cached.is_symlink():
+                raise ValueError('Runtime cache escapes its build directory.')
+            _rmtree(cached)
+            removed.append(str(cached.relative_to(RUNTIME)))
     for relative in DROP_DIRS:
         target = RUNTIME / relative
         if target.exists():

@@ -61,9 +61,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Runtime advisory review failed" }
           python -m pip check
       - run: python desktop/scripts/fetch_runtime.py
+      - run: python desktop/scripts/fetch_voice.py
       - run: python desktop/scripts/assemble_resources.py
       - run: npm run dist
         working-directory: desktop
+      - run: python desktop/scripts/verify_installer_defaults.py
       - run: python desktop/scripts/verify_package.py
       - run: python desktop/scripts/audit_payload.py
       - name: Sign update descriptor

@@ -1,7 +1,7 @@
 {
   "name": "lunmi-desktop",
   "productName": "Lunmi",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "private": true,
   "description": "Lunmi Desktop Shell (Electron + React + TypeScript) communicating with Python backend over stdio JSONL v1",
   "main": "dist-electron/electron/main.js",
@@ -41,10 +41,10 @@
   },
   "build": {
     "appId": "org.lunmi.desktop",
+    "compression": "maximum",
     "productName": "Lunmi",
     "copyright": "Lunmi",
     "asar": true,
-    "compression": "maximum",
     "publish": {
       "provider": "github",
       "owner": "MateusCosta888",
@@ -70,6 +70,10 @@
       {
         "from": "resources/python",
         "to": "python"
+      },
+      {
+        "from": "resources/voice",
+        "to": "voice"
       },
       {
         "from": "../THIRD_PARTY_NOTICES.md",
@@ -99,6 +103,7 @@
     },
     "nsis": {
       "include": "build/installer.nsh",
+      "license": "resources/voice/NOTICE.txt",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": false,

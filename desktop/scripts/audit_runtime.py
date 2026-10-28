@@ -13,8 +13,12 @@ REVIEWED = (
 if __name__ == "__main__":
     if date.today() > date(2026, 11, 15):
         raise SystemExit("Runtime advisory review expired; re-evaluate SECURITY.md before publishing.")
-    lock = Path(__file__).resolve().parents[1] / "resources/requirements-runtime.lock"
-    args = [sys.executable, "-m", "pip_audit", "-r", str(lock), "--no-deps", "--disable-pip"]
-    for advisory in REVIEWED:
-        args.extend(["--ignore-vuln", advisory])
-    raise SystemExit(subprocess.run(args, check=False).returncode)
+    resources = Path(__file__).resolve().parents[1] / 'resources'
+    for name in ('requirements-runtime.lock', 'requirements-voice.lock'):
+        args = [sys.executable, '-m', 'pip_audit', '-r', str(resources / name), '--no-deps', '--disable-pip']
+        if name == 'requirements-runtime.lock':
+            for advisory in REVIEWED:
+                args.extend(['--ignore-vuln', advisory])
+        result = subprocess.run(args, check=False)
+        if result.returncode:
+            raise SystemExit(result.returncode)

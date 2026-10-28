@@ -27,6 +27,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import hashlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -36,6 +37,25 @@ WORKER_STARTUP_SECONDS = 300.0
 
 def _snapshot(root: Path) -> dict[str, int]:
     return {str(p): p.stat().st_mtime_ns for p in root.rglob("*") if p.is_file()}
+
+
+def _voice_assets_valid(bundle: Path) -> bool:
+    try:
+        pin = json.loads((REPO / 'desktop/resources/VOICE-SOURCE.json').read_text(encoding='utf-8'))
+        if json.loads((bundle / 'VOICE-SOURCE.json').read_text(encoding='utf-8')) != pin:
+            return False
+        if (bundle / 'runtime/Lib/site-packages/nvidia').exists():
+            return False
+        for item in pin['files']:
+            file = bundle / item['path']
+            if not file.resolve().is_relative_to(bundle.resolve()) or file.stat().st_size != item['bytes']:
+                return False
+            with file.open('rb') as stream:
+                if hashlib.file_digest(stream, 'sha256').hexdigest() != item['sha256']:
+                    return False
+        return True
+    except (OSError, ValueError, KeyError):
+        return False
 
 
 def _resource_drift(before: dict[str, int], after: dict[str, int]) -> dict[str, list[str]]:
@@ -82,6 +102,8 @@ def _run_bridge(app_root: Path, python: Path, user_data: Path) -> dict[str, obje
     })
     env.pop("LLM_PROVIDER", None)
     env.pop("LLM_MODEL", None)
+    env.pop('LUNMI_VOICE_HOME', None)
+    env['LUNMI_BUNDLED_VOICE_HOME'] = str(app_root.parent / 'voice')
     proc = subprocess.Popen(
         [str(python), "-u", "-m", "app.bridge.server"],
         cwd=str(app_root), env=env,
@@ -91,6 +113,8 @@ def _run_bridge(app_root: Path, python: Path, user_data: Path) -> dict[str, obje
     script = "\n".join([
         json.dumps({"v": 1, "id": "hello", "type": "session.hello", "payload": {"client": "verify"}}),
         json.dumps({"v": 1, "id": "mem", "type": "memory.list", "payload": {"limit": 10}}),
+        json.dumps({'v': 1, 'id': 'voice_out', 'type': 'voice.get', 'payload': {}}),
+        json.dumps({'v': 1, 'id': 'voice_in', 'type': 'voice.input.get', 'payload': {}}),
         json.dumps({"v": 1, "id": "shut", "type": "app.shutdown", "payload": {}}),
         "",
     ]).encode("utf-8")
@@ -214,6 +238,9 @@ def main() -> int:
         (m.get("payload") for m in bridge["messages"] if m.get("id") == "mem"), None)
 
     report["database"] = _inspect_database(user_data / ".local" / "memory.sqlite3")
+    report['voice'] = {name: next((m.get('payload', {}) for m in bridge['messages'] if m.get('id') == name), {})
+                       for name in ('voice_out', 'voice_in')}
+    report['voice_assets_valid'] = _voice_assets_valid(root / 'resources/voice')
 
     # O worker fica por último de propósito: é o caminho que importa `vendor/UFO` e a pilha de
     # UIA, onde os wrappers COM eram gravados. Com o snapshot antigo (antes do worker) o PASS de
@@ -237,6 +264,8 @@ def main() -> int:
         "worker_ready": worker["ready"],
         "worker_observed_ok": (worker["observed"] or {}).get("ok"),
         "worker_rc": worker["rc"],
+        'voice_available': {name: value.get('available') for name, value in report['voice'].items()},
+        'voice_assets_valid': report['voice_assets_valid'],
     }, indent=2, ensure_ascii=False))
 
     ok = (
@@ -250,6 +279,8 @@ def main() -> int:
         and worker["ready"] is True
         and (worker["observed"] or {}).get("ok") is True
         and worker["rc"] == 0
+        and all(value.get('available') is True for value in report['voice'].values())
+        and report['voice_assets_valid'] is True
     )
     print(f"[verify] evidência: {evidence / 'package-verification.json'}")
     print(f"[verify] RESULTADO: {'PASS' if ok else 'FAIL'}")

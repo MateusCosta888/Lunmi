@@ -49,6 +49,7 @@ class VoiceInputEnvironment:
     silero: Path
     worker: Path
     reason: str = ""
+    device: str = "cuda"
 
     @property
     def available(self) -> bool:
@@ -82,8 +83,10 @@ def resolve_input_environment(
     worker (`ready` só depois de modelo/VAD carregados).
     """
     home = voice_home(state_root)
+    portable = (home / 'runtime/python.exe').resolve()
+    legacy = home.joinpath(*INPUT_RUNTIME_RELATIVE)
     python = Path(runtime_python).expanduser().resolve() if runtime_python is not None else (
-        home.joinpath(*INPUT_RUNTIME_RELATIVE).resolve())
+        portable if portable.is_file() and not legacy.is_file() else legacy.resolve())
     model = Path(models_dir).expanduser().resolve() if models_dir is not None else (
         home.joinpath(*WHISPER_MODEL_RELATIVE).resolve())
     silero = Path(silero_path).expanduser().resolve() if silero_path is not None else (
@@ -104,4 +107,5 @@ def resolve_input_environment(
     elif not worker.is_file():
         reason = REASON_WORKER_MISSING
     return VoiceInputEnvironment(home=home, python=python, model=model, silero=silero,
-                                 worker=worker, reason=reason)
+                                 worker=worker, reason=reason,
+                                 device='cpu' if python == portable else 'cuda')

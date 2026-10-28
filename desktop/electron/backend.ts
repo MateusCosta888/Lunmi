@@ -262,6 +262,9 @@ export class PythonBackendSupervisor {
       // O backend grava `.local/`, `logs/` e `output/` aqui, não na pasta instalada.
       childEnv.LUNMI_USER_DATA = this.options.userDataRoot;
     }
+    if (this.options.resourcesRoot) {
+      childEnv.LUNMI_BUNDLED_VOICE_HOME = path.join(this.options.resourcesRoot, "voice");
+    }
 
     let child: ChildProcessWithoutNullStreams;
     try {

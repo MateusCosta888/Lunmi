@@ -50,6 +50,10 @@ PUBLIC_BUILD_METADATA_SHA256 = {
         "0399822db132f754a7e3ba5eac8e564e4049b30df55d53bfeba6d38b812de58d",
     "resources/python/Lib/site-packages/pandas-2.2.3.dist-info/DELVEWHEEL":
         "dde7fd56615a1f7cf30d97ff48643e3c1a980e7a43ab7846fe64365231b89891",
+    "resources/voice/runtime/Lib/site-packages/numpy/__config__.py":
+        "7ff3893d0f50f52c748988bbc88bfe970a052fd81e4dfa65bc536d61d20ae18d",
+    "resources/voice/runtime/Lib/site-packages/numpy-2.4.6.dist-info/DELVEWHEEL":
+        "0399822db132f754a7e3ba5eac8e564e4049b30df55d53bfeba6d38b812de58d",
 }
 SECRET_PATTERNS = (
     re.compile(rb"sk-[A-Za-z0-9]{20,}"),
@@ -61,7 +65,7 @@ SECRET_PATTERNS = (
 )
 
 BINARY_SUFFIXES = {".exe", ".dll", ".pyd", ".so", ".bin", ".ico", ".png", ".jpg", ".ttf",
-                   ".7z", ".zip", ".dat", ".pyc", ".node", ".moz", ".pak", ".pem"}
+                   ".7z", ".zip", ".dat", ".pyc", ".node", ".moz", ".pak", ".pem", ".onnx"}
 
 
 def _inside_site_packages(relative: Path) -> bool:

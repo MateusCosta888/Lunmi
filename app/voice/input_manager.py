@@ -32,6 +32,7 @@ WORKER_EXIT_TIMEOUT_SECONDS = 2.0
 STOP_GRACE_SECONDS = 0.5
 START_TIMEOUT_SECONDS = 30.0
 STT_TIMEOUT_SECONDS = 30.0
+CPU_STT_TIMEOUT_SECONDS = 90.0
 CANCEL_TIMEOUT_SECONDS = 2.0
 WARMUP_TIMEOUT_SECONDS = 30.0
 MAX_TRANSCRIPT_CHARS = 2_000
@@ -92,7 +93,7 @@ class VoiceInputManager:
         on_speech_interrupt: Callable[[], Any] | None = None,
         on_active_changed: Callable[[bool], Any] | None = None,
         start_timeout_s: float = START_TIMEOUT_SECONDS,
-        stt_timeout_s: float = STT_TIMEOUT_SECONDS,
+        stt_timeout_s: float | None = None,
         cancel_timeout_s: float = CANCEL_TIMEOUT_SECONDS,
     ) -> None:
         self._emit = emit
@@ -107,7 +108,9 @@ class VoiceInputManager:
         self._on_speech_interrupt = on_speech_interrupt
         self._on_active_changed = on_active_changed
         self.start_timeout_s = float(start_timeout_s)
-        self.stt_timeout_s = float(stt_timeout_s)
+        # The measured CPU path can take longer than the audio; max capture is 30 seconds.
+        self.stt_timeout_s = float(stt_timeout_s if stt_timeout_s is not None else (
+            CPU_STT_TIMEOUT_SECONDS if self.environment().device == 'cpu' else STT_TIMEOUT_SECONDS))
         self.cancel_timeout_s = float(cancel_timeout_s)
 
         self._lock = threading.RLock()
@@ -475,9 +478,10 @@ class VoiceInputManager:
 
     def _worker_argv(self, env: VoiceInputEnvironment) -> list[str]:
         return [
-            str(env.python), str(env.worker),
+            str(env.python), '-I', '-B', str(env.worker),
             "--model-dir", str(env.model),
             "--vad", str(env.silero),
+            "--device", env.device,
         ]
 
     def _ensure_worker_locked(self, env: VoiceInputEnvironment) -> bool:

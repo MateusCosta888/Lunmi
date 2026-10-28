@@ -48,7 +48,13 @@ def voice_home(state_root: str | Path) -> Path:
         candidate = Path(override).expanduser()
         if candidate.is_absolute():
             return candidate.resolve()
-    return (Path(state_root) / ".local" / VOICE_DIRNAME).resolve()
+    local = (Path(state_root) / ".local" / VOICE_DIRNAME).resolve()
+    if (local.joinpath(*RUNTIME_RELATIVE).is_file() or (local / 'runtime/python.exe').is_file()):
+        return local
+    bundled = os.environ.get('LUNMI_BUNDLED_VOICE_HOME', '').strip()
+    if bundled and Path(bundled).is_absolute() and (Path(bundled) / 'runtime/python.exe').is_file():
+        return Path(bundled).resolve()
+    return local
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -68,8 +74,9 @@ def resolve_environment(
 ) -> VoiceEnvironment:
     """Resolve os caminhos e diz honestamente se estão utilizáveis. Nunca cria nem descarrega nada."""
     home = voice_home(state_root)
+    legacy = home.joinpath(*RUNTIME_RELATIVE)
     python = Path(runtime_python).expanduser().resolve() if runtime_python is not None else (
-        home.joinpath(*RUNTIME_RELATIVE).resolve())
+        (home / 'runtime/python.exe').resolve() if (home / 'runtime/python.exe').is_file() else legacy.resolve())
     models = Path(models_dir).expanduser().resolve() if models_dir is not None else (
         home.joinpath(*MODELS_RELATIVE).resolve())
     worker = Path(worker_path).expanduser().resolve() if worker_path is not None else (

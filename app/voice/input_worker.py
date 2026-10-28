@@ -413,7 +413,7 @@ class WhisperAdapter:
 def load_whisper(model_dir: str | Path, *, device: str = "cuda",
                  compute_type: str = "float16", language: str = "pt",
                  beam_size: int = 5) -> WhisperAdapter:
-    """Carrega o modelo local pinado; nunca descarrega e nunca cai para CPU."""
+    """Carrega o modelo local pinado; nunca descarrega nem altera o dispositivo pedido."""
     from faster_whisper import WhisperModel
 
     model = WhisperModel(
@@ -461,6 +461,7 @@ class InputWorker:
         target_rate: int = TARGET_SAMPLE_RATE,
         language: str = "pt",
         beam_size: int = 5,
+        device: str = 'cuda',
         max_capture_ms: int = 30_000,
         onset_timeout_ms: int = 5_000,
         endpoint_silence_ms: int = 1_000,
@@ -477,6 +478,9 @@ class InputWorker:
         self.target_rate = int(target_rate)
         self.language = language
         self.beam_size = int(beam_size)
+        if device not in {'cpu', 'cuda'}:
+            raise ValueError('unsupported STT device')
+        self.device = device
         self.max_capture_ms = int(max_capture_ms)
         self.onset_timeout_ms = int(onset_timeout_ms)
         self.endpoint_silence_ms = int(endpoint_silence_ms)
@@ -484,7 +488,8 @@ class InputWorker:
         self.max_transcript_chars = int(max_transcript_chars)
         self._emit_external = emit
         self._load_model = load_model or (
-            lambda: load_whisper(self.model_dir, language=self.language,
+            lambda: load_whisper(self.model_dir, device=self.device,
+                                 compute_type='int8_float32' if self.device == 'cpu' else 'float16', language=self.language,
                                  beam_size=self.beam_size))
         self._load_vad = load_vad or (lambda: load_silero(self.vad_path))
         self._open_stream = open_stream or open_microphone
@@ -795,6 +800,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sample-rate", type=int, default=INPUT_SAMPLE_RATE)
     parser.add_argument("--language", default="pt")
     parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument('--device', choices=('cpu', 'cuda'), default='cuda')
     parser.add_argument("--max-capture-ms", type=int, default=30_000)
     parser.add_argument("--onset-timeout-ms", type=int, default=5_000)
     parser.add_argument("--endpoint-silence-ms", type=int, default=1_000)
@@ -813,6 +819,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         sample_rate=args.sample_rate,
         language=args.language,
         beam_size=args.beam_size,
+        device=args.device,
         max_capture_ms=args.max_capture_ms,
         onset_timeout_ms=args.onset_timeout_ms,
         endpoint_silence_ms=args.endpoint_silence_ms,
@@ -820,7 +827,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         max_transcript_chars=args.max_transcript_chars,
     )
     try:
-        prepare_native_runtime()
+        if args.device == 'cuda':
+            prepare_native_runtime()
         worker.prepare()
     except Exception:
         # Sem ready: o manager mata a árvore e marca erro; nunca há fallback CPU/download.

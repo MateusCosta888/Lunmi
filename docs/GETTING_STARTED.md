@@ -57,17 +57,20 @@ Clicar no Node abre o mini chat com a mesma conversa e rascunho. Escape recolhe 
 
 Desligar apenas o Node não termina a aplicação. Com residência ligada, fechar continua a esconder para a bandeja. Desligar residência faz o X terminar. As preferências são locais; a migração preserva a antiga posição do companion, embora o Node use os dois cantos superiores.
 
-## Voz: reprodução experimental, sem microfone
+## Voz e ditado locais
 
 O botão de voz no compositor oferece ativação, fala automática opcional, teste, ouvir a última resposta elegível e parar. Parar voz não cancela uma tarefa Windows. A fala usa apenas texto público elegível e templates de resultados verificados; não lê raciocínio interno nem transforma uma operação incerta em sucesso.
 
-O runtime de áudio é separado do Python principal. A resolução padrão procura `<state_root>/.local/voice/runtime/Scripts/python.exe` e modelos em `<state_root>/.local/voice/models/supertonic-3/`. O worker usa Supertonic1.3.1 com download automático desligado. Esses pacotes, pesos e ambiente preparado **não estão incluídos no Git nem são criados pelo launcher**. Esta entrega não oferece instalador automático de voz: sem preparação externa validada, o estado esperado é indisponível, sem impedir o chat. As licenças do SDK, pesos e dependências devem ser revistas antes de distribuir esse runtime.
+O setup completo desde o **Alpha 5** inclui um runtime de voz separado e os modelos, em `resources/voice`. Supertonic 3 usa a voz F4; o ditado usa Whisper large-v3-turbo em CPU `int8_float32`, sem exigir NVIDIA. Os workers não baixam modelos ao falar ou transcrever. Ativa a voz nas configurações quando quiseres usá-la; a instalação não inicia gravação nem fala automática.
 
-O ditado usa um runtime e modelos próprios, também preparados separadamente. O botão do
+O Alpha 4 não incluía estes recursos. No código-fonte, ambientes locais já preparados em `<state_root>/.local/voice` continuam a ter prioridade. Esses pacotes e pesos não entram no Git; o build obtém e verifica os artefactos públicos indicados em `desktop/resources/VOICE-SOURCE.json`. Sem os recursos, o chat continua disponível e a interface indica o que falta. As licenças do SDK e dos modelos acompanham o setup completo e o seu `NOTICE.txt`.
+
+O ditado corre num processo separado do chat. O botão do
 microfone permite rever a transcrição antes de enviar. O atalho configurável envia ao largar
 a tecla; confirme esse comportamento antes de o ativar. Não existe escuta contínua, e ativar
 a saída de voz não inicia gravação. Microfone, dispositivos e desempenho exigem validação
-local. A validação física do Node foi feita num Windows com um monitor a100% DPI; outros
+local. Em CPU a transcrição pode demorar mais do que a gravação; o prazo é de até 90 segundos,
+com cancelamento disponível. A validação física do Node foi feita num Windows com um monitor a100% DPI; outros
 DPI, múltiplos monitores e sessões prolongadas exigem validação adicional.
 
 ## Solução de problemas
