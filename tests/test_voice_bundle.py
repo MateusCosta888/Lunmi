@@ -2,11 +2,16 @@
 from pathlib import Path
 import hashlib
 import json
+import subprocess
+import sys
+
+import pytest
 
 from app.voice.input_runtime import resolve_input_environment
 from app.voice.runtime import resolve_environment
 from app.voice import input_worker
 from app.voice.input_manager import VoiceInputManager
+from app.voice.manager import VoiceManager
 
 
 def make_bundle(root: Path) -> None:
@@ -18,6 +23,29 @@ def make_bundle(root: Path) -> None:
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b'fixture')
+
+
+@pytest.mark.parametrize('voice_input', [False, True])
+def test_isolated_workers_preserve_unicode_over_real_jsonl_pipes(tmp_path, voice_input):
+    value = {'text': 'Não apagues: ação, 你好, 😀.'}
+    probe = tmp_path / 'utf8-probe.py'
+    probe.write_text('import json, sys\n'
+                     'value = json.loads(sys.stdin.readline())\n'
+                     f'assert value == {value!r}\n'
+                     'sys.stdout.write(json.dumps(dict(value=value, utf8=sys.flags.utf8_mode), ensure_ascii=False))\n', encoding='utf-8')
+    if voice_input:
+        manager = VoiceInputManager(state_root=tmp_path, session_id='utf8', emit=lambda _: None,
+                                    stt_timeout_s=1)
+        env = resolve_input_environment(tmp_path, runtime_python=sys.executable, worker_path=probe)
+    else:
+        manager = VoiceManager(root_dir=tmp_path, state_root=tmp_path, session_id='utf8', emit=lambda _: None)
+        env = resolve_environment(tmp_path, runtime_python=sys.executable, worker_path=probe)
+    argv = manager._worker_argv(env)
+    # Reproduce the shipped Python 3.11 default even when the test host enables UTF-8 by default.
+    result = subprocess.run([argv[0], '-X', 'utf8=0', *argv[1:]], input=json.dumps(value, ensure_ascii=False).encode('utf-8'),
+                            capture_output=True, timeout=10)
+    assert result.returncode == 0
+    assert json.loads(result.stdout.decode('utf-8')) == dict(value=value, utf8=1)
 
 
 def test_installed_bundle_resolves_both_workers_to_portable_cpu_runtime(tmp_path, monkeypatch):

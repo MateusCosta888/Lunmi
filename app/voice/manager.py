@@ -327,7 +327,7 @@ class VoiceManager:
         return env
 
     def _worker_argv(self, env: VoiceEnvironment) -> list[str]:
-        return [str(env.python), '-I', '-B', str(env.worker), "--model-dir", str(env.models)]
+        return [str(env.python), '-I', '-B', '-X', 'utf8', str(env.worker), "--model-dir", str(env.models)]
 
     def _ensure_worker_locked(self, env: VoiceEnvironment) -> bool:
         if self._proc is not None and self._proc.poll() is None:

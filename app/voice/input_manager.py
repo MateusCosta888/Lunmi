@@ -478,7 +478,7 @@ class VoiceInputManager:
 
     def _worker_argv(self, env: VoiceInputEnvironment) -> list[str]:
         return [
-            str(env.python), '-I', '-B', str(env.worker),
+            str(env.python), '-I', '-B', '-X', 'utf8', str(env.worker),
             "--model-dir", str(env.model),
             "--vad", str(env.silero),
             "--device", env.device,
