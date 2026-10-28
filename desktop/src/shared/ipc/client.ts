@@ -6,6 +6,7 @@
  * o acesso, normaliza erros de comando (`code: message`) e mantém uma assinatura de eventos.
  */
 import type { Envelope, SessionReadyPayload } from "../protocol";
+import type { UpdatesApi } from "../updates";
 import type {
   VoiceInputHoldPhaseDto,
   VoiceInputShortcutControlDto,
@@ -49,6 +50,7 @@ export interface WindowStateDto {
 export type WindowControlAction = "minimize" | "toggle-maximize" | "close" | "state";
 
 export interface LunmiBridgeApi {
+  updates?: UpdatesApi;
   hello(): Promise<SessionReadyPayload>;
   notifyRendererReady?(): Promise<{
     ok: boolean;

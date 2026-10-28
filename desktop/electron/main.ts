@@ -112,6 +112,8 @@ import {
 } from "./voice-shortcut";
 import { VoiceHoldCoordinator, VoiceHotkeyObserver } from "./voice-hotkey";
 import { createWebSourceOpenHandler, WebSourceOpener } from "./web-source-open";
+import { LunmiUpdates } from "./updates";
+import updateTrust from "./update-public-key.json";
 
 export { resolvePythonExecutable };
 
@@ -204,6 +206,8 @@ let chatDeltaTimer: NodeJS.Timeout | null = null;
 let mainRendererReady = false;
 let pendingShellRoute: "chat" | "preferences" | null = null;
 let quitting = false;
+let updates: LunmiUpdates | null = null;
+let integrationConnecting = false;
 let quitPromise: Promise<void> | null = null;
 const bootStartEpochMs = Date.now();
 const bootStartHr = process.hrtime.bigint();
@@ -861,6 +865,7 @@ async function dispatchRendererCommand(
   payload: Record<string, unknown>,
   fromMain = false
 ): Promise<Record<string, unknown>> {
+  if (updates?.installing) throw new Error("update_installing: Reinício para atualização em curso.");
   if (!backendSupervisor) {
     throw new Error("Bridge não inicializada.");
   }
@@ -1309,9 +1314,58 @@ function setupTray(): void {
 }
 
 /** Caminho único e idempotente de encerramento: voz, bridge, workers, janelas e bandeja. */
-function requestQuit(): Promise<void> {
+function updateRestartBlocked(): boolean {
+  const projection = chatProjection?.snapshot();
+  return quitting || backendSupervisor?.hasPendingCommands === true ||
+    projection?.task?.phase === "running" || Boolean(projection?.confirm || projection?.input) ||
+    voiceHoldCoordinator?.isActive() === true || Boolean(backgroundVoice.phase) || integrationConnecting ||
+    ["loading", "synthesizing", "playing"].includes(lastVoiceState?.state ?? "");
+}
+
+function setupUpdates(): void {
+  const installed = process.platform === "win32" && process.arch === "x64" && app.isPackaged && !process.defaultApp;
+  // Lazy load: development and IPC fixtures never initialize electron-updater or access a feed.
+  const updater = installed ? new (require("electron-updater").NsisUpdater)({
+    provider: "github", owner: "MateusCosta888", repo: "Lunmi",
+  }) as import("electron-updater").NsisUpdater : null;
+  if (updater) { updater.logger = null; updater.disableWebInstaller = true; }
+  updates = new LunmiUpdates({
+    version: app.getVersion(), updater, publicKey: updateTrust.publicKey,
+    publish: state => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lunmi:updates-state", state);
+    },
+    blocked: updateRestartBlocked,
+    confirmRestart: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: "question", title: "Atualizar a Lunmi", buttons: ["Mais tarde", "Reiniciar e atualizar"],
+        defaultId: 0, cancelId: 0, noLink: true,
+        message: "Reiniciar para instalar a atualização?",
+        detail: "Guarda primeiro as alterações nos formulários. Rascunhos de conversa e alterações por guardar serão perdidos. O histórico e as configurações guardadas serão mantidos.",
+      });
+      return result.response === 1;
+    },
+    finish: () => requestQuit(() => {
+      updater!.once("error", () => {
+        dialog.showErrorBox("Atualização não iniciada", "Não foi possível iniciar o instalador. Abre novamente a Lunmi para continuar na versão atual e tentar de novo.");
+        app.quit();
+      });
+      updater!.quitAndInstall(true, true);
+    }),
+  });
+  for (const action of ["get", "check", "install"] as const) {
+    ipcMain.handle(`lunmi:updates-${action}`, event => {
+      if (!isTrustedMain(event)) throw new Error("Sender não autorizado.");
+      return updates![action]();
+    });
+  }
+  updates.start();
+}
+
+function requestQuit(afterCleanup?: () => void): Promise<void> {
   if (quitPromise) return quitPromise;
   quitting = true;
+  updates?.dispose();
   if (chatDeltaTimer) {
     clearTimeout(chatDeltaTimer);
     chatDeltaTimer = null;
@@ -1344,11 +1398,18 @@ function requestQuit(): Promise<void> {
     try {
       // Cancelar a captura antes de fechar a bridge; nada é retomado ao voltar a abrir.
       await voiceCancel;
-      await backendSupervisor?.shutdown();
+      if (afterCleanup) await backendSupervisor?.shutdownForUpdate();
+      else await backendSupervisor?.shutdown();
     } catch {
+      if (afterCleanup) {
+        dialog.showErrorBox("Atualização adiada", "Não foi possível concluir o encerramento seguro. A atualização não será instalada; abre novamente a Lunmi para continuar.");
+        app.quit();
+        return;
+      }
       // o supervisor já tem fallback de kill; sair não pode ficar preso
     }
-    app.quit();
+    if (afterCleanup) afterCleanup();
+    else app.quit();
   })();
   return quitPromise;
 }
@@ -1508,6 +1569,7 @@ function setupIpc(): void {
       if (!args || typeof args.type !== "string") {
         throw new Error("Comando inválido.");
       }
+      if (updates?.installing) throw new Error("update_installing: Reinício para atualização em curso.");
       const payload = isPlainObject(args.payload) ? args.payload : {};
 
       // Seletores nativos de arquivo administrados pela camada confiável (main):
@@ -1697,6 +1759,7 @@ function setupIpc(): void {
   });
 
   ipcMain.handle("lunmi:restart-backend", async (event) => {
+    if (updates?.installing) throw new Error("update_installing: Reinício para atualização em curso.");
     if (!isTrustedSenderFrame(event, mainWindow, expectedIndexFileUrl)) {
       throw new Error("Sender não autorizado.");
     }
@@ -1819,7 +1882,7 @@ function bootstrap(): void {
   // VOICE REFINEMENTS V2: helper Windows owned; prefs e registo separados do Node.
   voiceHoldCoordinator = new VoiceHoldCoordinator({
     getSessionId: () => lastSession?.session_id ?? null,
-    isQuitting: () => quitting,
+    isQuitting: () => quitting || updates?.installing === true,
     publish: publishVoiceHoldPhase,
     cancelCapture: () => cancelVoiceInputCapture(),
     showMain: (phase) => {
@@ -1849,12 +1912,17 @@ function bootstrap(): void {
     getHostPids: collectLiveElectronHostPids,
     onIntegrationAuthOpen: (url) => shell.openExternal(url),
     onEvent: (envelope) => {
+      if (envelope.type === "integrations.changed") {
+        const gmail = (envelope.payload as Record<string, unknown>).gmail as { state?: string } | undefined;
+        integrationConnecting = ["connecting", "composio_connected", "gmail_connecting"].includes(gmail?.state ?? "");
+      }
       if (envelope.type === "session.ready") {
         const payload = envelope.payload as unknown as SessionReadyPayload;
         const newSession = lastSession?.session_id !== payload.session_id;
         lastSession = payload;
         // Sessão nova: nenhuma geração/gesto da sessão antiga sobrevive.
         if (newSession) {
+          integrationConnecting = false;
           voiceHoldCoordinator?.sessionChanged();
           backgroundVoice.reset();
         }
@@ -1869,6 +1937,7 @@ function bootstrap(): void {
       } else if (envelope.type === "task.error") {
         const code = (envelope.payload as Record<string, unknown>).code;
         if (typeof code === "string" && BACKEND_FAILURE_CODES.has(code)) {
+          integrationConnecting = false;
           lastSession = null;
           backgroundVoice.reset();
           voiceHoldCoordinator?.sessionChanged();
@@ -1909,6 +1978,7 @@ function bootstrap(): void {
   setupPresenceIpc();
   setupVoiceInputShortcutIpc();
   mainWindow = createWindow();
+  setupUpdates();
   setupTray();
   // Windows a bloquear ou a suspender: cancelar captura e parar fala; nada retoma sozinho.
   registerPowerVoiceGuards(

@@ -16,6 +16,7 @@ import { BrainPanel } from "./features/brain/BrainPanel";
 import { MemoryPanel } from "./features/memory/MemoryPanel";
 import type { MemoryProfileDraft } from "./features/memory/MemoryPanel";
 import { PreferencesPanel } from "./features/preferences/PreferencesPanel";
+import { UpdateNotice } from "./features/preferences/UpdatesCard";
 import { ModelPicker } from "./features/chat/ModelPicker";
 import { useAttachments } from "./features/chat/useAttachments";
 import { ProfileModal } from "./features/profile/ProfileModal";
@@ -346,6 +347,7 @@ export function App(): React.ReactElement {
           <button type="button" onClick={() => setView("chat")}>Voltar à tarefa</button>
           <button type="button" data-testid="stop-task" onClick={() => void chat.stop()}>Parar</button>
         </div>}
+        <UpdateNotice onOpen={() => setView("preferences")} />
         <div className="lunmi-shell-body">
           <main className="lunmi-main">
             <div className="lunmi-chat-view" hidden={view !== "chat"}>

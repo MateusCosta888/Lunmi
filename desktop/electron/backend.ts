@@ -125,6 +125,7 @@ export interface BackendSupervisorOptions {
 }
 
 export class PythonBackendSupervisor {
+  public get hasPendingCommands(): boolean { return this.pending.size > 0 || this.startPromise !== null; }
   private proc: ChildProcessWithoutNullStreams | null = null;
   private framer = new JsonlLineFramer();
   private readonly pending = new Map<string, PendingRequest>();
@@ -527,6 +528,19 @@ export class PythonBackendSupervisor {
         reject(err as Error);
       }
     });
+  }
+
+  public async shutdownForUpdate(): Promise<void> {
+    const child = this.proc;
+    await this.shutdown();
+    if (child && child.exitCode === null) {
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); child.removeListener("exit", done); resolve(); };
+        const timer = setTimeout(done, 2000);
+        child.once("exit", done);
+      });
+      if (child.exitCode === null) throw new Error("Backend still running; update installation refused.");
+    }
   }
 
   public async shutdown(): Promise<{ status: string; session_id: string }> {

@@ -58,7 +58,14 @@ def test_real_react_resume_and_old_wikipedia_are_not_recent_updates(tmp_path):
                for url in args.get('urls', []))
 
 
-def test_ai_news_excludes_jobs_and_unrelated_results(tmp_path):
+def test_ai_news_excludes_jobs_and_unrelated_results(tmp_path, monkeypatch):
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 24, tzinfo=tz)
+
+    # The shared page fixture is dated Oct 20; this test exercises relevance, not aging.
+    monkeypatch.setattr('app.integrations.web_quality.datetime', FixtureClock)
     result, _ = run(tmp_path, 'notícias recentes de inteligência artificial', [
         item('Artificial intelligence research announcement', 'https://example.org/ai'),
         item('Artificial intelligence jobs hiring careers', 'https://example.org/jobs'),

@@ -1,0 +1,85 @@
+name: Prepare Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version in desktop/package.json (without v)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lunmi-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Validate requested version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node -e "const v=require('./desktop/package.json').version;if(v!==process.env.RELEASE_VERSION||!/^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(v))process.exit(1)"
+      - run: python -m pip install -r requirements.lock -r requirements-dev.txt
+      - run: python install_ufo.py
+      - run: python -m ruff check app tests
+      - run: python -m mypy
+      - run: python -m pytest -q
+      - run: npm ci
+        working-directory: desktop
+      - run: npm run typecheck
+        working-directory: desktop
+      - run: npm test -- --maxWorkers=2
+        working-directory: desktop
+      - run: npm run test:release
+        working-directory: desktop
+      - name: Audit dependencies before distribution
+        run: |
+          npm --prefix desktop audit --audit-level=high
+          if ($LASTEXITCODE -ne 0) { throw "npm audit failed" }
+          python desktop/scripts/audit_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw "Runtime advisory review failed" }
+          python -m pip check
+      - run: python desktop/scripts/fetch_runtime.py
+      - run: python desktop/scripts/assemble_resources.py
+      - run: npm run dist
+        working-directory: desktop
+      - run: python desktop/scripts/verify_package.py
+      - run: python desktop/scripts/audit_payload.py
+      - name: Sign update descriptor
+        env:
+          LUNMI_UPDATE_PRIVATE_KEY: ${{ secrets.LUNMI_UPDATE_PRIVATE_KEY }}
+        run: node desktop/scripts/update-release.mjs
+      - name: Upload complete draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          $files = @("desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe", "desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe.blockmap", "desktop/release/lunmi-update.json", "desktop/release/lunmi-update.sig")
+          $files += 'desktop/release/latest.yml'
+          foreach ($file in $files) { if (!(Test-Path -LiteralPath $file)) { throw "Missing release artifact" } }
+          $flags = @('--draft', '--target', $env:GITHUB_SHA, '--title', "Lunmi $env:RELEASE_VERSION", '--generate-notes')
+          if ($env:RELEASE_VERSION.Contains('-')) { $flags += '--prerelease' }
+          gh release create $tag @files @flags
+          if ($LASTEXITCODE -ne 0) { throw "Draft release upload failed" }

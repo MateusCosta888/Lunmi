@@ -21,7 +21,7 @@ Um assistente de desktop com interface Electron, backend Python e automação as
   <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi no tema Celestial, com navegação recolhida e painel de memória" />
 </p>
 
-> **Em desenvolvimento.** A Lunmi funciona a partir do código-fonte e tem um instalador alpha Windows x64 para testes. Ainda não há instalador assinado, atualização automática ou garantia de automação universal.
+> **Em desenvolvimento.** A Lunmi funciona a partir do código-fonte e tem um instalador alpha Windows x64 para testes. O atualizador preparado para o Alpha 4 usa GitHub Releases e pede um reinício antes de instalar. Não há certificado de editor Windows; a autenticidade das atualizações é verificada por assinatura Ed25519. Não há garantia de automação universal. Consulte [Atualizações](docs/UPDATES.md).
 
 ## O que a Lunmi faz
 

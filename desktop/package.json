@@ -1,7 +1,7 @@
 {
   "name": "lunmi-desktop",
   "productName": "Lunmi",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "private": true,
   "description": "Lunmi Desktop Shell (Electron + React + TypeScript) communicating with Python backend over stdio JSONL v1",
   "main": "dist-electron/electron/main.js",
@@ -9,13 +9,15 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron && node dist-electron/electron/brand-runtime.js",
-    "dist": "npm run build && electron-builder --win nsis --x64",
+    "dist": "npm run build && electron-builder --win nsis --x64 --publish never",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run",
+    "test:release": "node --test scripts/update-release.test.mjs",
     "bench:f0": "npm run build && node dist-electron/electron/bench_f0.js",
     "start": "node dist-electron/electron/start.js"
   },
   "dependencies": {
+    "electron-updater": "6.8.11",
     "liquid-glass-react": "1.1.1",
     "lucide-react": "1.57.0",
     "motion": "14.6.0",
@@ -29,7 +31,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "4.7.0",
-    "electron": "44.7.2",
+    "electron": "44.10.0",
     "electron-builder": "26.15.3",
     "jsdom": "26.1.0",
     "resedit": "3.1.0",
@@ -43,6 +45,12 @@
     "copyright": "Lunmi",
     "asar": true,
     "compression": "maximum",
+    "publish": {
+      "provider": "github",
+      "owner": "MateusCosta888",
+      "repo": "Lunmi",
+      "releaseType": "draft"
+    },
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -77,6 +85,7 @@
       }
     ],
     "win": {
+      "verifyUpdateCodeSignature": false,
       "target": [
         {
           "target": "nsis",

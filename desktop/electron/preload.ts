@@ -12,6 +12,7 @@
  */
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import type { Envelope, SessionReadyPayload } from "../src/shared/protocol";
+import type { UpdatesApi, UpdateState } from "../src/shared/updates";
 import type {
   LunmiPresenceApi,
   NodePreferencesDto,
@@ -50,6 +51,7 @@ export interface WindowControlDto {
 export type WindowControlActionDto = "minimize" | "toggle-maximize" | "close" | "state";
 
 export interface LunmiBridgeApi {
+  updates: UpdatesApi;
   hello(): Promise<SessionReadyPayload>;
   notifyRendererReady(): Promise<{
     ok: boolean;
@@ -88,6 +90,16 @@ const companionWindow = (() => {
 })();
 
 const lunmiApi: LunmiBridgeApi = Object.freeze({
+  updates: Object.freeze({
+    get: (): Promise<UpdateState> => ipcRenderer.invoke("lunmi:updates-get"),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke("lunmi:updates-check"),
+    install: (): Promise<UpdateState> => ipcRenderer.invoke("lunmi:updates-install"),
+    onState(listener: (state: UpdateState) => void): () => void {
+      const handler = (_event: IpcRendererEvent, state: UpdateState) => listener(state);
+      ipcRenderer.on("lunmi:updates-state", handler);
+      return () => ipcRenderer.removeListener("lunmi:updates-state", handler);
+    },
+  }),
   hello(): Promise<SessionReadyPayload> {
     return ipcRenderer.invoke("lunmi:hello");
   },

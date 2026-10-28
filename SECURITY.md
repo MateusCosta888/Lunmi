@@ -54,3 +54,16 @@ atualizações compatíveis ficam pendentes antes de uma nova distribuição bin
 
 Esta publicação atualiza código-fonte e testes, sem gerar ou anunciar um instalador seguro.
 Não constitui certificação de ausência de vulnerabilidades nas dependências.
+
+### Preparação do atualizador — 2026-10-27
+
+Electron passa a 44.10.0; `undici` e `fast-uri` transitivos foram atualizados sem `--force`. A auditoria npm passa sem avisos na árvore resultante. Python e runtime fixam Pillow 13.0.0, certifi 2026.10.19, filelock 4.2.1 e Flask 3.1.3. A auditoria do lock de distribuição fica com seis avisos, revistos até **2026-11-15**:
+
+- FastMCP `GHSA-7xgj-8392-5q4r`: bypass de políticas após transforms de servidor. O servidor local regista ferramentas diretamente, sem transforms de autorização e sem exposição de um servidor HTTP autenticado. Não habilitar essas superfícies com esta versão.
+- LangChain `PYSEC-2026-2192` e `PYSEC-2026-2555`, core `PYSEC-2026-2193` e `PYSEC-2026-2562`, text-splitters `PYSEC-2026-77`: caminhos de loaders/configurações, Hub, contagem de tokens de imagens por URL e splitter por URL já delimitados acima. Essas rotas não são expostas pela Lunmi; não fazer upgrade de major à margem da compatibilidade UFO.
+
+`desktop/scripts/audit_runtime.py` ignora apenas esses seis IDs revistos e falha para avisos adicionais ou revisão expirada. É uma análise estática e temporária de alcance, não ausência de vulnerabilidades. Fonte FastMCP: [aviso do mantenedor](https://github.com/PrefectHQ/fastmcp/security/advisories/GHSA-7xgj-8392-5q4r).
+
+O lock de runtime usa pins PyPI para pip e setuptools, em vez de URLs locais da máquina que construiu o Python. Setuptools passa a 84.1.0 para corrigir `GHSA-xmj3-9gf7-h52w`, identificado quando deixou de ser ignorado pela auditoria como URL local.
+
+O atualizador usa descritores assinados com Ed25519 e hash do instalador. Só aceita a origem fixa e uma versão superior; não instala ao sair normalmente. Chave privada e tokens GitHub nunca entram no cliente ou nos artefactos. Ver [Atualizações](docs/UPDATES.md).

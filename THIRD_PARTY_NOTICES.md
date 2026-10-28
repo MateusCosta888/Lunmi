@@ -6,6 +6,7 @@ As licenças originais continuam aplicáveis. Este documento não concede uma li
 | --- | --- | --- |
 | [Microsoft UFO²](https://github.com/microsoft/UFO) | HostAgent/AppAgent e infraestrutura obtidos na revisão fixada | MIT; checkout conserva o LICENSE upstream. Vendor não versionado. |
 | [Electron](https://www.electronjs.org/) | Shell desktop | MIT e avisos dos componentes Electron/Chromium. |
+| [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater) | Downloads diferenciais e atualizações NSIS | MIT; licença incluída no pacote npm. A verificação Ed25519 usa `node:crypto`. |
 | [React](https://react.dev/) | Interface | MIT. |
 | [Lucide](https://lucide.dev/) | Ícones selecionados | [ISC e avisos Feather MIT](desktop/licenses/Lucide-LICENSE.txt). |
 | [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans) | Fonte local | [SIL Open Font License 1.1](desktop/src/assets/fonts/OFL.txt). |

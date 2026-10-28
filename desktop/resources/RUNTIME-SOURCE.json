@@ -7,8 +7,8 @@
     "sha256": "7616ab1f74aab975bd91eb0a657a74a092a63a46cac38c5f3f9415c79fd781f5",
     "interpreter": "3.11.17"
   },
-  "requirements_txt_sha256": "84020fd97fc17755b7dddf2cac79ef903ecf8e6ef99d6689a99e07481e44697a",
+  "requirements_txt_sha256": "949d57578767c0aa32270dbe1a50521b6ad03f8514a6799573934e9a384ac473",
   "installed_lock": "requirements-runtime.lock",
-  "installed_lock_sha256": "7e459f602118882d153fd6a29dd3c8bc737418ec42917f3486c1f0ddc6743278",
-  "install_command": "resources/python/python.exe -m pip install --no-warn-script-location --disable-pip-version-check --no-input -r requirements.txt"
+  "installed_lock_sha256": "fcbf3d4aa281311386d01e6a3abf6e1866c7bc72b606bd04686989de58796d13",
+  "install_command": "resources/python/python.exe -m pip install --no-warn-script-location --disable-pip-version-check --no-input -r desktop/resources/requirements-runtime.lock"
 }

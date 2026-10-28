@@ -457,7 +457,7 @@ const press = (code: string, key: string, init: Record<string, unknown> = {}) =>
 const lift = (code: string, key: string) => fireEvent.keyUp(document, { code, key });
 
 async function beginCapture() {
-  fireEvent.click(screen.getByTestId("key-recorder-change"));
+  await act(async () => { fireEvent.click(screen.getByTestId("key-recorder-change")); });
   await waitFor(() => expect(screen.getByTestId("key-recorder").getAttribute("data-capturing")).toBe("true"), { timeout: 4000 });
 }
 

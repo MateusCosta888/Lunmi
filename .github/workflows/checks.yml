@@ -62,4 +62,5 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test -- --maxWorkers=2
+      - run: npm run test:release
       - run: npm run build

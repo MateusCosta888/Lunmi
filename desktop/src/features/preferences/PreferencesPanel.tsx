@@ -15,6 +15,7 @@ import { VoiceSettingsCard } from "../voice/VoiceSettingsCard";
 import { HistorySettings } from '../chat/HistoryNavigation';
 import type { ChatHistorySnapshotDto } from '../../shared/types';
 import { WebSearchCard } from "../web/WebSearchCard";
+import { UpdatesCard } from "./UpdatesCard";
 import { TOKENS, THEMES, getTheme } from "../../shared/theme";
 import { Icon } from "../../shared/ui";
 import { describeError, type SendCommandFn } from "../../shared/ipc/client";
@@ -316,6 +317,7 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, history
           </p>
         )}
       </header>
+      <UpdatesCard />
 
       <div className="lunmi-settings-card" style={cardStyle} data-testid="theme-card">
         <h3 style={subHeadingStyle}><Icon name="palette" /> Aparência</h3>
