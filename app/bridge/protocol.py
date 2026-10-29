@@ -97,6 +97,15 @@ VOICE_INPUT_COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.input.result",
 })
 
+# Introdução: instalar o Kiro CLI e entrar na conta sem terminal. `status` consulta o CLI
+# (lento); `install`/`login` respondem logo e o progresso chega em `brain.kiro.state`.
+KIRO_COMMAND_TYPES: frozenset[str] = frozenset({
+    "brain.kiro.status",
+    "brain.kiro.install",
+    "brain.kiro.login",
+    "brain.kiro.cancel",
+})
+
 # WEB-SEARCH-V1: estado/definições da pesquisa web. Contrato em
 # `.agents/WEB-SEARCH-V1-CONTRACT.md`; a capability `web_search` só é verdadeira com ambos
 # os handlers registados, nunca por causa de uma flag otimista.
@@ -164,7 +173,7 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.input.cancel",
     "voice.input.result",
     "app.shutdown",
-}) | SPOTIFY_COMMAND_TYPES | VOICE_INPUT_COMMAND_TYPES | WEB_COMMAND_TYPES | HISTORY_COMMAND_TYPES
+}) | SPOTIFY_COMMAND_TYPES | VOICE_INPUT_COMMAND_TYPES | WEB_COMMAND_TYPES | HISTORY_COMMAND_TYPES | KIRO_COMMAND_TYPES
 
 RESPONSE_TYPES: frozenset[str] = frozenset({
     "command.result",
@@ -192,6 +201,8 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "task.cancelled",
     "task.error",
     "brain.updated",
+    # Progresso público da instalação/login do Kiro; nunca leva o e-mail da conta.
+    "brain.kiro.state",
     "memory.changed",
     # Estado público de voz: nunca carrega texto de conversa, paths ou diagnóstico interno.
     "voice.state",

@@ -34,6 +34,9 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "openrouter": "https://openrouter.ai/api/v1",
     # NVIDIA NIM (build.nvidia.com) expõe Chat Completions e /models no mesmo esquema.
     "nvidia": "https://integrate.api.nvidia.com/v1",
+    # Groq: chave gratuita em console.groq.com/keys, sem cartão; o caminho mais curto para a
+    # introdução da Lunmi chegar a um cérebro funcional.
+    "groq": "https://api.groq.com/openai/v1",
     "ollama": "http://localhost:11434/v1",
     "lmstudio": "http://localhost:1234/v1",
     "vllm": "http://localhost:8000/v1",
@@ -47,6 +50,8 @@ PROVIDER_BASE_URLS: dict[str, str] = {
 PROVIDER_PREFERRED_MODELS: dict[str, str] = {
     "gemini": "gemini-3.8-flash",
     "nvidia": "nvidia/nemotron-3-super-120b-a12b",
+    # Modelo de produção do Groq (docs/models): forte e rápido no plano gratuito.
+    "groq": "openai/gpt-oss-120b",
 }
 
 # O endpoint oficial de inferência Gemini é OpenAI-compatible (documentado pela
@@ -84,7 +89,8 @@ _HTTP_STATUS_PATTERN = re.compile(r"HTTP (\d{3})")
 _KIND_MESSAGES: dict[ErrorKind, str] = {
     ErrorKind.INVALID_CREDENTIALS: "A chave de API foi recusada pelo provedor.",
     ErrorKind.QUOTA_EXCEEDED: "A conta do provedor está sem cota ou saldo para este modelo.",
-    ErrorKind.RATE_LIMITED: "Limite de requisições atingido no provedor; tente de novo em instantes.",
+    ErrorKind.RATE_LIMITED: ("O provedor atingiu um limite de uso. O Groq gratuito limita tokens por "
+                             "minuto e por dia; tenta de novo mais tarde ou usa outro cérebro."),
     ErrorKind.MODEL_UNAVAILABLE: "O provedor não reconhece este modelo. Escolha outro na lista.",
     ErrorKind.REQUEST_TOO_LARGE: "O pedido excedeu o limite de tamanho do provedor.",
     ErrorKind.CONFIGURATION: "O provedor recusou o pedido: confira modelo, chave e endpoint.",

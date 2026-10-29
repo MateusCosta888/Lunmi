@@ -174,7 +174,7 @@ def test_operation_counts_use_one_coherent_set() -> None:
 
 
 def test_matrix_inventory_is_finite_and_not_a_promise_of_runtime_versions() -> None:
-    assert len(descriptors()) == 17
+    assert len(descriptors()) == 18  # +groq
     assert next(desc for desc in descriptors() if desc.id == 'opencode').implemented is False
     # free-pi-cli is a known runtime, not an adapter: visible, disabled, with a reason.
     freepi = next(desc for desc in descriptors() if desc.id == 'freepi')
