@@ -63,6 +63,7 @@ jobs:
       - run: python desktop/scripts/fetch_runtime.py
       - run: python desktop/scripts/fetch_voice.py
       - run: python desktop/scripts/assemble_resources.py
+      - run: python desktop/scripts/components.py pack
       - run: npm run dist
         working-directory: desktop
       - run: python desktop/scripts/verify_installer_defaults.py

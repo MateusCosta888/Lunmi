@@ -28,6 +28,9 @@ import struct
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import components  # noqa: E402
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "release" / "win-unpacked"
 
 FORBIDDEN_NAMES = {".env", ".local", ".git", ".agents", ".claude", ".cursor", ".qoder",
@@ -107,10 +110,11 @@ def _scan_bytes(relative: Path, blob: bytes) -> str | None:
     return None
 
 
-def audit_tree(root: Path) -> list[str]:
+def audit_tree(root: Path, prefix: Path = Path()) -> list[str]:
+    """`prefix` dá a um componente extraído fora da raiz o caminho lógico `resources/<nome>`."""
     findings: list[str] = []
     for path in root.rglob("*"):
-        relative = path.relative_to(root)
+        relative = prefix / path.relative_to(root)
         if path.is_file() and path.name.lower().endswith(".asar"):
             findings += _audit_asar(path, relative)
             continue
@@ -224,6 +228,11 @@ def main() -> int:
         return 1
     findings = audit_tree(root)
     entries = sum(1 for _ in root.rglob("*"))
+    # Python e voz viajam como arquivos de componentes; audita-se o conteúdo extraído e conferido.
+    if (root / "resources" / components.MANIFEST).is_file():
+        for name, directory in components.ensure_materialized(root).items():
+            findings += audit_tree(directory, Path("resources") / name)
+            entries += sum(1 for _ in directory.rglob("*"))
     if findings:
         print(f"[audit] {len(findings)} achado(s) em {root}:")
         for item in findings[:40]:

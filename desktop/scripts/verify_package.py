@@ -12,7 +12,10 @@ O que este script prova, contra `desktop/release/win-unpacked` (ou outra raiz):
    senão o "primeiro uso" não estaria sendo exercitado;
 4. o worker UFO **real** do pacote inicializa (`{"ready": true}`), responde a uma operação de
    observação sem inferência e encerra limpo;
-5. o intérprete executado é `resources/python/python.exe`, não o Python da máquina.
+5. o intérprete executado é o Python do pacote, não o da máquina. Com `lunmi-components.json`,
+   Python e voz são extraídos dos arquivos de componentes para `<raiz>-runtime/`, como o
+   instalador faz, e a chave de conteúdo de cada um é conferida; nenhum pode continuar dentro
+   de `resources/`.
 
 Não usa GUI, não faz inferência, não abre provedor e não toca aplicativos pessoais.
 
@@ -29,6 +32,9 @@ import sys
 import time
 import hashlib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import components  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_ROOT = REPO / "desktop" / "release" / "win-unpacked"
@@ -92,7 +98,7 @@ def _pre_generated_wrappers(resources: Path) -> list[str]:
     return sorted(found)
 
 
-def _run_bridge(app_root: Path, python: Path, user_data: Path) -> dict[str, object]:
+def _run_bridge(app_root: Path, python: Path, voice: Path, user_data: Path) -> dict[str, object]:
     env = dict(os.environ)
     env.update({
         "LUNMI_USER_DATA": str(user_data),
@@ -103,7 +109,7 @@ def _run_bridge(app_root: Path, python: Path, user_data: Path) -> dict[str, obje
     env.pop("LLM_PROVIDER", None)
     env.pop("LLM_MODEL", None)
     env.pop('LUNMI_VOICE_HOME', None)
-    env['LUNMI_BUNDLED_VOICE_HOME'] = str(app_root.parent / 'voice')
+    env['LUNMI_BUNDLED_VOICE_HOME'] = str(voice)
     proc = subprocess.Popen(
         [str(python), "-u", "-m", "app.bridge.server"],
         cwd=str(app_root), env=env,
@@ -212,10 +218,19 @@ def main() -> int:
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_ROOT
     evidence = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else REPO / "output" / "alpha-acceptance"
     app_root = root / "resources" / "app"
-    python = root / "resources" / "python" / "python.exe"
+    # Python e voz chegam como componentes: extraídos ao lado da raiz, como faz o instalador.
+    if (root / "resources" / components.MANIFEST).is_file():
+        component_dirs = components.materialize(root)
+    else:
+        component_dirs = {name: root / "resources" / name for name in components.NAMES}
+    python = component_dirs["python"] / "python.exe"
     if not python.is_file():
         print(f"[verify] runtime ausente: {python}", file=sys.stderr)
         return 1
+    # Com manifesto, uma cópia dentro de resources/ voltaria a pesar em cada atualização.
+    legacy_inside = sorted(name for name in components.NAMES if (root / "resources" / name).exists()
+                           and component_dirs[name] != root / "resources" / name)
+    trees = [root / "resources", *component_dirs.values()]
     evidence.mkdir(parents=True, exist_ok=True)
     # Diretório próprio, com espaços e acentos, como pede o aceite.
     user_data = evidence / "dados do testador çã"
@@ -223,14 +238,16 @@ def main() -> int:
         shutil.rmtree(user_data)
     user_data.mkdir(parents=True)
 
-    before = _snapshot(root / "resources")
-    pre_generated = _pre_generated_wrappers(root / "resources")
+    before = {k: v for tree in trees for k, v in _snapshot(tree).items()}
+    pre_generated = [p for tree in trees for p in _pre_generated_wrappers(tree)]
     report: dict[str, object] = {"unpacked_root": str(root), "python": str(python),
+                                 "components": {k: str(v) for k, v in component_dirs.items()},
+                                 "components_inside_resources": legacy_inside,
                                  "user_data": str(user_data),
                                  "pre_generated_wrappers": pre_generated[:20],
                                  "pre_generated_wrappers_total": len(pre_generated)}
 
-    bridge = _run_bridge(app_root, python, user_data)
+    bridge = _run_bridge(app_root, python, component_dirs["voice"], user_data)
     report["bridge"] = {k: v for k, v in bridge.items() if k not in {"stdout"}}
     report["bridge_messages"] = [m.get("type") for m in bridge["messages"]]
     report["bridge_ready"] = any(m.get("type") == "session.ready" for m in bridge["messages"])
@@ -240,7 +257,7 @@ def main() -> int:
     report["database"] = _inspect_database(user_data / ".local" / "memory.sqlite3")
     report['voice'] = {name: next((m.get('payload', {}) for m in bridge['messages'] if m.get('id') == name), {})
                        for name in ('voice_out', 'voice_in')}
-    report['voice_assets_valid'] = _voice_assets_valid(root / 'resources/voice')
+    report['voice_assets_valid'] = _voice_assets_valid(component_dirs['voice'])
 
     # O worker fica por último de propósito: é o caminho que importa `vendor/UFO` e a pilha de
     # UIA, onde os wrappers COM eram gravados. Com o snapshot antigo (antes do worker) o PASS de
@@ -248,7 +265,7 @@ def main() -> int:
     worker = _run_worker(app_root, python, user_data)
     report["worker"] = worker
 
-    drift = _resource_drift(before, _snapshot(root / "resources"))
+    drift = _resource_drift(before, {k: v for tree in trees for k, v in _snapshot(tree).items()})
     report["resources_drift"] = {name: paths[:20] for name, paths in drift.items()}
     report["resources_drift_totals"] = {name: len(paths) for name, paths in drift.items()}
 
@@ -266,10 +283,12 @@ def main() -> int:
         "worker_rc": worker["rc"],
         'voice_available': {name: value.get('available') for name, value in report['voice'].items()},
         'voice_assets_valid': report['voice_assets_valid'],
+        'components_inside_resources': legacy_inside,
     }, indent=2, ensure_ascii=False))
 
     ok = (
-        report["bridge_ready"] is True
+        not legacy_inside
+        and report["bridge_ready"] is True
         and bridge["rc"] == 0
         and not pre_generated
         and all(not paths for paths in drift.values())

@@ -6,7 +6,11 @@ A Lunmi procura atualizações 30 segundos após abrir e a cada seis horas. Baix
 
 ## Distribuição e confiança
 
-Cada publicação produz um setup completo. O NSIS tenta baixar apenas blocos alterados com os blockmaps; sem cache ou download parcial disponível, baixa o setup completo. O tamanho depende das alterações, especialmente no Python. A instalação substitui o pacote completo e pode demorar vários minutos com a Lunmi fechada. Não copia ficheiros diretamente de `main`.
+Cada publicação produz um setup completo. O NSIS tenta baixar apenas blocos alterados com os blockmaps; sem cache ou download parcial disponível, baixa o setup completo. Não copia ficheiros diretamente de `main`.
+
+Desde o Alpha 6, o Python e a voz são componentes fora da pasta da aplicação, em `<pasta de instalação>-runtime\<nome>-<chave>`. A chave é o hash do conteúdo. O instalador só extrai um componente quando a chave muda, e fá-lo antes de remover a versão anterior: falta de espaço ou um arquivo danificado param a instalação com a versão anterior intacta, que volta a abrir. A extração usa o `7za.exe` incluído no instalador, que confere o CRC de cada ficheiro; só uma extração sem erros recebe o marcador `.lunmi-complete`. A verificação de espaço conta, no volume de instalação, os componentes em falta, o arquivo em extração e a aplicação, e confere também o volume temporário. Uma atualização sem mudanças no Python ou na voz substitui apenas a aplicação. No fim, o instalador remove as versões de componentes que já não usa. A desinstalação remove a pasta `-runtime`; os dados pessoais continuam fora dela.
+
+As atualizações mostram a janela de progresso do instalador, mesmo quando a versão anterior o lança em modo silencioso, e a Lunmi abre sozinha no fim. A primeira atualização para o Alpha 6 ainda substitui todos os ficheiros antigos e demora mais. Os diagnósticos do atualizador ficam em `%LOCALAPPDATA%\Lunmi\logs\updater.log`.
 
 A origem de produção é `MateusCosta888/Lunmi`, em GitHub Releases, sem token no aplicativo. Alpha pode avançar para beta e estável; estável não recebe pré-lançamentos. Não há downgrade ou rollback automático.
 
@@ -30,7 +34,7 @@ Conserva setups e blockmaps antigos. Corrige problemas com uma versão superior.
 
 ## Build local e testes
 
-Num checkout de release novo: instala as dependências de desenvolvimento, executa `install_ufo.py`, `npm ci` em `desktop`, `desktop/scripts/fetch_runtime.py`, `desktop/scripts/fetch_voice.py` e `desktop/scripts/assemble_resources.py`. Executa os testes, `npm run dist -- --publish never`, `verify_installer_defaults.py`, `verify_package.py` e `audit_payload.py` antes de assinar. O setup completo desde o Alpha 5 inclui os recursos de voz CPU; os modelos são obtidos de revisões públicas fixas e conferidos por SHA-256. Nunca copies o ambiente de desenvolvimento ou dados pessoais para o pacote.
+Num checkout de release novo: instala as dependências de desenvolvimento, executa `install_ufo.py`, `npm ci` em `desktop`, `desktop/scripts/fetch_runtime.py`, `desktop/scripts/fetch_voice.py`, `desktop/scripts/assemble_resources.py` e `desktop/scripts/components.py pack`. Este último cria os arquivos dos componentes, o include NSIS e o manifesto `lunmi-components.json`. Recusa ultrapassar o limite de 2 GiB do NSIS. Executa os testes, `npm run dist -- --publish never`, `verify_installer_defaults.py`, `verify_package.py` e `audit_payload.py` antes de assinar. `verify_installer_defaults.py` compila os hooks NSIS reais e exercita a extração, a reutilização e a limpeza de componentes. `verify_package.py` extrai os componentes ao lado de `win-unpacked`, como o instalador, e confere as chaves. O setup completo desde o Alpha 5 inclui os recursos de voz CPU; os modelos são obtidos de revisões públicas fixas e conferidos por SHA-256. Nunca copies o ambiente de desenvolvimento ou dados pessoais para o pacote.
 
 Define **LUNMI_UPDATE_PRIVATE_KEY_FILE** com o caminho externo do PEM e executa `node desktop/scripts/update-release.mjs`. Apenas descritor e assinatura são escritos em `desktop/release`. O PEM nunca deve entrar nessa pasta.
 

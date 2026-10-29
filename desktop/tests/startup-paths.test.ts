@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as path from "path";
 import * as fs from "fs";
 vi.mock("fs", { spy: true });
-import { resolvePythonExecutable } from "../electron/backend";
+import { componentDir, resolvePythonExecutable } from "../electron/backend";
 
 const runtime = vi.hoisted(() => ({
   isPackaged: true,
@@ -57,6 +57,24 @@ describe("startup paths for branded development and installed builds", () => {
     expect(resolvePythonExecutable(getRepoRoot(), getResourcesRoot()))
       .toBe(path.join(process.resourcesPath, "python", "python.exe"));
     expect(getUserDataRoot()).toBe(path.resolve("tester-data", "Lunmi"));
+  });
+
+  it("runs Python and voice from the component folder beside the installation", () => {
+    launch(undefined);
+    const resources = process.resourcesPath;
+    const manifest = path.join(resources, "lunmi-components.json");
+    const keys = { python: "0123456789abcdef", voice: "fedcba9876543210" };
+    vi.mocked(fs.readFileSync).mockImplementation(((file: fs.PathOrFileDescriptor) => {
+      if (file === manifest) return JSON.stringify(keys);
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    }) as typeof fs.readFileSync);
+    const runtimeRoot = `${path.dirname(resources)}-runtime`;
+    expect(resolvePythonExecutable(getRepoRoot(), resources))
+      .toBe(path.join(runtimeRoot, `python-${keys.python}`, "python.exe"));
+    expect(componentDir(resources, "voice")).toBe(path.join(runtimeRoot, `voice-${keys.voice}`));
+    // A key that is not the 16-hex content hash never becomes part of a path.
+    keys.voice = "..\\..\\elsewhere";
+    expect(componentDir(resources, "voice")).toBe(path.join(resources, "voice"));
   });
 
   it("keeps ordinary Electron development and explicit data overrides working", () => {
