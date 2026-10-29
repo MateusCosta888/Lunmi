@@ -19,7 +19,7 @@ Siga o [README](README.md#rodar-pelo-código-fonte), com Python 3.11 e Node.js 2
 .\.venv\Scripts\python.exe -m ruff check app tests
 
 cd desktop
-npm ci
+npm ci --include=dev
 npm run typecheck
 npm test
 npm run build

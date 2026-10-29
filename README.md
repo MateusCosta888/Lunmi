@@ -147,12 +147,14 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe install_ufo.py
 
 cd desktop
-npm ci
+npm ci --include=dev
 npm run build
 cd ..
 
 .\run.bat
 ```
+
+O `--include=dev` garante as ferramentas de build e teste (TypeScript, Vitest) mesmo numa máquina com `NODE_ENV=production`, que faria o npm pular essas dependências.
 
 O build cria `desktop/.runtime/Lunmi.exe`, com o nome e o ícone da Lunmi, que o `run.bat` abre. Ele depende deste checkout e não mexe no Electron instalado; não é um instalador nem um executável portátil.
 
