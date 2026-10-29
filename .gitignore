@@ -69,6 +69,7 @@
 !/docs/assets/lunmi-dark.png
 !/docs/assets/lunmi-light.png
 !/docs/assets/lunmi-brain.png
+!/docs/assets/lunmi-onboarding.png
 
 # Product regression tests; historical live-acceptance harnesses stay local.
 /tests/*
