@@ -1,6 +1,6 @@
 # Contribuir com a Lunmi
 
-Siga o [README](README.md#começar), com Python 3.11 e Node.js 24. Instale ferramentas de desenvolvimento com `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`.
+Siga o [README](README.md#rodar-pelo-código-fonte), com Python 3.11 e Node.js 24. Instale ferramentas de desenvolvimento com `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`.
 
 ## Alterações
 
