@@ -10,6 +10,9 @@ export function useVisualActivity() {
     const visibility = () => setVisible(!document.hidden);
     media?.addEventListener("change", preference);
     document.addEventListener("visibilitychange", visibility);
+    // A change between the first render and this effect has no listener yet: resync once.
+    preference();
+    visibility();
     return () => {
       media?.removeEventListener("change", preference);
       document.removeEventListener("visibilitychange", visibility);
