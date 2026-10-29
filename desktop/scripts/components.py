@@ -62,7 +62,11 @@ def seven_zip() -> str:
     found = subprocess.run(
         ["node", "-e", "require('app-builder-lib/out/toolsets/7zip').getPath7za().then(p=>console.log(p))"],
         cwd=REPO / "desktop", capture_output=True, text=True, check=True)
-    return found.stdout.strip()
+    # Com o cache vazio (CI) o download escreve progresso antes; o caminho é a última linha.
+    path = found.stdout.strip().splitlines()[-1].strip()
+    if not Path(path).is_file():
+        raise SystemExit(f"7za não encontrado: {path!r}")
+    return path
 
 
 def _rmtree(path: Path) -> None:
