@@ -68,6 +68,8 @@ MESSAGES = {
     "timeout": "A pesquisa demorou demasiado; nenhuma resposta foi concluída.",
     "blocked": "Esse endereço não é público ou não é permitido nesta versão.",
     "failed": "Não consegui concluir a pesquisa web.",
+    "rate_limited": ("A pesquisa foi feita, mas o cérebro atingiu um limite de uso. O Groq gratuito "
+                     "limita tokens por minuto e por dia; tenta de novo mais tarde."),
     "not_verified": (
         "Não foi possível confirmar a resposta com as fontes desta consulta; "
         "o texto apresentado não está verificado."

@@ -111,7 +111,7 @@ def test_automatic_deep_question_reads_four_candidates_in_one_batch(tmp_path):
 
 
 def test_quick_definition_still_uses_sufficient_excerpts_without_fetching(tmp_path):
-    harness = _ManagerHarness(tmp_path)
+    harness = _ManagerHarness(tmp_path, mode='quick')
     harness.client.answers['search'] = _useful_snippets()
 
     def forbidden(_arguments: dict[str, Any]) -> Any:

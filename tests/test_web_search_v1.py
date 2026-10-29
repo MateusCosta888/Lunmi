@@ -164,9 +164,16 @@ def test_web_state_payloads_are_closed_and_web_get_never_starts_the_runtime(tmp_
     asyncio.run(scenario())
 
 
-def test_quick_and_auto_return_useful_snippets_without_fetching(tmp_path: Path) -> None:
+def test_only_explicit_quick_returns_useful_snippets_without_fetching(tmp_path: Path) -> None:
     async def scenario() -> None:
-        for mode in ("quick", "auto"):
+        auto = _ManagerHarness(tmp_path / "auto")
+        auto.client.answers["search"] = _useful_snippets()
+        result = await auto.manager.run("web.search", {"query": "python asyncio"})
+        # Em `auto` um resumo do motor não basta: pelo menos uma página é aberta.
+        assert any(name == "fetch_batch" for name, _ in auto.client.calls)
+        assert not any("snippets only" in warning for warning in result.warnings)
+        await auto.manager.close()
+        for mode in ("quick",):
             harness = _ManagerHarness(tmp_path / mode, mode=mode)
             harness.client.answers["search"] = _useful_snippets()
 

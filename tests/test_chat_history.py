@@ -308,3 +308,22 @@ def test_backend_authority_context_two_conversations_failure_and_restart(tmp_pat
         assert len(svc.controller.turns.pairs(svc.controller.session_id)) <= 6
     finally:
         svc.close()
+
+
+def test_general_knowledge_reply_with_sensitive_words_is_kept(tmp_path):
+    """Uma resposta pública com "saúde"/"religião" não é dado do utilizador; segredos continuam fora."""
+    h = ChatHistory(tmp_path / 'chat.sqlite3')
+    web = {'sources': [{'id': 'src-1', 'title': 'Vaticano', 'url': 'https://www.vatican.va/'}]}
+    turn(h, 'pope', user='pesquisa o atual papa',
+         answer='O papa Francisco morreu em 2025 após problemas de saúde; Leão XIV lidera a religião católica.',
+         **web)
+    turn(h, 'leak', user='quem é o atual papa?', answer='Leão XIV. password: private_value', **web)
+    # Resposta sem pesquisa a uma pergunta neutra pode ecoar o perfil de memória.
+    turn(h, 'profile', user='o que devo comer hoje?', answer='Com o teu diagnóstico de diabetes, evita açúcar.')
+    turn(h, 'echo', user='diagnóstico de saúde pessoal', answer='Sobre o teu diagnóstico de saúde: repousa.')
+    data = json.dumps(h.store.read(h.active['id']), ensure_ascii=False)
+    assert 'problemas de saúde' in data and 'Leão XIV lidera' in data
+    assert 'private_value' not in data
+    # Pergunta sensível ou resposta fora da web: o filtro completo continua.
+    assert 'teu diagnóstico' not in data and 'diabetes' not in data
+    h.store.close()

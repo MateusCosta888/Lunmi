@@ -43,6 +43,7 @@ from app.computer.prompt_budget import APP_PROMPT_BUDGET, check_prompt
 from app.computer.ufo_engine import (WORKER_STARTUP_SECONDS, ComputerError, UFOEngine,
                                      WorkerTransportError, verify_open)
 from app.llm import Completion, Plan
+from app.core import query_rewrite
 from app.core.public_text import (WebCitationStream, public_prefix, unverified_action_claim,
                                   web_answer_admits_insufficiency, web_public_text,
                                   web_synthesis_text)
@@ -143,7 +144,11 @@ def _backend_clock_line() -> str:
     return (
         f'Backend current date/time (UTC): {moment:%Y-%m-%d %H:%M}. '
         "This is the authoritative 'today' for the answer; never take the current date "
-        'from training data, memory, or the wording of a source.'
+        'from training data, memory, or the wording of a source. '
+        'Training data is outdated: for current office holders, the latest items of a list or '
+        'recent events, answer from the most recent dated source, and never present an older '
+        'list as current. An older source that differs from a newer one is outdated, not a '
+        'conflict: give the newer answer plainly instead of refusing to answer.'
     )
 
 # One vocabulary for "why did this task not end in verified success" (FASE 1, spec §32).
@@ -321,6 +326,8 @@ _STRUCTURAL_TEXT_FIELDS = frozenset({
     "sha256", "file_sha256", "source_sha256", "destination_sha256",
 })
 NOT_STORED = "[not stored]"
+# Respostas antigas no prompt da conversa (a última vai inteira).
+OLD_TURN_CHARS = 600
 
 
 def _is_structural_text(field_name: str, value: str) -> bool:
@@ -1675,6 +1682,35 @@ class TaskController:
         return ''.join(char for char in unicodedata.normalize('NFD', str(text).casefold())
                        if not unicodedata.combining(char))
 
+    async def _contextual_web_operation(self, operation: dict[str, Any],
+                                        deadline_remaining: Callable[[], float]) -> dict[str, Any]:
+        """"pesquisa como funciona o mecanismo" -> query autónoma com o assunto da conversa.
+
+        Só para a query literal de um pedido direto, curta e sem nome próprio, numa conversa em
+        curso. A reescrita só é aceite se cada palavra vier do utilizador (`query_rewrite`); em
+        falha ou timeout segue a query original.
+        """
+        args = operation.get('args') or {}
+        query = str(args.get('query') or '')
+        if operation.get('name') != 'web.search' or not query:
+            return operation
+        previous = [str(user or '') for user, _ in self.turns.pairs(self.session_id)[-3:]]
+        if not query_rewrite.needs_context(query, previous):
+            return operation
+        try:
+            if self.brain is None:
+                self.brain = resolve_brain(self.settings)
+            completion = await asyncio.wait_for(
+                self.brain.complete(query_rewrite.rewrite_messages(query, previous)),
+                timeout=max(0.1, min(4.0, deadline_remaining() - 5.0)))
+            rewritten = query_rewrite.accept_rewrite(
+                query_rewrite.parse_rewrite(completion.text), query, previous)
+        except Exception:  # noqa: BLE001 - a query original continua válida
+            return operation
+        if not rewritten:
+            return operation
+        return {**operation, 'args': {**args, 'query': rewritten}}
+
     def _web_followup_context(self, instruction: str) -> str:
         """Sujeito curto já conhecido na `TurnWindow` para uma pergunta de seguimento.
 
@@ -2165,7 +2201,9 @@ class TaskController:
             result.web_outcome = 'FAILED'
             result.status = 'FAILED'
             result.failure_kind = classify_failure_kind(exc)
-            result.message = WEB_MESSAGES['failed']
+            # Limite por minuto do fornecedor: a pesquisa correu, falta só a resposta; dizê-lo.
+            result.message = (WEB_MESSAGES['rate_limited'] if exc.kind is ErrorKind.RATE_LIMITED
+                              else WEB_MESSAGES['failed'])
             result.evidence_status, result.request_status = 'insufficient', 'unmet'
             operation_event('operation.finished', {**state, 'state': 'failed_no_effect',
                                                    'verified': False,
@@ -2574,6 +2612,8 @@ class TaskController:
         started = time.perf_counter()
         memory_context = ""
         initial_operation: dict[str, Any] | None = None
+        # Só a query literal de um pedido direto é reescrita; a escolhida pelo Brain já tem contexto.
+        contextual_query = False
         private_spotify_search = False
         # WEB-SEARCH-ORIGIN-V1: a origem é congelada ANTES de qualquer await/decisão.
         # `web_forbidden` é uma recusa explícita: nenhuma tool JSON web pode ser executada,
@@ -2805,6 +2845,7 @@ class TaskController:
                     instruction, context=followup_context)
                 if initial_operation is not None:
                     private_web = True
+                    contextual_query = True
             if initial_operation is None and (conversation or (automatic and direct is None)):
                 result.scope = "conversation"
                 async with asyncio.timeout(deadline_remaining()):
@@ -2839,6 +2880,9 @@ class TaskController:
                             # O caminho conversacional sem web também recebe a política de
                             # concisão; o prompt nativo já a inclui na própria constante.
                             system_prompt += _PROPORTIONAL_ANSWER_GUIDANCE
+                        if lunmi_ready and not (web_origin == "provider" and web_intent):
+                            # Sem a data, o modelo julga "atual" pela data do treino e não pesquisa.
+                            system_prompt += '\n' + _backend_clock_line()
                         if source_decision:
                             system_prompt += (
                                 ' This request requires external page evidence. This first call is only '
@@ -2873,7 +2917,11 @@ class TaskController:
                             messages.append({'role': 'system', 'content': memory_context})
                         if profile_context:
                             messages.append({'role': 'system', 'content': profile_context})
-                        for user_turn, assistant_turn in pairs:
+                        for index, (user_turn, assistant_turn) in enumerate(pairs):
+                            # Só a última resposta vai inteira: as antigas dão o assunto, e
+                            # o texto completo de todas estourava o limite por minuto do Groq.
+                            if index < len(pairs) - 1 and len(assistant_turn) > OLD_TURN_CHARS:
+                                assistant_turn = assistant_turn[:OLD_TURN_CHARS] + '…'
                             messages.append({'role': 'user', 'content': 'Utilizador (turno anterior): ' + user_turn})
                             messages.append({'role': 'assistant', 'content': 'Lunmi (turno anterior): ' + assistant_turn})
                         if attachment_block:
@@ -3028,7 +3076,17 @@ class TaskController:
                     else:
                         result.message = 'A pesquisa web está desligada nas definições. Nada foi consultado.'
                     return result
-                return await self._run_lunmi_attempt(initial_operation, instruction, result,
+                web_instruction = instruction
+                if contextual_query:
+                    original = str((initial_operation.get('args') or {}).get('query') or '')
+                    initial_operation = await self._contextual_web_operation(
+                        initial_operation, deadline_remaining)
+                    rewritten = str((initial_operation.get('args') or {}).get('query') or '')
+                    if rewritten and rewritten != original:
+                        # A síntese responde ao pedido interpretado, não ao "mequanismo" literal.
+                        web_instruction = (f'{instruction}\n(Pedido interpretado com o contexto da '
+                                           f'conversa: {rewritten})')
+                return await self._run_lunmi_attempt(initial_operation, web_instruction, result,
                                                      operation_event, deadline_remaining,
                                                      ensure_deadline)
             if initial_operation is None:
@@ -3565,9 +3623,14 @@ class TaskController:
             self.active = False
             self.current_task = None
             # Even opt-in diagnostic logs must not retain attachment-derived content.
-            self._record(result, instruction, attachment_turn=bool(attachments),
-                         private_email=private_email, private_spotify=private_spotify_search,
-                         private_web=private_web)
+            try:
+                self._record(result, instruction, attachment_turn=bool(attachments),
+                             private_email=private_email, private_spotify=private_spotify_search,
+                             private_web=private_web)
+            except OSError as exc:
+                # Optional diagnostics must not replace an already completed task result.
+                logging.warning("Task %s: diagnostic log not written (%s)",
+                                result.task_id, type(exc).__name__)
             self.on_state({"SUCCESS": "Completed", "FAILED": "Failed",
                            "NOT_VERIFIED": "Failed", "CANCELLED": "Cancelled"}[result.status])
         return result

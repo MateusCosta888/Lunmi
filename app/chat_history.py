@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from app.memory.contracts import now
-from app.memory.policy import MemoryPolicyError, identifier, normalized, safe_chat_text, safe_text
+from app.memory.policy import MemoryPolicyError, identifier, normalized, safe_chat_text, safe_document, safe_text
 from app.memory.store import fts_query
 
 PAGE_SIZE = 50
@@ -24,6 +24,19 @@ def public_text(text: str) -> str:
     try:
         # Preserve paragraphs/code; reuse the same secret/private-content boundary as the profile.
         safe_chat_text(text)
+        return text
+    except MemoryPolicyError:
+        return PRIVATE
+
+
+def public_reply(text: str) -> str:
+    """Resposta a uma pergunta não sensível: só segredos/dados privados a bloqueiam.
+
+    "saúde" ou "religião" numa resposta de conhecimento geral ("o papa morreu após problemas de
+    saúde") não são dados do utilizador; o filtro sensível completo fica para as mensagens dele.
+    """
+    try:
+        safe_document(text, maximum=32000)
         return text
     except MemoryPolicyError:
         return PRIVATE
@@ -282,19 +295,22 @@ class ChatHistory:
         self.active['messages'].append(message)
         self.active['updated_at'] = message['created_at']
         if saved and self.store:
-            text = PRIVATE if attachments else public_text(message['text'])
+            user = next((m for m in self.active['messages'] if m['task_id'] == message['task_id']
+                         and m['role'] == 'user'), None)
+            safe_user = bool(user and public_text(user['text']) != PRIVATE)
+            # Só uma resposta web (feita de páginas públicas, sem perfil de memória) usa o filtro
+            # leve; uma resposta normal pode repetir dados pessoais do perfil ou da pergunta.
+            check = public_reply if safe_user and message.get('sources') else public_text
+            text = PRIVATE if attachments else check(message['text'])
             metadata = {**message, 'text': text}
             if attachments or text == PRIVATE:
                 metadata.pop('sources', None)
             try:
                 # Validate all metadata too: a URL/title/filename can contain a secret.
-                if public_text(json.dumps(metadata, ensure_ascii=False)) == PRIVATE:
+                if check(json.dumps(metadata, ensure_ascii=False)) == PRIVATE:
                     metadata = {k: v for k, v in metadata.items() if k in
                                 {'message_id', 'conversation_id', 'task_id', 'role', 'created_at', 'state'}}
                     metadata['text'] = PRIVATE
-                user = next((m for m in self.active['messages'] if m['task_id'] == message['task_id']
-                             and m['role'] == 'user'), None)
-                safe_user = bool(user and public_text(user['text']) != PRIVATE)
                 with self.store.transaction():
                     self.store.append(metadata, eligible=eligible and metadata['text'] != PRIVATE
                                       and not attachments and safe_user)

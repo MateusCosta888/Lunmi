@@ -539,3 +539,34 @@ def test_codex_explicit_effort_uses_confirmed_model_capabilities_not_a_global_sc
         assert failure.value.code == "configuration"
 
     asyncio.run(scenario())
+
+
+def test_stream_waits_once_for_a_short_rate_limit_before_any_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O 429 chega antes de qualquer evento: esperar e repetir não duplica texto já mostrado."""
+    import app.llm as llm
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(llm.asyncio, "sleep", fake_sleep)
+
+    async def scenario() -> None:
+        brain = ApiBrain(Settings(provider="openai", model="fixture", api_key="PRIVATE_KEY"))
+        await brain._provider.client.aclose()
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(429, headers={"retry-after": "1"})
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Bytes(openai_frames()))
+
+        brain._provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        events = [event async for event in brain.stream([{"role": "user", "content": "oi"}])]
+        texts = [event.data["text"] for event in events if event.kind == EventKind.TEXT_DELTA]
+        assert texts == ["Olá ", "🌙"] and calls["n"] == 2 and waits == [1.5]
+        assert events[-1].kind == EventKind.COMPLETED
+        await brain.close()
+
+    asyncio.run(scenario())

@@ -46,12 +46,23 @@ AUTO_PROMPT = (
     + CONVERSATION_PROMPT[CONVERSATION_PROMPT.index('Optional memory_changes'):]
 )
 
+# O Brain decide quando pesquisar: a regra é "pode ter mudado ou não tens a certeza",
+# não uma lista de palavras. A data do backend entra no prompt (controller).
+_WEB_WHEN = (
+    'Use web when the user asks to search or gives a URL, and whenever the answer depends on '
+    'facts that may have changed after your training data or that you are not sure of: who '
+    'currently holds a role or office, recent or upcoming events, results, prices, rates, '
+    'versions, releases, statistics, schedules, news, and specific facts about lesser-known '
+    'people, companies, products or places. Answer directly, without web, for explanations of '
+    'general concepts, definitions, math, writing, translation, advice, opinions, small talk '
+    'and well-established facts you are certain have not changed. When unsure whether a fact '
+    'changed, search; never reply that you lack current information, search instead. '
+)
+
 WEB_PROMPT = (
     'Web tools (read-only, keyless, public web): web.search(query), web.open(url), '
-    'web.research(query). Use them when the user explicitly asks to search/read a URL, or '
-    'when the answer needs current public information; never for a simple question or a '
-    'desktop instruction. For an ordinary current or technical question choose web.search: '
-    'the backend performs the verified page reads. Choose web.research only when the user '
+    'web.research(query). ' + _WEB_WHEN + 'Never use web for a desktop instruction. '
+    'For an ordinary current or technical question choose web.search: the backend performs the verified page reads. Choose web.research only when the user '
     'explicitly asks for an in-depth investigation or comparison, because snippets alone '
     'are not reading the page. Questions asking for the methodology, results or '
     'limitations of a study, exact scientific numbers or a site-specific ranking need the '
@@ -70,9 +81,8 @@ WEB_CONVERSATION_PROMPT = (
     '"message":["your conversational answer"],"memory_changes":[]}. '
     'For a web tool return {"kind":"tool","operation":{"name":"web.search|web.open|web.research",'
     '"args":{}},"finish":false}. Args are exactly web.search{query}, web.open{url}, '
-    'web.research{query}. Use web only when the current request explicitly asks to search or '
-    'read a public URL, or needs current public information; never for a simple question you '
-    'can answer. Questions asking for the methodology, results or limitations of a '
+    'web.research{query}. ' + _WEB_WHEN
+    + 'Questions asking for the methodology, results or limitations of a '
     'study, exact scientific numbers or a site-specific ranking need the page read: '
     'choose web.search, not memory. If the user asked to search, choose the tool now instead of asking for '
     'confirmation. After a tool result the application asks for a final answer only; never '
@@ -296,7 +306,23 @@ def _fresh_web_question(instruction: str) -> bool:
     temporal = re.search(r'\b(?:hoje|agora|atual|atualmente|recente|ultima|ultimo|proximo|proxima)\b', text)
     news = re.search(r'\b(?:aconteceu|noticias|novidades|votacao|eleicoes)\b', text)
     fx_quote = _currency_quote_question(text)
-    return bool(price or bitcoin or fx_quote or (temporal and (version or news)))
+    # Uma pergunta sobre o presente ("quem é o atual papa", "qual o preço hoje") ou sobre o
+    # acontecimento mais recente ("último jogo", "últimos papas") muda com o tempo: a memória
+    # do modelo responde com dados antigos, por isso pesquisa.
+    present = (_PRESENT_QUESTION.search(text)
+               and re.search(r'\b(?:atual|atuais|atualmente|hoje|agora|neste momento)\b', text))
+    # Pedidos que exigem página (ranking, fonte, estudo) continuam no Brain, que foca a query.
+    recent = (present or _LATEST_EVENT.search(text)) and not _requires_page_evidence(instruction)
+    return bool(price or bitcoin or fx_quote or (temporal and (version or news)) or recent)
+
+
+_PRESENT_QUESTION = re.compile(
+    r'^(?:quem|qual|quais|quando|quanto|quantos|quantas|onde|como (?:esta|estao|anda|andam)|'
+    r'o que (?:aconteceu|esta)|ja)\b|\?\s*$')
+_LATEST_EVENT = re.compile(
+    r'\b(?:ultim[oa]s?|mais recentes?)\s+(?:\w+\s+){0,2}?'
+    r'(?:jogos?|partidas?|resultados?|placar|eleic\w*|campeo\w*|vencedor\w*|ganhador\w*|'
+    r'lancamentos?|episodios?|temporadas?|albuns?|album|papas?|presidentes?|noticias?)\b')
 
 
 def web_requested(instruction: str) -> bool:

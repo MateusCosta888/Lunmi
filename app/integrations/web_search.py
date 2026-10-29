@@ -240,7 +240,7 @@ def _source_from_result(result: dict[str, Any], *, retrieved_at: str,
         else retrieved_at,
         "read": read,
         "truncated": bool(doc.get("truncated") is True),
-        "cached": bool(doc.get("method") == "cache"),
+        "cached": _stale_cache(doc),
     }
 
 
@@ -260,8 +260,20 @@ def _document(result: dict[str, Any], source: dict[str, Any], *, quote: bool = F
         "published_at": _iso(result.get("published_date")),
         "retrieved_at": result.get("retrieved_at") if isinstance(result.get("retrieved_at"), str)
         else source["retrieved_at"],
-        "cached": bool(result.get("method") == "cache"),
+        "cached": _stale_cache(result),
     }
+
+
+# Uma cópia em cache baixada há minutos é tão atual como uma leitura nova; só uma
+# cópia com mais de um dia deixa de provar um valor atual.
+CACHE_FRESH_SECONDS = 24 * 60 * 60
+
+
+def _stale_cache(item: dict[str, Any]) -> bool:
+    if item.get("method") != "cache":
+        return False
+    age = item.get("cache_age_seconds")
+    return type(age) is not int or age > CACHE_FRESH_SECONDS
 
 
 def _snippets_sufficient(sources: list[dict[str, Any]]) -> bool:
@@ -301,7 +313,9 @@ def _read_candidates(policy: WebConstraints, mode: str, query: str) -> int:
     if mode == 'quick':
         return QUICK_READS
     if requested_attribute(query):
-        return DEEP_READS if mode == 'deep' else QUICK_READS
+        # Pára na primeira página atual (`_enough_evidence`); o teto só pesa quando as
+        # primeiras são antigas (ex.: artigo de 2016 sobre o papa à frente da Wikipédia).
+        return QUICK_READS if mode == 'quick' else AUTO_DEEP_READS
     if policy.freshness:
         # Janela temporal: lê um a um e pára na primeira página com data válida;
         # o filtro de frescura continua a decidir a lista final de fontes.
@@ -414,6 +428,8 @@ class MCPWebClient:
         self._queue: asyncio.Queue[Any] | None = None
         self._owner: asyncio.Task[Any] | None = None
         self._ready: concurrent.futures.Future[Any] | None = None
+        self._lifecycle_lock = threading.Lock()
+        self._closing = False
 
     @property
     def started(self) -> bool:
@@ -427,14 +443,18 @@ class MCPWebClient:
         await asyncio.to_thread(self._start_blocking)
 
     def _start_blocking(self) -> None:
-        if self.started:
-            return
-        ready: concurrent.futures.Future[Any] = concurrent.futures.Future()
-        self._ready = ready
-        thread = threading.Thread(target=self._run_thread, args=(ready,),
-                                  name="lunmi-web-mcp", daemon=True)
-        self._thread = thread
-        thread.start()
+        # A queued start cannot create a worker after a concurrent close.
+        with self._lifecycle_lock:
+            if self._closing:
+                raise WebSearchError("failed")
+            if self.started:
+                return
+            ready: concurrent.futures.Future[Any] = concurrent.futures.Future()
+            self._ready = ready
+            thread = threading.Thread(target=self._run_thread, args=(ready,),
+                                      name="lunmi-web-mcp", daemon=True)
+            self._thread = thread
+            thread.start()
         try:
             ready.result(timeout=self.init_timeout + 3.0)
         except concurrent.futures.TimeoutError:
@@ -448,7 +468,6 @@ class MCPWebClient:
     def _run_thread(self, ready: concurrent.futures.Future[Any]) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        self._thread_loop = loop
         try:
             loop.run_until_complete(self._serve(ready))
         except asyncio.CancelledError:
@@ -474,8 +493,15 @@ class MCPWebClient:
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
         queue: asyncio.Queue[Any] = asyncio.Queue()
-        self._queue = queue
-        self._owner = asyncio.current_task()
+        # Publish the complete owner atomically with close; a delayed thread cannot reopen it.
+        with self._lifecycle_lock:
+            if self._closing:
+                if not ready.done():
+                    ready.set_exception(WebSearchError("failed"))
+                return
+            self._thread_loop = asyncio.get_running_loop()
+            self._queue = queue
+            self._owner = asyncio.current_task()
         env, work = _worker_environment(self.environment)
         params = StdioServerParameters(
             command=str(self.environment.python),
@@ -576,7 +602,9 @@ class MCPWebClient:
         await asyncio.to_thread(self._close_blocking)
 
     def _close_blocking(self) -> None:
-        loop, queue, thread = self._thread_loop, self._queue, self._thread
+        with self._lifecycle_lock:
+            self._closing = True
+            loop, queue, thread = self._thread_loop, self._queue, self._thread
         if loop is not None and queue is not None:
             try:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
@@ -664,7 +692,7 @@ def _merge_documents(sources: list[dict[str, Any]], payload: Any, *, quote: bool
             continue
         source["read"] = True
         source["truncated"] = document["truncated"]
-        source["cached"] = bool(item.get("method") == "cache")
+        source["cached"] = _stale_cache(item)
         source["retrieved_at"] = document["retrieved_at"]
         if document.get("title") and document["title"] != source["url"]:
             source["title"] = _clean(document["title"], MAX_TITLE)
@@ -686,7 +714,7 @@ def _open_source(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
         return [source], []
     source["read"] = True
     source["truncated"] = document["truncated"]
-    source["cached"] = bool(payload.get("method") == "cache")
+    source["cached"] = _stale_cache(payload)
     source["retrieved_at"] = document["retrieved_at"]
     source["snippet"] = _clean(document["content"], MAX_SNIPPET)
     if document.get("published_at"):
@@ -774,8 +802,12 @@ class WebSearchManager:
             return self._client
         await self._close_client()
         client = self._client_factory(env)
-        await client.start()
         self._client = client
+        try:
+            await client.start()
+        except BaseException:
+            await self._close_client()
+            raise
         return client
 
     async def close(self) -> None:
@@ -862,9 +894,9 @@ class WebSearchManager:
         sources = rank_sources(query, sources, policy)
         warnings = _warnings(payload if isinstance(payload, dict) else {})
         documents: list[dict[str, Any]] = []
-        # O atalho de excertos é só para perguntas quick que não exigem fonte; uma
-        # pergunta verified/deep lê páginas mesmo com excertos longos.
-        snippets_only = bool(sources and mode != "deep" and policy.depth == "quick"
+        # O atalho de excertos é só para o modo rápido escolhido pelo utilizador; em `auto`
+        # um resumo de motor de busca não basta para afirmar um facto, por isso lê páginas.
+        snippets_only = bool(sources and mode == "quick" and policy.depth == "quick"
                              and not policy.read_required
                              and all(policy.dated(source) for source in sources)
                              and _snippets_sufficient(sources))
