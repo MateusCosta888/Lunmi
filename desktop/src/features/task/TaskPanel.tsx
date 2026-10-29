@@ -6,23 +6,23 @@
  * Tokens usam a proveniência de `token_usage` (complete/partial/unavailable); chamadas de
  * transporte por papel ficam em disclosure própria com denominadores coerentes; a fração
  * `actions_executed/actions` saiu do painel (conjuntos diferentes).
- * Um resultado com `false_success` ou `failure_kind` preenchido é apresentado como falha explícita,
- * nunca como sucesso silencioso.
+ * Um resultado com `false_success` ou `failure_kind` preenchido é apresentado como falha explícita.
+ * SUCCESS descreve o desfecho do pedido; por si só não prova a verificação de uma ação.
  */
 import React from "react";
-import { TOKENS } from "../../shared/theme";
 import type { TaskResultDto } from "../../shared/types";
 import type { ChatTaskState } from "../chat/useChatTask";
+import "./task.css";
 
 export interface TaskPanelProps {
   chat: ChatTaskState;
 }
 
 const PHASE_LABEL: Record<string, string> = {
-  running: "Executando…",
-  awaiting_confirm: "Aguardando confirmação",
-  awaiting_input: "Aguardando resposta",
-  finished: "Concluída",
+  running: "A executar…",
+  awaiting_confirm: "A aguardar confirmação",
+  awaiting_input: "A aguardar resposta",
+  finished: "Resultado não recebido",
   failed: "Falhou",
   cancelled: "Cancelada",
 };
@@ -81,9 +81,18 @@ function metricRows(result: TaskResultDto): Array<[string, string]> {
   const push = (label: string, value: string | null) => { if (value !== null) rows.push([label, value]); };
   push("Duração total", fmtMetric(result.duration_ms));
   push("Inferência (LLM)", fmtMetric(result.llm_time_ms));
-  push("Planejamento", fmtMetric(result.planning_time_ms));
+  push("Planeamento", fmtMetric(result.planning_time_ms));
+  push("Observação", fmtMetric(result.observation_time_ms));
   push("Execução", fmtMetric(result.execution_time_ms));
   push("Verificação", fmtMetric(result.verification_time_ms));
+  push("Arranque", fmtMetric(result.startup_time_ms));
+  push("Espera", fmtMetric(result.waits_ms));
+  push("Consulta da memória", fmtMetric(result.recall_ms));
+  push("Arranque do provedor", fmtMetric(result.provider_startup_ms));
+  push("Espera do provedor", fmtMetric(result.provider_wait_ms));
+  push("Primeiro evento do provedor", fmtMetric(result.first_provider_event_ms));
+  push("Primeiro texto do provedor", fmtMetric(result.first_provider_text_ms));
+  push("Primeiro texto público", fmtMetric(result.first_public_text_ms));
   push("Passos", fmtCount(result.steps));
   push("Chamadas ao modelo", fmtCount(result.llm_calls));
   // `actions`/`actions_executed` contavam conjuntos diferentes; a fração foi removida do
@@ -107,135 +116,98 @@ export function TaskPanel({ chat }: TaskPanelProps): React.ReactElement {
   const result = task?.result ?? null;
 
   if (!task) {
-    return (
-      <aside
-        aria-label="Estado da tarefa"
-        data-testid="task-panel"
-        data-phase="idle"
-        style={panelStyle}
-      >
-        <h2 style={headingStyle}>Resultado da tarefa</h2>
-        <p style={{ color: TOKENS.textMuted, fontSize: "13px", margin: 0 }}>
-          Nenhuma tarefa em andamento. Envie uma instrução para começar.
-        </p>
-      </aside>
-    );
+    return <aside className="lunmi-task-panel" aria-label="Estado da tarefa" data-testid="task-panel" data-phase="idle">
+      <h2>Resultado da tarefa</h2>
+      <p className="lunmi-task-empty">Sem tarefas nesta conversa.</p>
+    </aside>;
   }
 
   const verdict = result ? verdictOf(result) : null;
   const conversation = result?.scope === "conversation" || (!result?.scope && task.mode === "converse");
   const memoryCommand = result?.scope === "memory_command";
+  const windowsAction = result?.scope === "end_to_end" || result?.scope === "engine_only" ||
+    (!result?.scope && task.mode === "execute");
+  const scopeLabel = conversation ? "Conversa" : memoryCommand ? "Memória" : windowsAction ? "Ação no Windows" : "Pedido";
+  const verdictLabel = verdict === "success"
+    ? conversation ? "Conversa concluída" : memoryCommand ? "Pedido de memória concluído" : "Pedido concluído"
+    : verdict === "cancelled" ? "Pedido cancelado"
+      : verdict === "failure" ? result?.status === "NOT_VERIFIED" ? "Não verificado" : "Falha declarada"
+        : PHASE_LABEL[task.phase] ?? task.phase;
   const resultLabel = "Texto devolvido (dados ou resumo do agente; não é evidência)";
+  const returnedText = !conversation && !memoryCommand ? result?.message ?? "" : "";
+  const repeated = Boolean(returnedText && chat.messages.some(message => message.role === "assistant" &&
+    message.task_id === task.task_id && message.text.trim() === returnedText.trim()));
+  // A short, distinct summary earns space; full returned data stays available in the disclosure.
+  const showSummary = Boolean(returnedText.trim() && !repeated && returnedText.length <= 240);
+  const summary = returnedText.trim() ? <div role="group" aria-label={resultLabel} className="lunmi-task-summary">
+    <p className="lunmi-task-summary-label">Resumo do agente · não é evidência de execução</p>
+    <p>{returnedText}</p>
+  </div> : null;
 
   return (
     <aside
       aria-label="Estado da tarefa"
       data-testid="task-panel"
       data-phase={task.phase}
-      style={panelStyle}
+      className="lunmi-task-panel"
+      data-verdict={verdict ?? undefined}
     >
-      <h2 style={headingStyle}>Resultado da tarefa</h2>
-      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-        <span style={badgeStyle(TOKENS.accent)} data-testid="task-mode">
-          {task.mode === "auto" ? "Tarefa" : task.mode === "execute" ? "Executar" : "Conversar"}
-        </span>
-        <span
-          style={badgeStyle(
-            task.phase === "failed"
-              ? TOKENS.error
-              : task.phase === "finished"
-                ? TOKENS.success
-                : task.phase === "cancelled"
-                  ? TOKENS.warning
-                  : TOKENS.textSecondary
-          )}
-          data-testid="task-phase"
-        >
-          {PHASE_LABEL[task.phase] ?? task.phase}
-        </span>
-      </div>
-
-
-
+      <header className="lunmi-task-heading">
+        <h2>Resultado da tarefa</h2>
+        <span data-testid="task-mode" className="lunmi-task-scope">{scopeLabel}</span>
+      </header>
+      <p className="lunmi-task-verdict" data-testid="task-verdict" data-verdict={verdict ?? undefined}>
+        {verdictLabel}
+      </p>
       {result && (
         <>
-          <p
-            data-testid="task-verdict"
-            data-verdict={verdict}
-            style={{
-              margin: "12px 0 0",
-              fontSize: "13px",
-              color:
-                verdict === "success"
-                  ? TOKENS.success
-                  : verdict === "cancelled"
-                    ? TOKENS.warning
-                    : TOKENS.error,
-            }}
-          >
-            {verdict === "success"
-              ? conversation ? "Conversa concluída" : memoryCommand ? "Pedido de memória concluído"
-                : task.mode === "auto" ? "Tarefa concluída com verificação" : "Concluída com verificação"
-              : verdict === "cancelled"
-                ? "Cancelada pelo usuário"
-                : result.status === "NOT_VERIFIED" ? "Não verificado" : "Falha declarada"}
-          </p>
-
-          {verdict === "failure" && typeof result.failure_kind === "string" && (
-            <p style={{ margin: "4px 0 0", fontSize: "12px", color: TOKENS.textMuted }}>
-              causa: {result.failure_kind}
-            </p>
-          )}
           {Boolean(result.false_success) && (
-            <p style={{ margin: "4px 0 0", fontSize: "12px", color: TOKENS.error }}>
+            <p className="lunmi-task-warning">
               A verificação falhou depois de a ação parecer bem-sucedida.
             </p>
           )}
 
-          {!conversation && !memoryCommand && result.message && (
-            <div role="group" aria-label={resultLabel} style={{ fontSize: "13px", margin: "10px 0 0" }}>
-              <p style={{ color: TOKENS.textSecondary, margin: 0 }}>{resultLabel}:</p>
-              <p style={{ color: TOKENS.textPrimary, margin: "4px 0 0" }}>{result.message}</p>
-            </div>
-          )}
-
-          <details className="lunmi-result-details"><summary>Detalhes da execução</summary><dl
-            data-testid="task-metrics"
-            style={{
-              margin: "12px 0 0",
-              display: "grid",
-              gridTemplateColumns: "1fr auto",
-              rowGap: "4px",
-              columnGap: "12px",
-              fontSize: "12px",
-            }}
-          >
+          {showSummary && <div data-testid="task-summary">{summary}</div>}
+          {(result.duration_ms !== undefined || result.steps !== undefined) && <dl className="lunmi-task-quick" data-testid="task-quick-metrics">
+            {result.duration_ms !== undefined && <div><dt>Duração total</dt><dd>{fmtMetric(result.duration_ms)}</dd></div>}
+            {result.steps !== undefined && <div><dt>Passos</dt><dd>{fmtCount(result.steps)}</dd></div>}
+          </dl>}
+          <details key={task.task_id} className="lunmi-result-details lunmi-task-details">
+            <summary>Detalhes da execução</summary>
+            {!showSummary && summary}
+            <dl className="lunmi-task-metrics" data-testid="task-metrics">
             {metricRows(result).map(([label, value]) => (
-              <React.Fragment key={label}>
-                <dt style={{ color: TOKENS.textMuted, margin: 0 }}>{label}</dt>
-                <dd style={{ color: TOKENS.textSecondary, margin: 0, textAlign: "right" }}>
-                  {value}
-                </dd>
-              </React.Fragment>
+              <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
             ))}
-          </dl>
+            </dl>
+            <dl className="lunmi-task-metrics lunmi-task-provenance" data-testid="task-provenance">
+              <div><dt>Estado reportado</dt><dd>{result.status}</dd></div>
+              <div><dt>Fase</dt><dd data-testid="task-phase">{task.phase}</dd></div>
+              {result.token_usage && <div><dt>Estado dos tokens</dt><dd>{result.token_usage.status}</dd></div>}
+              {([
+                ["Causa", result.failure_kind], ["Âmbito", result.scope], ["Modo do pedido", task.mode],
+                ["Origem do plano", result.plan_source], ["Provedor", result.provider], ["Modelo", result.model],
+                ["Provedor AppAgent", result.app_provider], ["Modelo AppAgent", result.app_model],
+              ] as const).map(([label, value]) => typeof value === "string" && value.length > 0
+                ? <div key={label}><dt>{label}</dt><dd>{value}</dd></div> : null)}
+            </dl>
           {result.provider_calls && result.provider_calls.length > 0 && (
-            <ul data-testid="provider-calls" style={{ margin: "10px 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px" }}>
+            <ul data-testid="provider-calls" className="lunmi-task-calls">
               {result.provider_calls.map((call, index) => (
-                <li key={index} data-testid={`provider-call-${index}`} style={{ color: TOKENS.textSecondary }}>
+                <li key={index} data-testid={`provider-call-${index}`}>
                   {call.brain === "host" ? "HostAgent" : "AppAgent"} · {call.provider} · {call.transport} ·{" "}
                   {call.ok ? "ok" : "falha"} ·{" "}
                   {call.total_ms === null ? "tempo não reportado" : formatMs(call.total_ms)} ·{" "}
                   tentativas {fmtUnknown(call.requests)} · retries {fmtUnknown(call.retries)}
                 </li>
               ))}
-              <li style={{ color: TOKENS.textMuted }}>
+              <li className="lunmi-task-note">
                 Tempos de chamada são partes do tempo de inferência, não uma soma ao total.
               </li>
             </ul>
           )}
           {result.provider_calls && result.provider_calls.length === 0 && (
-            <p data-testid="provider-calls-empty" style={{ margin: "10px 0 0", fontSize: "12px", color: TOKENS.textMuted }}>
+            <p data-testid="provider-calls-empty" className="lunmi-task-note">
               Nenhuma chamada de transporte reportada para esta tarefa.
             </p>
           )}
@@ -244,32 +216,4 @@ export function TaskPanel({ chat }: TaskPanelProps): React.ReactElement {
       )}
     </aside>
   );
-}
-
-const panelStyle: React.CSSProperties = {
-  maxWidth: "min(680px, 94%)",
-  flex: "0 0 auto",
-  padding: "16px 20px",
-  border: `1px solid ${TOKENS.borderSubtle}`,
-  borderRadius: "16px",
-  backgroundColor: TOKENS.bgCardSubtle,
-  overflowWrap: "anywhere",
-};
-
-const headingStyle: React.CSSProperties = {
-  margin: "0 0 10px",
-  fontSize: "13px",
-  letterSpacing: "0.04em",
-  textTransform: "none",
-  color: TOKENS.textSecondary,
-};
-
-function badgeStyle(color: string): React.CSSProperties {
-  return {
-    padding: "2px 8px",
-    borderRadius: "999px",
-    border: `1px solid ${color}`,
-    color,
-    fontSize: "11px",
-  };
 }

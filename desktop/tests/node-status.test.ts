@@ -200,3 +200,54 @@ describe("casos puros e política de atividade", () => {
     expect(nodeToneFor(effectiveNodeStatus("working", false))).toBe("neutral");
   });
 });
+
+describe("recolha da apresentação terminal", () => {
+  it("recolhe attention quando uma limpeza da tarefa devolve o estado a idle", () => {
+    const chat = projection([
+      started,
+      { type: "task.finished", payload: { ...result({ status: "FAILED" }), session_id: SESSION } },
+    ]);
+    expect(deriveNodeStatus(nodeStatusInputFromProjection(chat, true))).toBe("failed");
+    const idle = deriveNodeStatus(nodeStatusInputFromProjection({ ...chat, task: null }, true));
+    expect(idle).toBe("idle");
+    expect(nodeSurfaceForStatus({ status: idle, show_activity: true, current: "attention", auto_pill: false }))
+      .toBe("docked");
+  });
+
+  it.each(["failed", "not_verified", "cancelled"] as const)("recolhe %s expirado depois de a voz devolver o controlo", status => {
+    for (const show_activity of [false, true]) {
+      expect(nodeSurfaceForStatus({ status, show_activity, current: "attention", auto_pill: false, terminal_expired: true }))
+        .toBe("docked");
+      expect(nodeSurfaceForStatus({ status, show_activity, current: "pill", auto_pill: true, terminal_expired: true }))
+        .toBe("docked");
+      // Sem expiração correlacionada, o aviso novo continua a aparecer.
+      expect(nodeSurfaceForStatus({ status, show_activity, current: "docked", auto_pill: false }))
+        .toBe("attention");
+    }
+  });
+
+  it("preserva chat e círculo humanos, incluindo a cápsula de abertura manual", () => {
+    for (const status of ["idle", "failed", "not_verified", "cancelled"] as const) {
+      for (const current of ["chat", "docked", "revealed", "pill", "hidden"] as const) {
+        expect(nodeSurfaceForStatus({ status, show_activity: true, current, auto_pill: false, terminal_expired: true }))
+          .toBe("none");
+      }
+    }
+  });
+
+  it("não expira confirmações, respostas ou falta de ligação", () => {
+    for (const status of ["needs_confirm", "needs_input", "offline"] as const) {
+      expect(nodeSurfaceForStatus({ status, show_activity: false, current: "attention", auto_pill: false, terminal_expired: true }))
+        .toBe("none");
+      expect(nodeSurfaceForStatus({ status, show_activity: false, current: "docked", auto_pill: false, terminal_expired: true }))
+        .toBe("attention");
+    }
+  });
+
+  it("um gesto anterior não impede recolher a cápsula automática de voz já terminada", () => {
+    expect(nodeSurfaceForStatus({ status: "failed", show_activity: true, current: "pill", auto_pill: true,
+      terminal_expired: true, suppressed: true })).toBe("docked");
+    expect(nodeSurfaceForStatus({ status: "failed", show_activity: true, current: "revealed", auto_pill: false,
+      terminal_expired: true, suppressed: true })).toBe("none");
+  });
+});

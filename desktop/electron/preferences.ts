@@ -40,9 +40,10 @@ export interface UiPreferences {
   scalePct: number;
   window: Rect | null;
   theme: string;
+  reduceMotion: boolean;
 }
 
-export const DEFAULT_PREFERENCES: UiPreferences = { scalePct: 100, window: null, theme: "celestial" };
+export const DEFAULT_PREFERENCES: UiPreferences = { scalePct: 100, window: null, theme: "celestial", reduceMotion: false };
 
 /** 100 -> 1, 125 -> 1,25, 150 -> 1,5, 200 -> 2. Qualquer outro valor é 1 (sem escala). */
 export function zoomFactorFor(scalePct: unknown): number {
@@ -86,7 +87,7 @@ export function parsePreferences(raw: unknown): UiPreferences {
   }
   const scale = raw.scale_pct;
   const scalePct = isInt(scale) && (SCALE_CHOICES as readonly number[]).includes(scale) ? scale : 100;
-  return { scalePct, window: parseRect(raw.window), theme: getTheme(raw.theme).id };
+  return { scalePct, window: parseRect(raw.window), theme: getTheme(raw.theme).id, reduceMotion: raw.reduce_motion === true };
 }
 
 /** Lê sem nunca falhar: arquivo ruim é ausente, e ausente é o padrão. */

@@ -16,20 +16,27 @@
  * - O erro local é limpo em nova tentativa e em nova sessão (a árvore fica sempre montada).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Maximize2, Square, Volume2 } from "lucide-react";
+import { ArrowUp, Maximize2, Mic, Square, Volume2 } from "lucide-react";
 import { MessageBubble } from "../../components/ui/message-bubble";
 import { useAutoResizeTextarea } from "../../components/ui/use-auto-resize-textarea";
 import { useCompanionChat } from "../chat/useCompanionChat";
 import { WebSources } from "../web/WebSources";
-import { presenceAction, usePresenceDraft, usePresenceSession, usePresenceVoiceState } from "../../shared/ipc/presence";
+import { presenceAction, useNodeState, usePresenceDraft, usePresenceSession, usePresenceVoiceState } from "../../shared/ipc/presence";
 import { MAX_DRAFT_CHARS } from "../../shared/presence";
 import { BrandMark, Icon } from "../../shared/ui";
 import type { ChatMode } from "../../shared/types";
+import { MediaPlayer } from "./MediaPlayer";
 
 const PHASE_TEXT: Record<string, string> = {
   running: "Executando…",
-  awaiting_confirm: "Aguardando confirmação na janela principal",
-  awaiting_input: "Aguardando tua resposta na janela principal",
+};
+
+/** Fases reais do ditado publicadas pelo main (`voice_phase`); nunca inventadas aqui. */
+const INPUT_VOICE_TEXT: Record<string, string> = {
+  starting: "A preparar o microfone",
+  listening: "A escutar",
+  thinking: "A pensar",
+  error: "O ditado falhou",
 };
 
 /** Distância ao fundo (px) a partir da qual se considera que o leitor saiu do fundo. */
@@ -52,6 +59,7 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
   const { session } = usePresenceSession();
   const [draft, setDraft] = usePresenceDraft(chat.conversationId);
   const voice = usePresenceVoiceState();
+  const node = useNodeState();
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useAutoResizeTextarea(draft, interactive);
@@ -95,7 +103,19 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
 
   const mode: ChatMode = session?.capabilities && (session.capabilities as Record<string, unknown>).auto === true ? "auto" : "converse";
   const speaking = voice?.state === "synthesizing" || voice?.state === "playing";
+  const inputPhase = node.state?.voice_phase ?? null;
+  const dictating = inputPhase !== null && inputPhase !== "error";
   const pending = Boolean(chat.confirmRequest || chat.inputRequest);
+  /**
+   * Uma só linha de atividade no compositor, da fonte real mais próxima do utilizador:
+   * ditado (voice_phase) → fala (TTS) → tarefa a correr. Pedidos de decisão já vivem na faixa
+   * fixa de pendências; o chip não os repete.
+   */
+  const phaseText = inputPhase ? INPUT_VOICE_TEXT[inputPhase]
+    : voice?.state === "playing" ? "A falar"
+    : voice?.state === "synthesizing" ? "A preparar a voz"
+    : chat.task?.phase === "running" ? PHASE_TEXT.running
+    : "";
 
   const submit = async () => {
     const text = draft.trim();
@@ -112,8 +132,9 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
     <section className="lunmi-mini" aria-label="Mini chat da Lunmi" data-testid="mini-chat">
       <header className="lunmi-mini-head">
         <div className="lunmi-mini-identity">
-          <span className="lunmi-mini-avatar" aria-hidden="true"><BrandMark size={24} /></span>
-          <div><strong>Lunmi</strong><span className="lunmi-mini-subtitle">{session ? "Conversa em segundo plano" : "A ligar…"}</span></div>
+          <span className="lunmi-mini-avatar" aria-hidden="true"><BrandMark size={20} /></span>
+          <strong>Lunmi</strong>
+          {!session && <span className="lunmi-mini-subtitle">A ligar…</span>}
         </div>
         <div className="lunmi-mini-head-actions">
           <button type="button" data-testid="mini-expand" className="lunmi-mini-icon-button"
@@ -142,6 +163,9 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
           </button>
         </div>
       </header>
+
+      {/* Leitor do sistema: só com API, sessão de chat e estado real; sem caixa vazia. */}
+      <MediaPlayer active={interactive && Boolean(session) && !chat.busy && !chat.submitting && !pending} />
 
       {/*
         Pendência FIXADA fora da lista: pode chegar depois das mensagens (worker frio) e tem de
@@ -190,9 +214,6 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
             )}
           </React.Fragment>
         ))}
-        {chat.task && (chat.task.phase === "running" || chat.task.phase === "awaiting_confirm" || chat.task.phase === "awaiting_input") && (
-          <p className="lunmi-mini-phase" data-testid="mini-phase">{PHASE_TEXT[chat.task.phase] ?? chat.task.phase}</p>
-        )}
       </div>
 
       {(error || chat.lastError) && (
@@ -200,6 +221,9 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
       )}
 
       <footer className="lunmi-mini-composer">
+        {phaseText && (
+          <p className="lunmi-mini-phase-chip" data-testid="mini-phase" role="status">{phaseText}</p>
+        )}
         <div className="lunmi-mini-input-frame">
         <label className="lunmi-sr-only" htmlFor="mini-input">Mensagem</label>
         <textarea id="mini-input" data-testid="mini-input" rows={1} value={draft} ref={inputRef}
@@ -215,12 +239,23 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
             void submit();
           }} />
         <div className="lunmi-mini-actions">
-          <button type="button" data-testid="mini-stop-voice" className="lunmi-mini-icon-button lunmi-mini-quiet"
-            aria-label={speaking ? "Parar voz" : "Voz inativa"} title={speaking ? "Parar voz" : "Voz inativa"}
-            disabled={!speaking || !interactive} tabIndex={interactive ? 0 : -1}
-            onClick={() => void presenceAction("stop-voice").catch(() => undefined)}>
-            <Volume2 size={18} aria-hidden="true" />
-          </button>
+          {/* Contextuais: cada um aparece só quando a fase real o justifica (sem botões mortos). */}
+          {dictating && (
+            <button type="button" data-testid="mini-cancel-dictation" className="lunmi-mini-icon-button lunmi-mini-quiet"
+              aria-label="Parar ditado" title="Parar ditado"
+              disabled={!interactive} tabIndex={interactive ? 0 : -1}
+              onClick={() => void presenceAction("cancel-dictation").catch(() => undefined)}>
+              <Mic size={18} aria-hidden="true" />
+            </button>
+          )}
+          {speaking && (
+            <button type="button" data-testid="mini-stop-voice" className="lunmi-mini-icon-button lunmi-mini-quiet"
+              aria-label="Parar voz" title="Parar voz"
+              disabled={!interactive} tabIndex={interactive ? 0 : -1}
+              onClick={() => void presenceAction("stop-voice").catch(() => undefined)}>
+              <Volume2 size={18} aria-hidden="true" />
+            </button>
+          )}
           {chat.busy ? (
             <button type="button" data-testid="mini-stop" className="lunmi-mini-button lunmi-mini-submit"
               aria-label="Parar tarefa" title="Parar tarefa"

@@ -263,13 +263,13 @@ describe("tom derivado do status", () => {
 
 describe("enum canónico de ações (main + preload + testes)", () => {
   it("inclui as ações do Node e mantém as antigas", () => {
-    for (const action of ["show-main", "show-settings", "toggle-mini", "hide-mini", "stop-voice", "quit"]) {
+    for (const action of ["show-main", "show-settings", "toggle-mini", "hide-mini", "stop-voice", "cancel-dictation", "quit"]) {
       expect(isPresenceAction(action)).toBe(true);
     }
     for (const action of NODE_ACTIONS) {
       expect(isPresenceAction(action)).toBe(true);
     }
-    expect(PRESENCE_ACTIONS).toHaveLength(6 + NODE_ACTIONS.length);
+    expect(PRESENCE_ACTIONS).toHaveLength(7 + NODE_ACTIONS.length);
   });
 
   it("recusa ações desconhecidas e comandos de tarefa", () => {

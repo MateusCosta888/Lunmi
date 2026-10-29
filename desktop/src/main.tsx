@@ -5,8 +5,6 @@
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
-import { CompanionApp } from "./features/companion/CompanionApp";
 import { applyTheme } from "./shared/themeDom";
 import "./styles.css";
 import "./shared/motion.css";
@@ -21,9 +19,14 @@ if (isCompanion) document.documentElement.dataset.companion = "companion";
 
 const container = document.getElementById("root");
 if (container) {
-  createRoot(container).render(
-    <React.StrictMode>
-      {isCompanion ? <CompanionApp /> : <App />}
-    </React.StrictMode>
-  );
+  const root = createRoot(container);
+  // The Node never needs to load the main window's settings, onboarding or account panels.
+  const load = isCompanion
+    ? import("./features/companion/CompanionApp").then(module => module.CompanionApp)
+    : import("./App").then(module => module.App);
+  void load.then(Component => {
+    root.render(<React.StrictMode><Component /></React.StrictMode>);
+  }).catch(() => {
+    root.render(<p role="alert">Não foi possível abrir a interface. Reinicia a Lunmi.</p>);
+  });
 }

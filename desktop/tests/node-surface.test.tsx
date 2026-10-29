@@ -43,6 +43,24 @@ const SESSION: SessionReadyPayload = {
 
 const ENVELOPE = { x: 0, y: 0, width: 420, height: 520 };
 
+it("recolhe ao sair do chat sem cancelar pedidos e preserva pendências/ditado", async () => {
+  const h = presence({ surface: "chat" });
+  render(<NodeSurface />);
+  await waitFor(() => expect(screen.getByTestId("lunmi-node").getAttribute("data-surface")).toBe("chat"));
+  act(() => { window.dispatchEvent(new Event("blur")); });
+  expect(h.actions).toContain("node-close");
+  h.actions.length = 0;
+  for (const status of ["working", "needs_confirm", "needs_input"] as const) {
+    h.emitNode({ status });
+    act(() => { window.dispatchEvent(new Event("blur")); });
+    expect(h.actions).toHaveLength(0);
+  }
+  h.emitNode({ status: null, voice_phase: "listening" });
+  act(() => { window.dispatchEvent(new Event("blur")); });
+  expect(h.actions).toHaveLength(0);
+  expect(h.commands).toHaveLength(0);
+});
+
 function chatProjection(overrides: Partial<ChatProjectionDto> = {}): ChatProjectionDto {
   return { session_id: "sess-n", cursor: 0, messages: [], recent_tasks: [], task: null, confirm: null, input: null, ...overrides };
 }
@@ -68,6 +86,7 @@ interface Harness {
   commands: Array<{ type: string; payload: Record<string, unknown> }>;
   emitNode: (next: Partial<NodeStateDto>) => void;
   emitAppearance: (appearance: "theme" | "black") => void;
+  emitVoice: (state: unknown) => void;
 }
 
 function presence(node: Partial<NodeStateDto> = {}, chat: ChatProjectionDto = chatProjection()): Harness {
@@ -78,6 +97,9 @@ function presence(node: Partial<NodeStateDto> = {}, chat: ChatProjectionDto = ch
     commands: [],
     emitAppearance: appearance => act(() => {
       for (const listener of [...listeners]) listener({ type: "node-prefs", preferences: { ...DEFAULT_NODE_PREFERENCES, chat_appearance: appearance } });
+    }),
+    emitVoice: state => act(() => {
+      for (const listener of [...listeners]) listener({ type: "voice", state } as PresenceEventDto);
     }),
     emitNode: next => {
       current = nodeState({ ...current, ...next });
@@ -214,7 +236,7 @@ describe("NodeSurface — estado publicado pelo main", () => {
     const root = await screen.findByTestId("lunmi-node");
     expect(root.getAttribute("data-tone")).toBe("needs");
     expect(root.getAttribute("data-status")).toBe("needs_confirm");
-    expect(screen.getByTestId("node-pill-text").textContent).toBe("Preciso da tua confirmação");
+    expect(screen.getByTestId("node-pill-text").textContent).toBe("Confirmar na principal");
     expect(screen.getByTestId("node-pill").textContent).not.toContain("resposta secreta");
     expect(screen.getByTestId("node-circle").textContent).not.toContain("resposta secreta");
   });
@@ -226,8 +248,56 @@ describe("NodeSurface — estado publicado pelo main", () => {
     expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar");
 
     harness.emitNode({ status: "done", tone: "success" });
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Tarefa concluída"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Concluída"));
     expect(root.getAttribute("data-tone")).toBe("success");
+  });
+
+  it("a cápsula é acionável: decisões levam à principal e resultados abrem o chat", async () => {
+    const harness = presence({ surface: "pill", status: "needs_confirm", tone: "needs" });
+    render(<NodeSurface />);
+    await screen.findByTestId("node-pill");
+    const pill = screen.getByTestId("node-pill") as HTMLButtonElement;
+    expect(pill.getAttribute("data-action")).toBe("show-main");
+    expect(pill.getAttribute("aria-label")).toBe("Ir para a janela principal — Confirmar na principal");
+    fireEvent.click(pill);
+    expect(harness.actions).toEqual(["show-main"]);
+
+    harness.emitNode({ status: "done", tone: "success" });
+    await waitFor(() => expect(screen.getByTestId("node-pill").getAttribute("data-action")).toBe("node-open"));
+    fireEvent.click(screen.getByTestId("node-pill"));
+    expect(harness.actions).toEqual(["show-main", "node-open"]);
+  });
+
+  it("pedido de resposta também leva à principal; estados de trabalho abrem o chat", async () => {
+    const harness = presence({ surface: "pill", status: "needs_input", tone: "needs" });
+    render(<NodeSurface />);
+    await screen.findByTestId("node-pill");
+    expect(screen.getByTestId("node-pill-text").textContent).toBe("Responder na principal");
+    fireEvent.click(screen.getByTestId("node-pill"));
+    expect(harness.actions).toEqual(["show-main"]);
+
+    harness.emitNode({ status: "working", tone: "working" });
+    await waitFor(() => expect(screen.getByTestId("node-pill").getAttribute("data-action")).toBe("node-open"));
+  });
+
+  it("voz real: ditado e fala têm etiquetas próprias; sem fonte não inventa estado", async () => {
+    const harness = presence({ surface: "pill", status: "idle", tone: "neutral" });
+    render(<NodeSurface />);
+    await screen.findByTestId("node-pill");
+    expect(screen.getByTestId("node-pill-text").textContent).toBe("Pronta");
+
+    harness.emitNode({ voice_phase: "listening" });
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A escutar"));
+    harness.emitNode({ voice_phase: "thinking" });
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar"));
+    harness.emitNode({ voice_phase: null });
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Pronta"));
+
+    // TTS: só «A falar» quando o main publica uma fase de fala real.
+    harness.emitVoice({ session_id: "sess-n", enabled: true, auto_speak: false, available: true, state: "playing", generation: 2, can_speak_last: true, capture_supported: false, message: "" });
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A falar"));
+    harness.emitVoice({ session_id: "sess-n", enabled: true, auto_speak: false, available: true, state: "ready", generation: 3, can_speak_last: true, capture_supported: false, message: "" });
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Pronta"));
   });
 });
 

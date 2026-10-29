@@ -265,7 +265,7 @@ export function MemoryPanel({ sendCommand, session, refreshToken, draft: draftPr
     }
   }, [loadProfile, options, sendCommand]);
 
-  const readOnly = !profile || !profile.enabled;
+  const readOnly = !profile || !profile.enabled || saving;
   const canEdit = Boolean(profile?.enabled);
 
   // --- gestão secundária ---------------------------------------------------

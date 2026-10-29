@@ -40,7 +40,7 @@ export function UpdatesCard(): React.ReactElement | null {
         state?.phase === "checking" ? "A procurar atualizações…" :
         state?.phase === "downloading" ? `A baixar a versão ${state.version} · ${state.percent ?? 0}%` :
         state?.phase === "ready" ? `A versão ${state.version} está pronta para instalar.` :
-        state?.phase === "installing" ? "A preparar o reinício…" :
+        state?.phase === "installing" ? "A fechar a Lunmi para instalar. O instalador vai mostrar o progresso…" :
         state?.phase === "error" ? "A atualização não foi concluída." : "A Lunmi procura e baixa novas versões automaticamente."}
     </p>
     {state?.phase === "downloading" && <progress aria-label="Download da atualização" max={100} value={state.percent ?? 0} style={{ width: "100%", accentColor: "var(--lunmi-accent)" }} />}

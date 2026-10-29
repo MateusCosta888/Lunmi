@@ -107,3 +107,21 @@ def test_nenhuma_janela_aceita_fica_com_a_dimensao_do_arquivo_quando_ela_nao_cab
     assert bounds is not None
     assert bounds[2] == SCREEN_W
     assert bounds[0] + bounds[2] == SCREEN_W
+
+
+def test_reduzir_animacoes_e_preferencia_da_lunmi_e_sobrevive_ao_disco() -> None:
+    """Só `true` literal liga; o valor volta igual depois de gravado."""
+    import json
+    assert prefs.parse({}).reduce_motion is False
+    assert prefs.parse({"reduce_motion": "yes"}).reduce_motion is False
+    on = prefs.parse({"reduce_motion": True})
+    assert on.reduce_motion is True
+    assert prefs.parse(json.loads(prefs.dump(on))).reduce_motion is True
+
+
+def test_introducao_concluida_so_com_true_e_sobrevive_ao_disco() -> None:
+    import json
+    assert prefs.parse({}).onboarding_done is False
+    assert prefs.parse({"onboarding_done": 1}).onboarding_done is False
+    done = prefs.parse({"onboarding_done": True})
+    assert prefs.parse(json.loads(prefs.dump(done))).onboarding_done is True

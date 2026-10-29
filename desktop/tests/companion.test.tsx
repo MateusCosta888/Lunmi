@@ -271,16 +271,44 @@ describe("MiniChat — conteúdo real", () => {
     expect(harness.actions).toEqual(["show-settings", "hide-mini"]);
   });
 
-  it("estado de voz vem dos eventos; Parar voz usa a ação fechada, nunca síntese própria", async () => {
+  it("estado de voz vem dos eventos; Parar voz aparece só com fala e usa a ação fechada", async () => {
     const harness = presence();
     render(<MiniChat />);
     await screen.findByTestId("mini-chat");
-    expect((screen.getByTestId("mini-stop-voice") as HTMLButtonElement).disabled).toBe(true);
+    // Sem fala publicada não há botão morto a ocupar espaço (era desativado, agora é ausente).
+    expect(screen.queryByTestId("mini-stop-voice")).toBeNull();
     harness.emit({ type: "voice", state: { session_id: "sess-c", enabled: true, auto_speak: false, available: true, state: "playing", generation: 4, can_speak_last: true, capture_supported: false, message: "" } });
-    await waitFor(() => expect((screen.getByTestId("mini-stop-voice") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(screen.getByTestId("mini-stop-voice").hasAttribute("disabled")).toBe(false));
     fireEvent.click(screen.getByTestId("mini-stop-voice"));
     expect(harness.actions).toContain("stop-voice");
     expect(harness.commands.filter(c => c.type === "voice.speak_last")).toHaveLength(0);
+    // Terminada a fala, o botão sai outra vez.
+    harness.emit({ type: "voice", state: { session_id: "sess-c", enabled: true, auto_speak: false, available: true, state: "ready", generation: 5, can_speak_last: true, capture_supported: false, message: "" } });
+    await waitFor(() => expect(screen.queryByTestId("mini-stop-voice")).toBeNull());
+  });
+
+  it("ditado ativo: botão próprio cancela a ENTRADA, separado de parar tarefa e de parar voz", async () => {
+    const harness = presence();
+    render(<MiniChat />);
+    await screen.findByTestId("mini-chat");
+    expect(screen.queryByTestId("mini-cancel-dictation")).toBeNull();
+    harness.emit({ type: "node", state: nodeState({ voice_phase: "listening" }) });
+    const cancel = await screen.findByTestId("mini-cancel-dictation");
+    expect(cancel.getAttribute("aria-label")).toBe("Parar ditado");
+    expect(screen.getByTestId("mini-phase").textContent).toBe("A escutar");
+    fireEvent.click(cancel);
+    expect(harness.actions).toContain("cancel-dictation");
+    expect(harness.actions).not.toContain("stop-voice");
+    expect(harness.commands.filter(c => c.type === "task.cancel")).toHaveLength(0);
+    harness.emit({ type: "node", state: nodeState({ voice_phase: null }) });
+    await waitFor(() => expect(screen.queryByTestId("mini-cancel-dictation")).toBeNull());
+  });
+
+  it("sem API de media não há leitor nenhum no mini chat", async () => {
+    presence();
+    render(<MiniChat />);
+    await screen.findByTestId("mini-chat");
+    expect(screen.queryByTestId("mini-media")).toBeNull();
   });
 });
 

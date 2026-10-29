@@ -203,6 +203,12 @@ class Preferences:
     actions: tuple[QuickAction, ...] = ()
     theme: str = "celestial"
     profile: UserProfile = field(default_factory=UserProfile)
+    # Lunmi's own motion setting; Windows "animation effects" no longer decide it.
+    reduce_motion: bool = False
+    # A introdução (boas-vindas + cérebro) já foi concluída ou saltada.
+    onboarding_done: bool = False
+    # Optional diagnostic card; answers and safety controls are always independent.
+    show_task_results: bool = False
 
 
 DEFAULT_ACTIONS: tuple[QuickAction, ...] = (
@@ -265,7 +271,10 @@ def parse(payload: Any) -> Preferences:
             avatar_data_url=validate_avatar_data_url(raw_profile.get("avatar_data_url"), strict=False),
         )
     return Preferences(window=rect, scale_pct=scale_pct,
-                       actions=tuple(actions) or DEFAULT_ACTIONS, theme=theme, profile=profile)
+                       actions=tuple(actions) or DEFAULT_ACTIONS, theme=theme, profile=profile,
+                       reduce_motion=payload.get("reduce_motion") is True,
+                       onboarding_done=payload.get("onboarding_done") is True,
+                       show_task_results=payload.get("show_task_results") is True)
 
 
 def load(path: Path) -> Preferences:
@@ -287,6 +296,9 @@ def dump(prefs: Preferences) -> str:
     return json.dumps({"window": list(prefs.window) if prefs.window else None,
                        "scale_pct": prefs.scale_pct,
                        "theme": prefs.theme,
+                       "reduce_motion": prefs.reduce_motion,
+                       "onboarding_done": prefs.onboarding_done,
+                       "show_task_results": prefs.show_task_results,
                        "actions": [{"label": a.label, "draft": a.draft} for a in prefs.actions],
                        "profile": {"name": prefs.profile.name,
                                    "avatar_data_url": prefs.profile.avatar_data_url}},

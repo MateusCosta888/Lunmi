@@ -1,0 +1,62 @@
+.lunmi-task-panel {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: min(680px, 100%);
+  min-width: 0;
+  padding: 16px 20px;
+  border: 1px solid var(--lunmi-border-subtle);
+  border-radius: 16px;
+  background: var(--lunmi-bg-card-subtle);
+  color: var(--lunmi-text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  container: task-result / inline-size;
+}
+
+.lunmi-task-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; }
+.lunmi-task-panel h2 { margin: 0; color: var(--lunmi-text-secondary); font-size: 13px; font-weight: 500; }
+.lunmi-task-scope { color: var(--lunmi-text-muted); font-size: 12px; }
+.lunmi-task-verdict { margin: 6px 0 0; font-size: 15px; font-weight: 600; }
+.lunmi-task-verdict[data-verdict="success"] { color: var(--lunmi-success); }
+.lunmi-task-verdict[data-verdict="failure"], .lunmi-task-warning { color: var(--lunmi-error); }
+.lunmi-task-verdict[data-verdict="cancelled"] { color: var(--lunmi-warning); }
+.lunmi-task-empty { margin: 6px 0 0; color: var(--lunmi-text-muted); }
+.lunmi-task-warning { margin: 8px 0 0; }
+.lunmi-task-summary { margin: 12px 0 0; }
+.lunmi-task-summary p { margin: 4px 0 0; white-space: pre-wrap; }
+.lunmi-task-summary .lunmi-task-summary-label { color: var(--lunmi-text-muted); font-size: 12px; }
+
+.lunmi-task-quick { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0 0; }
+.lunmi-task-quick > div { display: flex; align-items: baseline; gap: 8px; }
+.lunmi-task-panel dt { color: var(--lunmi-text-muted); }
+.lunmi-task-panel dd { margin: 0; color: var(--lunmi-text-secondary); font-variant-numeric: tabular-nums; }
+
+.lunmi-task-panel .lunmi-task-details { margin-top: 12px; border-top: 1px solid var(--lunmi-border-subtle); }
+.lunmi-task-panel .lunmi-task-details > summary {
+  min-height: 44px;
+  align-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--lunmi-text-secondary);
+}
+.lunmi-task-details > summary::marker { color: var(--lunmi-text-muted); }
+.lunmi-task-details > summary:hover { color: var(--lunmi-text-primary); }
+.lunmi-task-details > summary:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 3px; border-radius: 4px; }
+.lunmi-task-metrics { display: grid; gap: 6px; margin: 12px 0; }
+.lunmi-task-metrics > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 4px 20px; }
+.lunmi-task-metrics dd { text-align: right; }
+.lunmi-task-provenance { padding-top: 12px; border-top: 1px solid var(--lunmi-border-subtle); }
+.lunmi-task-calls { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; color: var(--lunmi-text-secondary); }
+.lunmi-task-note { margin: 12px 0 0; color: var(--lunmi-text-muted); font-size: 12px; }
+
+@container task-result (max-width: 400px) {
+  .lunmi-task-metrics > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .lunmi-task-metrics dd { text-align: left; }
+}
+
+/* On a short window, the optional result needs the space otherwise reserved for the orb. */
+@media (max-height: 650px) {
+  .lunmi-conversation:has(.lunmi-task-panel) .lunmi-conversation-face { display: none; }
+  .lunmi-task-panel { padding: 12px 16px; }
+}

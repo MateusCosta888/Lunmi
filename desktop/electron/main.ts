@@ -24,10 +24,14 @@ import {
   screen,
   session,
   shell,
+  clipboard,
   Tray,
 } from "electron";
 import { CELESTIAL_COLORS, getTheme } from "../src/shared/theme";
 import { BackgroundVoiceTurn, nodeVoicePhase } from "./voice-node";
+import { WindowsMediaSession } from "./media-session";
+import { registerNodeMediaIpc } from "./media-ipc";
+import { NodeTerminalNotice, type NodeTerminalNoticeSnapshot } from "./node-terminal-notice";
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
@@ -89,6 +93,7 @@ import {
   WINDOW_CONTROL_ACTIONS,
 } from "./window-controls";
 import {
+  DEFAULT_PREFERENCES,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   readPreferencesFile,
@@ -162,7 +167,7 @@ let chatProjection: ChatProjectionStore | null = null;
 let expectedIndexFileUrl = "";
 let prefsLocalDir = "";
 let presenceLocalDir = "";
-let appliedPrefs: UiPreferences = { scalePct: 100, window: null, theme: "celestial" };
+let appliedPrefs: UiPreferences = { ...DEFAULT_PREFERENCES };
 let presencePrefs: PresencePreferences = { ...DEFAULT_PRESENCE };
 /** Último estado publicado pelo CompanionManager; o main compõe o DTO público a partir daqui. */
 let companionSnapshot: CompanionSnapshot = {
@@ -179,8 +184,11 @@ let nodePassive = false;
 
 /** N2: estado de negócio reduzido no main a partir da projeção pública. */
 let nodeStatus: NodeStatus = "idle";
-/** `done` é breve; pendências/erros ficam persistentes. */
+/** Sucesso e avisos terminais são breves; confirmações/respostas continuam persistentes. */
 let nodeSuccessTimer: NodeJS.Timeout | null = null;
+const nodeTerminalNotice = new NodeTerminalNotice(expireNodeTerminalNotice);
+let nodeMedia: WindowsMediaSession | null = null;
+let nodeMediaIdleTimer: NodeJS.Timeout | null = null;
 /** Cápsula foi aberta pela política de status (não por gesto): pode recolher sozinha. */
 let nodePillAutomatic = false;
 /** Gesto explícito de recolha vence a política até o status mudar. */
@@ -242,6 +250,37 @@ const webSourceOpener = new WebSourceOpener({
 
 function elapsedMs(): number {
   return Number((Number(process.hrtime.bigint() - bootStartHr) / 1_000_000).toFixed(2));
+}
+
+/** Páginas que a introdução pode abrir; o renderer escolhe a chave, nunca o endereço. */
+const ONBOARDING_PAGES: Record<string, string> = {
+  "groq-keys": "https://console.groq.com/keys",
+  "kiro-docs": "https://kiro.dev/docs/cli/installation/",
+};
+
+/**
+ * A introdução apanha a chave Groq que a pessoa acabou de copiar. A área de transferência só sai
+ * do main se for uma chave Groq; qualquer outro conteúdo fica aqui.
+ */
+/**
+ * A área de transferência só é lida depois do gesto "Abrir Groq", durante 10 min, e até à primeira
+ * chave entregue. Fora disso, nem um renderer comprometido consegue pedir o que lá estiver.
+ */
+export const groqKeyWatch = {
+  until: 0,
+  open(now: number): void { this.until = now + 10 * 60 * 1000; },
+  active(now: number): boolean { return now <= this.until; },
+  take(text: string, now: number): string | null {
+    if (!this.active(now)) return null;
+    const key = groqKeyFrom(text);
+    if (key) this.until = 0;
+    return key;
+  },
+};
+
+export function groqKeyFrom(text: string): string | null {
+  const candidate = text.trim();
+  return /^gsk_[A-Za-z0-9]{20,120}$/.test(candidate) ? candidate : null;
 }
 
 export function getRepoRoot(): string {
@@ -427,7 +466,24 @@ function refreshNodeStatus(): void {
     sessionId,
     taskId
   );
-  if (next === nodeStatus) return;
+  const noticeChanged = nodeTerminalNotice.observe({
+    session_id: sessionId, task_id: taskId, status: next, gesture: nodeGestureSeq,
+  });
+  if (next === nodeStatus) {
+    // Outra tarefa pode acabar com o mesmo estado antes de o coalescer mostrar running.
+    if (noticeChanged) {
+      nodeSurfaceSuppressedFor = null;
+      // Outra tarefa concluída: o prazo de 4 s passa a ser o dela, não o da anterior.
+      if (next === "done") {
+        if (nodeSuccessTimer) clearTimeout(nodeSuccessTimer);
+        nodeSuccessTimer = null;
+        startNodeSuccessTimer(taskId);
+      }
+      applyNodeSurfacePolicy();
+      publishNode();
+    }
+    return;
+  }
   nodeStatus = next;
   // Status novo: o gesto de recolha anterior deixa de valer.
   nodeSurfaceSuppressedFor = null;
@@ -440,21 +496,38 @@ function refreshNodeStatus(): void {
   publishNode();
 }
 
-/**
- * `done` fica 4 s. O timer só recolhe a cápsula AUTOMÁTICA se continuar a mesma tarefa, sem
- * gesto humano e sem atenção; nunca fecha o chat humano nem apaga pendências/erros.
- */
+function terminalNodeNoticeExpired(): boolean {
+  return nodeTerminalNotice.expiredFor({
+    session_id: lastSession?.session_id ?? null,
+    task_id: chatProjection?.snapshot().task?.task_id ?? null,
+    status: nodeStatus,
+  });
+}
+
+/** Recolhe só a apresentação automática; o erro e o resultado continuam na projeção. */
+function expireNodeTerminalNotice(notice: NodeTerminalNoticeSnapshot): void {
+  const chat = chatProjection?.snapshot() ?? EMPTY_CHAT_PROJECTION;
+  if (lastSession?.session_id !== notice.session_id || chat.task?.task_id !== notice.task_id ||
+      nodeStatus !== notice.status || chat.confirm || chat.input) return;
+  // A política preserva voz/chat ativos e recolhe o aviso quando estes devolvem o controlo.
+  applyNodeSurfacePolicy();
+  publishNode();
+}
+
+/** Sucesso recolhe após 4 s, sem fechar o chat humano nem apagar pendências. */
 function startNodeSuccessTimer(taskId: string | null): void {
   const gesture = nodeGestureSeq;
+  const sessionId = lastSession?.session_id ?? null;
   nodeSuccessTimer = setTimeout(() => {
     nodeSuccessTimer = null;
     if (nodeStatus !== "done") return;
+    // Só expira a conclusão que armou o timer; outra sessão/tarefa tem o seu próprio prazo.
     const currentTask = chatProjection?.snapshot().task?.task_id ?? null;
+    if (currentTask !== taskId || (lastSession?.session_id ?? null) !== sessionId) return;
     nodeStatus = "idle";
     // Conclusão expirada: só sai deste par sessão+tarefa. Um resync do companheiro não a revive.
-    nodeExpiredDone = { session_id: lastSession?.session_id ?? null, task_id: taskId };
+    nodeExpiredDone = { session_id: sessionId, task_id: taskId };
     if (
-      currentTask === taskId &&
       gesture === nodeGestureSeq &&
       nodePillAutomatic &&
       companionSnapshot.surface === "pill"
@@ -489,6 +562,7 @@ function applyNodeSurfacePolicy(): void {
     current: companionSnapshot.surface,
     auto_pill: nodePillAutomatic,
     suppressed: nodeSurfaceSuppressedFor === nodeStatus,
+    terminal_expired: terminalNodeNoticeExpired(),
   });
   if (target === "none") return;
   if (target === "docked") {
@@ -624,6 +698,7 @@ function showMainWindow(route?: "chat" | "preferences"): void {
 function restoreMainAfterCompanionFailure(reason: string): void {
   process.stderr.write(`[companion] ${reason}\n`);
   if (quitting) return;
+  disposeNodeMedia();
   companionManager?.destroy();
   companionManager = null;
   nodePillAutomatic = false;
@@ -967,7 +1042,7 @@ async function applyPresenceAction(
       if (action === "node-close" && wasChat) {
         // Fechar o chat com pendência volta a `attention`: o aviso não se perde.
         companionManager.setSurface(
-          isNodeAttentionStatus(nodeStatus) ? "attention" : "revealed"
+          isNodeAttentionStatus(nodeStatus) && !terminalNodeNoticeExpired() ? "attention" : "revealed"
         );
       } else if (!companionManager.handleAction(action)) {
         error = "invalid_action";
@@ -977,6 +1052,9 @@ async function applyPresenceAction(
     }
     case "stop-voice":
       void stopVoice();
+      break;
+    case "cancel-dictation":
+      void cancelVoiceInputForLifecycle();
       break;
     case "quit":
       setImmediate(() => void requestQuit());
@@ -1063,6 +1141,7 @@ function applyNodeShortcutChange(
  */
 function applyNodeRuntimeChange(previous: NodePreferencesDto, next: NodePreferencesDto): void {
   if (!next.enabled) {
+    disposeNodeMedia();
     backgroundVoice.dismiss();
     companionManager?.destroy();
     companionManager = null;
@@ -1116,7 +1195,32 @@ function trustedPresenceWindow(event: IpcMainInvokeEvent): BrowserWindow | null 
   return null;
 }
 
+function disposeNodeMedia(): void {
+  if (nodeMediaIdleTimer) clearTimeout(nodeMediaIdleTimer);
+  nodeMediaIdleTimer = null;
+  const previous = nodeMedia;
+  nodeMedia = null;
+  if (previous) void previous.dispose();
+}
+
+function currentNodeMedia(): WindowsMediaSession {
+  if (!nodeMedia) nodeMedia = new WindowsMediaSession({ scriptPath: path.join(app.getAppPath(), "electron", "media-session.ps1") });
+  if (nodeMediaIdleTimer) clearTimeout(nodeMediaIdleTimer);
+  // Polling stops with the player; an inactive Node must not retain a helper process.
+  nodeMediaIdleTimer = setTimeout(disposeNodeMedia, 30_000);
+  return nodeMedia;
+}
+
 function setupPresenceIpc(): void {
+  registerNodeMediaIpc({
+    ipc: ipcMain,
+    trusted: isTrustedCompanion,
+    active: () => presencePrefs.resident && presencePrefs.node.enabled &&
+      Boolean(companionManager?.window?.isVisible()) && companionSnapshot.surface === "chat" && companionSnapshot.phase === "settled",
+    passive: () => nodePassiveFromTaskPhase(chatProjection?.taskPhase) ||
+      Boolean(chatProjection?.snapshot().confirm || chatProjection?.snapshot().input),
+    media: currentNodeMedia,
+  });
   // WEB-SEARCH-V1: o renderer envia só IDs; a URL sai da projeção canónica em RAM.
   ipcMain.handle(
     "lunmi:web-open-source",
@@ -1198,6 +1302,7 @@ function setupPresenceIpc(): void {
     presencePrefs = next;
     broadcastPresence({ type: "resident", resident: presencePrefs.resident });
     if (!presencePrefs.resident) {
+      disposeNodeMedia();
       companionManager?.destroy();
       companionManager = null;
       companionSnapshot = {
@@ -1328,10 +1433,20 @@ function setupUpdates(): void {
   const updater = installed ? new (require("electron-updater").NsisUpdater)({
     provider: "github", owner: "MateusCosta888", repo: "Lunmi",
   }) as import("electron-updater").NsisUpdater : null;
-  if (updater) { updater.logger = null; updater.disableWebInstaller = true; }
+  // Local diagnosis for failed updates; the renderer still only receives phase/error codes.
+  // shortcut: no rotation, a few lines per six-hour check; rotate if it ever grows.
+  const updateLog = path.join(getUserDataRoot(), "logs", "updater.log");
+  const log = (level: string) => (message?: unknown) => {
+    try {
+      fs.mkdirSync(path.dirname(updateLog), { recursive: true });
+      fs.appendFileSync(updateLog, `${new Date().toISOString()} ${level} ${String(message)}\n`);
+    } catch { /* diagnóstico opcional; nunca bloqueia a atualização */ }
+  };
+  if (updater) { updater.logger = { info: log("info"), warn: log("warn"), error: log("error") }; updater.disableWebInstaller = true; }
   updates = new LunmiUpdates({
     version: app.getVersion(), updater, publicKey: updateTrust.publicKey,
     publish: state => {
+      if (updater) log("state")(JSON.stringify(state));
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lunmi:updates-state", state);
     },
     blocked: updateRestartBlocked,
@@ -1341,7 +1456,7 @@ function setupUpdates(): void {
         type: "question", title: "Atualizar a Lunmi", buttons: ["Mais tarde", "Reiniciar e atualizar"],
         defaultId: 0, cancelId: 0, noLink: true,
         message: "Reiniciar para instalar a atualização?",
-        detail: "Guarda primeiro as alterações nos formulários. Rascunhos de conversa e alterações por guardar serão perdidos. O histórico e as configurações guardadas serão mantidos.",
+        detail: "Guarda primeiro as alterações nos formulários. Rascunhos de conversa e alterações por guardar serão perdidos. O histórico e as configurações guardadas serão mantidos.\n\nA Lunmi fecha e o instalador mostra o progresso. A instalação pode demorar alguns minutos; no fim, a Lunmi abre sozinha.",
       });
       return result.response === 1;
     },
@@ -1365,6 +1480,7 @@ function setupUpdates(): void {
 function requestQuit(afterCleanup?: () => void): Promise<void> {
   if (quitPromise) return quitPromise;
   quitting = true;
+  disposeNodeMedia();
   updates?.dispose();
   if (chatDeltaTimer) {
     clearTimeout(chatDeltaTimer);
@@ -1372,6 +1488,7 @@ function requestQuit(afterCleanup?: () => void): Promise<void> {
   }
   pendingChatDelta = null;
   nodeExpiredDone = null;
+  nodeTerminalNotice.dispose();
   if (nodeSuccessTimer) {
     clearTimeout(nodeSuccessTimer);
     nodeSuccessTimer = null;
@@ -1505,6 +1622,25 @@ function createWindow(): BrowserWindow {
 }
 
 function setupIpc(): void {
+  ipcMain.handle("lunmi:onboarding-open", async (event, args: { target?: unknown }) => {
+    if (!isTrustedMain(event)) {
+      throw new Error("Sender não autorizado.");
+    }
+    const url = typeof args?.target === "string" ? ONBOARDING_PAGES[args.target] : undefined;
+    if (!url) return { opened: false };
+    if (args.target === "groq-keys") groqKeyWatch.open(Date.now());
+    await shell.openExternal(url);
+    return { opened: true };
+  });
+
+  ipcMain.handle("lunmi:onboarding-groq-key", async (event) => {
+    if (!isTrustedMain(event)) {
+      throw new Error("Sender não autorizado.");
+    }
+    if (!groqKeyWatch.active(Date.now())) return { key: null };
+    return { key: groqKeyWatch.take(await clipboard.readText(), Date.now()) };
+  });
+
   ipcMain.handle("lunmi:hello", async (event) => {
     if (!isTrustedSenderFrame(event, mainWindow, expectedIndexFileUrl)) {
       throw new Error("Sender não autorizado.");
@@ -2019,6 +2155,11 @@ function bootstrap(): void {
 if (isElectronMainRuntime()) {
   app.setName("Lunmi");
   if (process.platform === "win32") app.setAppUserModelId("org.lunmi.desktop");
+  // O movimento é decidido pela preferência da Lunmi, não pelos "Efeitos de animação" do
+  // Windows (o Chromium traduzia-os em prefers-reduced-motion e apagava orb e fundo). Os switches
+  // só valem antes de `ready`, por isso a mudança aplica-se ao reiniciar.
+  const motionPrefs = readPreferencesFile(path.join(process.env.LUNMI_SANDBOX_DIR || getUserDataRoot(), ".local"));
+  app.commandLine.appendSwitch(motionPrefs.reduceMotion ? "force-prefers-reduced-motion" : "force-prefers-no-reduced-motion");
 
   // Uma instância: abrir de novo restaura a existente; nunca um segundo backend Python.
   const hasSingleInstanceLock = app.requestSingleInstanceLock();

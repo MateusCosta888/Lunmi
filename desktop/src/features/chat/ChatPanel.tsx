@@ -15,7 +15,7 @@ import type { SessionReadyPayload } from "../../shared/protocol";
 import type { AttachmentDto, ChatMode } from "../../shared/types";
 import type { ChatAttachmentPayload, ChatTaskState } from "./useChatTask";
 import { MAX_COMPOSER_CHARS } from "./useChatTask";
-import { TaskPanel } from "../task/TaskPanel";
+import { TaskPanel, verdictOf } from "../task/TaskPanel";
 import { Icon } from "../../shared/ui";
 import { GalaxyOrb } from "./orb/GalaxyOrb";
 import { AttachmentsBar } from "./Attachments";
@@ -51,6 +51,7 @@ export interface ChatPanelProps {
   attachNotice?: string | null;
   onDismissAttachNotice?: () => void;
   onAttachmentsAccepted?: () => void;
+  showTaskResults?: boolean;
 }
 
 function bubbleStyle(role: string): React.CSSProperties {
@@ -95,12 +96,22 @@ export function ChatPanel({
   chat, session, draft, setDraft, voiceInput, reportVoiceMode, modelPicker, modelChanging = false, autoApprove,
   attachments, attachmentPayload, onPickAttachment, onRemoveAttachment,
   attachSupported = false, attachPicking = false, attachNotice = null,
-  onDismissAttachNotice, onAttachmentsAccepted,
+  onDismissAttachNotice, onAttachmentsAccepted, showTaskResults = false,
 }: ChatPanelProps): React.ReactElement {
   const [localText, setLocalText] = useState("");
   const text = draft ?? localText;
   const setText = setDraft ?? setLocalText;
   const [legacyMode, setMode] = useState<ChatMode>("execute");
+  const [dismissedResultError, setDismissedResultError] = useState<string | null>(null);
+  const result = chat.task?.result;
+  const resultErrorKey = result ? `${session?.session_id}:${result.task_id}:${result.status}:${Boolean(result.false_success)}:${result.failure_kind ?? ""}` : null;
+  const resultError = !showTaskResults && result && verdictOf(result) === "failure" && dismissedResultError !== resultErrorKey
+    ? result.false_success ? "A ação pareceu concluída, mas a verificação falhou."
+      // Não verificado não é falha: a mensagem do agente não é evidência, logo não aparece como erro.
+      : result.status === "NOT_VERIFIED" ? "Não foi possível verificar o resultado. Ativa \"Mostrar resultado da tarefa\" em Configurações para ver os detalhes."
+      : result.message?.trim() || "Não foi possível confirmar o resultado do pedido."
+    : null;
+  const visibleError = chat.lastError || resultError;
   const automatic = session?.capabilities.auto === true;
   const mode: ChatMode = automatic ? "auto" : legacyMode;
   // ORB REACTIVE V1: a orb reage só aos estados reais (mic listening; starting/transcribing/
@@ -253,7 +264,7 @@ export function ChatPanel({
           </div>
         ))}
         {chat.task && <ThoughtLine key={chat.task.task_id} task={chat.task} />}
-        {chat.task && !chat.busy && <TaskPanel chat={chat} />}
+        {showTaskResults && chat.task && !chat.busy && <TaskPanel chat={chat} />}
         <div ref={listEndRef} />
       </div>
       </div>
@@ -361,7 +372,7 @@ export function ChatPanel({
         </div>
       )}
 
-      {chat.lastError && (
+      {visibleError && (
         <div
           role="alert"
           data-testid="chat-error"
@@ -377,8 +388,11 @@ export function ChatPanel({
             gap: "10px",
           }}
         >
-          <span>{chat.lastError}</span>
-          <button type="button" onClick={chat.dismissError} style={linkButtonStyle}>
+          <span>{visibleError}</span>
+          <button type="button" onClick={() => {
+            chat.dismissError();
+            setDismissedResultError(resultErrorKey);
+          }} style={linkButtonStyle}>
             fechar
           </button>
         </div>

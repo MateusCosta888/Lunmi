@@ -66,6 +66,11 @@ export interface LunmiBridgeApi {
   pickAttachments?(): Promise<PickAttachmentsResultDto>;
   windowControl?(action: WindowControlAction): Promise<WindowStateDto>;
   restartBackend?(): Promise<SessionReadyPayload>;
+  /** Introdução: páginas fixas e a chave Groq copiada (nunca outro conteúdo). */
+  onboarding?: {
+    open(target: "groq-keys" | "kiro-docs"): Promise<{ opened: boolean }>;
+    groqKey(): Promise<{ key: string | null }>;
+  };
   /** Aditiva/opcional: builds sem atalho de ditado simplesmente não a expõem. */
   voiceInputShortcut?: VoiceInputShortcutApi;
   shutdown(): Promise<{ status: string; session_id: string }>;
@@ -110,7 +115,9 @@ export function toBridgeError(err: unknown): BridgeError {
   if (err instanceof BridgeError) {
     return err;
   }
-  const raw = err instanceof Error ? err.message : String(err);
+  // O Electron embrulha cada rejeição do main: "Error invoking remote method 'canal': Error: <código>: <texto>".
+  const raw = (err instanceof Error ? err.message : String(err))
+    .replace(/^Error invoking remote method '[^']*': (?:Error: )?/, "");
   const separator = raw.indexOf(": ");
   if (separator > 0 && separator < 40) {
     const code = raw.slice(0, separator).trim();

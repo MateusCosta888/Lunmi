@@ -90,6 +90,7 @@ export const PRESENCE_ACTIONS = [
   "toggle-mini",
   "hide-mini",
   "stop-voice",
+  "cancel-dictation",
   "quit",
   ...NODE_ACTIONS,
 ] as const satisfies readonly PresenceAction[];
@@ -105,6 +106,7 @@ export const COMPANION_PRESENCE_ACTIONS = [
   "toggle-mini",
   "hide-mini",
   "stop-voice",
+  "cancel-dictation",
   ...NODE_ACTIONS,
 ] as const satisfies readonly PresenceAction[];
 
@@ -584,8 +586,9 @@ export type NodeStatusSurface = "none" | "pill" | "attention" | "docked";
  * - `working`/`done` com `show_activity` → cápsula (`pill`);
  * - `needs_confirm`/`needs_input`/`not_verified`/`failed`/`cancelled`/`offline` → `attention`;
  * - chat humano aberto é preservado; nenhuma superfície automática rouba foco;
- * - `idle` não força nada, mas uma cápsula automática recolhe para `docked`;
- * - `suppressed` (gesto explícito de recolha) vence até o status mudar.
+ * - `idle` recolhe atenção antiga e cápsula automática para `docked`;
+ * - terminais expirados e atenção já sem tarefa recolhem, sem fechar superfícies humanas;
+ * - `suppressed` impede reexpansão; não impede recolher uma cápsula automática já expirada.
  */
 export function nodeSurfaceForStatus(input: {
   status: NodeStatus | null;
@@ -593,10 +596,16 @@ export function nodeSurfaceForStatus(input: {
   current: NodeSurface;
   auto_pill: boolean;
   suppressed?: boolean;
+  terminal_expired?: boolean;
 }): NodeStatusSurface {
   if (input.current === "chat" || input.current === "hidden") return "none";
-  if (input.suppressed) return "none";
   const effective = effectiveNodeStatus(input.status, input.show_activity);
+  if (input.terminal_expired &&
+      (effective === "failed" || effective === "not_verified" || effective === "cancelled")) {
+    return input.current === "attention" || (input.current === "pill" && input.auto_pill) ? "docked" : "none";
+  }
+  if (effective === "idle" && input.current === "attention") return "docked";
+  if (input.suppressed) return "none";
   if (effective === "working" || effective === "done") {
     return input.current === "pill" ? "none" : "pill";
   }

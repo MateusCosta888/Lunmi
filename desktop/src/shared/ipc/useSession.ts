@@ -44,6 +44,7 @@ export function useSession(): UseSessionResult {
   const [errorMessage, setErrorMessage] = useState("");
   const [sessionVersion, setSessionVersion] = useState(0);
   const sessionIdRef = useRef<string>("");
+  const requestEpochRef = useRef(0);
 
   const acceptSession = useCallback((payload: SessionReadyPayload | null | undefined) => {
     if (!payload || typeof payload.session_id !== "string") {
@@ -60,6 +61,8 @@ export function useSession(): UseSessionResult {
   }, []);
 
   useEffect(() => {
+    let alive = true;
+    const epoch = ++requestEpochRef.current;
     const api = getBridgeApi();
     if (!api) {
       setStatus("failed");
@@ -68,11 +71,14 @@ export function useSession(): UseSessionResult {
     }
 
     const unsubscribe = api.onEvent((event) => {
+      if (!alive) return;
       if (event.type === "session.ready") {
+        requestEpochRef.current += 1;
         acceptSession(event.payload as unknown as SessionReadyPayload);
         return;
       }
       if (isBackendFailureEvent(event.type, (event.payload as Record<string, unknown>).code)) {
+        requestEpochRef.current += 1;
         const payload = event.payload as unknown as SessionFailureDto;
         setFailure(payload);
         setErrorMessage(payload.message || "O backend Python encerrou.");
@@ -83,18 +89,22 @@ export function useSession(): UseSessionResult {
 
     api
       .hello()
-      .then((payload) => acceptSession(payload))
+      .then((payload) => { if (alive && requestEpochRef.current === epoch) acceptSession(payload); })
       .catch((err: unknown) => {
+        if (!alive || requestEpochRef.current !== epoch) return;
         setStatus("failed");
         setErrorMessage(describeError(err));
       });
 
     return () => {
+      alive = false;
+      requestEpochRef.current += 1;
       unsubscribe();
     };
   }, [acceptSession]);
 
   const restart = useCallback(async () => {
+    const epoch = ++requestEpochRef.current;
     const api = getBridgeApi();
     if (!api || typeof api.restartBackend !== "function") {
       setStatus("failed");
@@ -105,8 +115,10 @@ export function useSession(): UseSessionResult {
     setErrorMessage("");
     try {
       const payload = await api.restartBackend();
+      if (requestEpochRef.current !== epoch) return;
       acceptSession(payload);
     } catch (err: unknown) {
+      if (requestEpochRef.current !== epoch) return;
       setFailure(null);
       setStatus("failed");
       setErrorMessage(describeError(err));

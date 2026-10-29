@@ -62,12 +62,13 @@ interface FakeBridge {
   settleSend: (index: number, error?: Error) => void;
 }
 
-function makeFakeBridge(initialSession: SessionReadyPayload): FakeBridge {
+function makeFakeBridge(initialSession: SessionReadyPayload, showTaskResults = false): FakeBridge {
   const listeners = new Set<(event: Envelope) => void>();
   const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
   let restartCount = 0;
   let currentSession = initialSession;
   let deferSend = false;
+  let uiPreferences = { window: null, scale_pct: 100, actions: [], show_task_results: showTaskResults };
   const deferredSends: Array<{
     resolve: (value: Record<string, unknown>) => void;
     reject: (error: Error) => void;
@@ -90,7 +91,11 @@ function makeFakeBridge(initialSession: SessionReadyPayload): FakeBridge {
         return { auto_approve: false, mode: "manual", label: "Modo: Manual" };
       }
       if (type === "ui.preferences.get") {
-        return { window: null, scale_pct: 100, actions: [] };
+        return uiPreferences;
+      }
+      if (type === "ui.preferences.set") {
+        uiPreferences = { ...uiPreferences, ...payload };
+        return uiPreferences;
       }
       if (type === "memory.list") {
         return { enabled: true, items: [] };
@@ -423,7 +428,7 @@ describe("Chat e tarefa (F2a)", () => {
   });
 
   it("mostra o veredito real e a falha declarada do resultado", async () => {
-    const bridge = makeFakeBridge(sessionPayload("sess-1"));
+    const bridge = makeFakeBridge(sessionPayload("sess-1"), true);
     await renderReadyApp(bridge);
 
     bridge.emit(event("task.started", { task_id: "tsk-3", mode: "execute", instruction: "abra o app" }));
@@ -446,5 +451,77 @@ describe("Chat e tarefa (F2a)", () => {
     await waitFor(() => expect(screen.getByTestId("task-verdict").textContent).toBe("Falha declarada"));
     expect(screen.getByTestId("task-verdict").getAttribute("data-verdict")).toBe("failure");
     expect(screen.getByTestId("task-metrics").textContent).toContain("1.23 s");
+  });
+
+  it("oculta o cartão por padrão e conserva a resposta e os erros", async () => {
+    const bridge = makeFakeBridge(sessionPayload("sess-result-default"));
+    await renderReadyApp(bridge);
+    bridge.emit(event("task.started", { task_id: "hidden-result", mode: "converse", instruction: "teste" }));
+    bridge.emit(event("chat.message", { task_id: "hidden-result", role: "assistant", text: "O pedido não foi concluído." }));
+    bridge.emit(event("task.finished", { task_id: "hidden-result", status: "FAILED", message: "Não foi possível concluir." }));
+    await screen.findByText("O pedido não foi concluído.");
+    expect(screen.queryByTestId("task-panel")).toBeNull();
+    bridge.emit(event("task.error", { task_id: "hidden-result", code: "PROVIDER_FAILURE", message: "Falha de teste do Brain." }));
+    await waitFor(() => expect(screen.getByTestId("chat-error").textContent).toContain("Falha de teste do Brain."));
+    expect(screen.queryByTestId("task-panel")).toBeNull();
+  });
+
+  it("ativa e desativa resultados nas preferências sem repetir a tarefa", async () => {
+    const bridge = makeFakeBridge(sessionPayload("sess-result-toggle"));
+    await renderReadyApp(bridge);
+    bridge.emit(event("task.started", { task_id: "toggle-result", mode: "converse", instruction: "teste" }));
+    bridge.emit(event("task.finished", { task_id: "toggle-result", status: "SUCCESS", scope: "conversation", message: "resposta" }));
+    fireEvent.click(screen.getByTestId("nav-preferences"));
+    const checkbox = await screen.findByTestId("show-task-results") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox.checked).toBe(true));
+    expect(bridge.calls.some(call => call.type === "ui.preferences.set" && call.payload.show_task_results === true)).toBe(true);
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    expect(await screen.findByTestId("task-panel")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("nav-preferences"));
+    const enabled = await screen.findByTestId("show-task-results") as HTMLInputElement;
+    expect(enabled.checked).toBe(true);
+    fireEvent.click(enabled);
+    await waitFor(() => expect(enabled.checked).toBe(false));
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    expect(screen.queryByTestId("task-panel")).toBeNull();
+    expect(bridge.calls.filter(call => call.type === "chat.send")).toHaveLength(0);
+  });
+
+  it("mantém o aviso de verificação falhada com o cartão oculto", async () => {
+    const bridge = makeFakeBridge(sessionPayload("sess-hidden-false-success"));
+    await renderReadyApp(bridge);
+    bridge.emit(event("task.started", { task_id: "unverified", mode: "execute", instruction: "teste" }));
+    bridge.emit(event("task.finished", { task_id: "unverified", status: "SUCCESS", false_success: true, message: "Concluído." }));
+    await waitFor(() => expect(screen.getByTestId("chat-error").textContent).toContain("a verificação falhou"));
+    expect(screen.queryByTestId("task-panel")).toBeNull();
+  });
+
+  it("não verificado com o cartão oculto mostra o aviso fixo, nunca a mensagem do agente", async () => {
+    const bridge = makeFakeBridge(sessionPayload("sess-hidden-not-verified"));
+    await renderReadyApp(bridge);
+    bridge.emit(event("task.started", { task_id: "nv", mode: "execute", instruction: "teste" }));
+    bridge.emit(event("task.finished", { task_id: "nv", status: "NOT_VERIFIED", message: "Pasta criada com sucesso." }));
+    const alert = await screen.findByTestId("chat-error");
+    expect(alert.textContent).toContain("Não foi possível verificar o resultado");
+    expect(alert.textContent).not.toContain("Pasta criada com sucesso.");
+  });
+
+  it("não ativa resultados se a preferência falhar ao guardar", async () => {
+    const bridge = makeFakeBridge(sessionPayload("sess-result-disk-failure"));
+    await renderReadyApp(bridge);
+    const send = vi.mocked(bridge.api.sendCommand).getMockImplementation()!;
+    vi.spyOn(bridge.api, "sendCommand").mockImplementation((async (type, payload) => {
+      if (type === "ui.preferences.set" && payload?.show_task_results === true) throw new Error("Disco de teste indisponível.");
+      return send(type, payload);
+    }) as LunmiBridgeApi["sendCommand"]);
+    fireEvent.click(screen.getByTestId("nav-preferences"));
+    const checkbox = await screen.findByTestId("show-task-results") as HTMLInputElement;
+    fireEvent.click(checkbox);
+    await screen.findByText("Disco de teste indisponível.");
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    expect(screen.queryByTestId("task-panel")).toBeNull();
   });
 });

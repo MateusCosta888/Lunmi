@@ -47,9 +47,16 @@ describe("parsePreferences", () => {
   it("aceita um arquivo válido", () => {
     expect(parsePreferences({ scale_pct: 150, window: [10, 20, 1280, 800] })).toEqual({
       theme: "celestial",
+      reduceMotion: false,
       scalePct: 150,
       window: { x: 10, y: 20, width: 1280, height: 800 },
     });
+  });
+
+  it("só reduz movimento quando a Lunmi o pede; o Windows não decide", () => {
+    expect(parsePreferences({}).reduceMotion).toBe(false);
+    expect(parsePreferences({ reduce_motion: true }).reduceMotion).toBe(true);
+    expect(parsePreferences({ reduce_motion: "true" }).reduceMotion).toBe(false);
   });
 
   it("devolve o padrão para escala inválida e para janela fora dos limites", () => {
@@ -77,11 +84,12 @@ describe("readPreferencesFile (salvar/reabrir)", () => {
     try {
       fs.writeFileSync(
         path.join(dir, "lunmi-ui.json"),
-        JSON.stringify({ window: [100, 100, 1280, 800], scale_pct: 125, actions: [] }),
+        JSON.stringify({ window: [100, 100, 1280, 800], scale_pct: 125, reduce_motion: true, actions: [] }),
         "utf8"
       );
       expect(readPreferencesFile(dir)).toEqual({
         theme: "celestial",
+        reduceMotion: true,
         scalePct: 125,
         window: { x: 100, y: 100, width: 1280, height: 800 },
       });
