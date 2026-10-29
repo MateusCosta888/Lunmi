@@ -69,11 +69,31 @@ export const COMMAND_TIMEOUT_MS: Readonly<Record<string, number>> = Object.freez
   "brain.list": 35000,
   "brain.verify": 50000,
   "brain.probe": 100000,
+  // `whoami` + `--version` do Kiro CLI: arranque a frio de um binário de 430 MB.
+  "brain.kiro.status": 70000,
   "brain.set": 35000,
 });
 
 export function commandTimeoutMs(type: string): number {
   return COMMAND_TIMEOUT_MS[type] ?? DEFAULT_COMMAND_TIMEOUT_MS;
+}
+
+/**
+ * Componentes pesados do pacote (Python, voz). O instalador extrai-os ao lado da instalação, em
+ * `<pasta>-runtime/<nome>-<chave>`, e só quando o conteúdo muda; `lunmi-components.json` diz a
+ * chave desta versão. Sem manifesto (pacotes até ao Alpha 5) ficam em `resources/<nome>`.
+ */
+export function componentDir(resourcesRoot: string, name: "python" | "voice"): string {
+  try {
+    const keys = JSON.parse(fs.readFileSync(path.join(resourcesRoot, "lunmi-components.json"), "utf8")) as Record<string, unknown>;
+    const key = keys[name];
+    if (typeof key === "string" && /^[0-9a-f]{16}$/.test(key)) {
+      return path.join(`${path.dirname(resourcesRoot)}-runtime`, `${name}-${key}`);
+    }
+  } catch {
+    // sem manifesto: layout anterior dentro de resources/
+  }
+  return path.join(resourcesRoot, name);
 }
 
 export function resolvePythonExecutable(repoRoot: string, resourcesRoot?: string | null): string {
@@ -82,9 +102,9 @@ export function resolvePythonExecutable(repoRoot: string, resourcesRoot?: string
     return envPy;
   }
   // Runtime Python privado do pacote: nada de depender de um Python instalado na máquina
-  // do testador. O instalador copia `resources/python` (CPython portável + dependências).
+  // do testador (CPython portável + dependências, ver `componentDir`).
   if (resourcesRoot) {
-    const bundled = path.join(resourcesRoot, "python", "python.exe");
+    const bundled = path.join(componentDir(resourcesRoot, "python"), "python.exe");
     if (fs.existsSync(bundled)) {
       return bundled;
     }
@@ -263,7 +283,7 @@ export class PythonBackendSupervisor {
       childEnv.LUNMI_USER_DATA = this.options.userDataRoot;
     }
     if (this.options.resourcesRoot) {
-      childEnv.LUNMI_BUNDLED_VOICE_HOME = path.join(this.options.resourcesRoot, "voice");
+      childEnv.LUNMI_BUNDLED_VOICE_HOME = componentDir(this.options.resourcesRoot, "voice");
     }
 
     let child: ChildProcessWithoutNullStreams;
@@ -362,6 +382,7 @@ export class PythonBackendSupervisor {
       executable?: string;
     }
   ): void {
+    if (child && child !== this.proc) return;
     if (child) {
       if (this.failedChildren.has(child)) {
         return;
