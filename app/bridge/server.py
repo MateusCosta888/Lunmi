@@ -38,7 +38,8 @@ from app.settings import ConfigurationError, Settings  # noqa: E402
 # Answered on the stdin reader thread, they used to freeze every command behind them —
 # Parar, the answer to a pending confirmation, a location — until the provider replied.
 # They run on their own threads instead; the reply still carries the request id.
-SLOW_COMMANDS: frozenset[str] = frozenset({"brain.list", "brain.verify", "brain.probe", "brain.set"})
+SLOW_COMMANDS: frozenset[str] = frozenset({"brain.list", "brain.verify", "brain.probe", "brain.set",
+                                          "brain.kiro.status"})
 # At most this many provider waits at once; further ones queue on the semaphore, never on
 # the reader thread.
 MAX_SLOW_COMMANDS = 4

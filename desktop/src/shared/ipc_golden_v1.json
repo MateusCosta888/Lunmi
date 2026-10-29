@@ -35,6 +35,10 @@
     "brain.get",
     "brain.list",
     "brain.probe",
+    "brain.kiro.status",
+    "brain.kiro.install",
+    "brain.kiro.login",
+    "brain.kiro.cancel",
     "brain.set",
     "brain.verify",
     "chat.history.clear",
@@ -104,6 +108,7 @@
   ],
   "events": [
     "brain.updated",
+    "brain.kiro.state",
     "chat.history.changed",
     "chat.message",
     "integrations.changed",

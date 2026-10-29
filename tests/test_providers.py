@@ -133,7 +133,7 @@ def test_local_endpoints_need_no_key() -> None:
 
 
 def test_named_cloud_providers_require_a_key() -> None:
-    for provider in ("gemini", "openrouter", "nvidia"):
+    for provider in ("gemini", "openrouter", "nvidia", "groq"):
         with pytest.raises(ConfigurationError, match="chave"):
             Settings(provider=provider, model="model").validate()
         Settings(provider=provider, model="model", api_key="key").validate()
@@ -169,6 +169,7 @@ def test_provider_groups_partition_the_supported_set() -> None:
     ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
     ("openrouter", "https://openrouter.ai/api/v1"),
     ("nvidia", "https://integrate.api.nvidia.com/v1"),
+    ("groq", "https://api.groq.com/openai/v1"),
     ("ollama", "http://localhost:11434/v1"),
     ("lmstudio", "http://localhost:1234/v1"),
     ("vllm", "http://localhost:8000/v1"),
@@ -228,6 +229,23 @@ def test_nvidia_key_comes_from_its_own_variable_and_preset() -> None:
     url, headers = brain._models_endpoint()
     assert (url, headers["Authorization"]) == (
         "https://integrate.api.nvidia.com/v1/models", "Bearer nvapi-chave-de-teste")
+    asyncio.run(brain.close())
+
+
+def test_groq_key_comes_from_its_own_variable_and_preset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`GROQ_API_KEY` é o nome documentado pelo Groq; a introdução só pede a chave."""
+    monkeypatch.setattr(settings_module, "ROOT", tmp_path)
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_chave-de-teste")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    saved = Settings.load()
+    assert (saved.provider, saved.api_key) == ("groq", "gsk_chave-de-teste")
+    brain = ApiBrain(saved)
+    url, headers = brain._models_endpoint()
+    assert (url, headers["Authorization"]) == (
+        "https://api.groq.com/openai/v1/models", "Bearer gsk_chave-de-teste")
     asyncio.run(brain.close())
 
 
@@ -308,3 +326,59 @@ def test_providers_without_a_curated_default_mark_nothing() -> None:
     assert _listed_models("gpt-6.1-sol", "gpt-6.1-air", provider="openai", key="sk-test") == [
         ("gpt-6.1-sol", False), ("gpt-6.1-air", False)]
     assert "openai" not in PROVIDER_PREFERRED_MODELS
+
+
+def test_rate_limit_wait_reads_groq_and_standard_headers() -> None:
+    from app.llm import rate_limit_wait
+    assert rate_limit_wait({"x-ratelimit-reset-tokens": "25.087s"}) == pytest.approx(25.587)
+    assert rate_limit_wait({"x-ratelimit-reset-tokens": "31s"}) is None  # acima de 30 s
+    assert rate_limit_wait({"x-ratelimit-reset-tokens": "7.5s"}) == 8.0
+    assert rate_limit_wait({"retry-after": "3"}) == 3.5
+    assert rate_limit_wait({"x-ratelimit-reset-tokens": "1m2s"}) is None
+    assert rate_limit_wait({}) is None
+
+
+def test_a_short_rate_limit_is_waited_once_and_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Groq gratuito: 8 mil tokens/min. Um 429 com reset curto não pode virar falha da pesquisa."""
+    import app.llm as llm
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(llm.asyncio, "sleep", fake_sleep)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"x-ratelimit-reset-tokens": "2s"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "olá"}}]})
+
+    brain = ApiBrain(Settings(provider="groq", model="m", api_key="gsk_test"))
+    brain._provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        completion = asyncio.run(brain.complete([{"role": "user", "content": "oi"}]))
+    finally:
+        asyncio.run(brain.close())
+    assert completion.text == "olá" and calls["n"] == 2 and waits == [2.5]
+
+
+def test_a_long_rate_limit_fails_at_once_with_a_clear_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.llm as llm
+    monkeypatch.setattr(llm.asyncio, "sleep", lambda seconds: (_ for _ in ()).throw(AssertionError("no wait")))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429, headers={"x-ratelimit-reset-tokens": "45s"})
+
+    brain = ApiBrain(Settings(provider="groq", model="m", api_key="gsk_test"))
+    brain._provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(BrainError) as failure:
+            asyncio.run(brain.complete([{"role": "user", "content": "oi"}]))
+    finally:
+        asyncio.run(brain.close())
+    assert failure.value.kind is ErrorKind.RATE_LIMITED and calls["n"] == 1
+    assert "limite de uso" in str(failure.value)

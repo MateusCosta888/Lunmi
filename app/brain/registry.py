@@ -26,6 +26,7 @@ LABELS = {
     "gemini": "Google Gemini",
     "openrouter": "OpenRouter",
     "nvidia": "NVIDIA NIM",
+    "groq": "Groq",
     "custom": "OpenAI Compatible",
     "ollama": "Ollama",
     "lmstudio": "LM Studio",

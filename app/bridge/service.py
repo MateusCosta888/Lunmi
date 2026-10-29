@@ -378,6 +378,8 @@ class BridgeService:
         # para o arranque da aplicação não esperar por `--version`/`help` do CLI.
         self._bind_web_brain(emit=False, probe_native=False)
         self._sync_engine_host_pids()
+        from app.brain.kiro_setup import KiroSetup
+        self.kiro_setup = KiroSetup(self._emit_kiro)
         from app.integrations.gmail import GmailIntegration
         self.integrations = GmailIntegration(
             self.root_dir / '.local' / 'composio.dpapi', self._integration_emit, self.session_id)
@@ -431,6 +433,28 @@ class BridgeService:
         self._restore_chat_context()
         if self.integrations.path.exists():
             self._loop.call_soon_threadsafe(self.integrations.resume)
+
+    def _emit_kiro(self, payload: dict[str, Any]) -> None:
+        if not self._closed:
+            self._emit("brain.kiro.state", dict(payload))
+
+    def _handle_kiro(self, cmd: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Introdução: instalar o Kiro CLI e entrar na conta sem terminal (`app/brain/kiro_setup.py`)."""
+        try:
+            if cmd == "brain.kiro.status":
+                return self.kiro_setup.status()
+            if cmd == "brain.kiro.install":
+                return self.kiro_setup.install()
+            if cmd == "brain.kiro.login":
+                return self.kiro_setup.login(str(payload.get("method", "")))
+            return self.kiro_setup.cancel()
+        except ValueError:
+            raise protocol.ProtocolError("invalid_payload", "Forma de entrar no Kiro desconhecida.") from None
+        except RuntimeError as exc:
+            reason = {"busy": "Já há uma instalação ou login do Kiro em curso.",
+                      "unsupported": "O Kiro CLI precisa do Windows 11.",
+                      "not_installed": "Instala o Kiro CLI antes de entrar."}.get(str(exc), str(exc))
+            raise protocol.ProtocolError("kiro_unavailable", reason) from None
 
     def _emit_voice(self, payload: dict[str, Any]) -> None:
         if self._closed:
@@ -935,6 +959,8 @@ class BridgeService:
             return self._handle_brain_verify(payload)
         if cmd == "brain.probe":
             return self._handle_brain_probe(payload)
+        if cmd in protocol.KIRO_COMMAND_TYPES:
+            return self._handle_kiro(cmd, payload)
         if cmd == "memory.list":
             return self._handle_memory_list(payload)
         if cmd == "memory.search":
@@ -1598,6 +1624,7 @@ class BridgeService:
                 "gemini": "GEMINI_API_KEY",
                 "openrouter": "OPENROUTER_API_KEY",
                 "nvidia": "NVIDIA_API_KEY",
+                "groq": "GROQ_API_KEY",
             }.get(provider, "LLM_API_KEY")
             api_key = os.getenv(key_name, "")
 
@@ -2255,6 +2282,9 @@ class BridgeService:
             "theme": self.prefs.theme,
             "window": list(self.prefs.window) if self.prefs.window else None,
             "scale_pct": self.prefs.scale_pct,
+            "reduce_motion": self.prefs.reduce_motion,
+            "onboarding_done": self.prefs.onboarding_done,
+            "show_task_results": self.prefs.show_task_results,
             "actions": [{"label": a.label, "draft": a.draft} for a in self.prefs.actions],
             "profile": {
                 "name": self.prefs.profile.name,
@@ -2267,6 +2297,8 @@ class BridgeService:
         return self._prefs_dto()
 
     def _handle_ui_preferences_set(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if "show_task_results" in payload and not isinstance(payload["show_task_results"], bool):
+            raise protocol.ProtocolError("invalid_payload", "show_task_results deve ser booleano.")
         if "path" in payload or "file" in payload:
             raise protocol.ProtocolError(
                 "invalid_payload",
@@ -2313,6 +2345,9 @@ class BridgeService:
             "theme": payload.get("theme", self.prefs.theme),
             "window": payload.get("window", list(self.prefs.window) if self.prefs.window else None),
             "scale_pct": payload.get("scale_pct", self.prefs.scale_pct),
+            "reduce_motion": payload.get("reduce_motion", self.prefs.reduce_motion),
+            "onboarding_done": payload.get("onboarding_done", self.prefs.onboarding_done),
+            "show_task_results": payload.get("show_task_results", self.prefs.show_task_results),
             "actions": payload.get(
                 "actions",
                 [{"label": a.label, "draft": a.draft} for a in self.prefs.actions],
@@ -2454,6 +2489,7 @@ class BridgeService:
             self._closed = True
             pending_reconfig = self._reconfig_future
         self._deny_all_pending_questions()
+        self.kiro_setup.cancel()
         try:
             self.voice_warmup.close()
         except Exception:

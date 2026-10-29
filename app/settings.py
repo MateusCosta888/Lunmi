@@ -42,7 +42,7 @@ def _local_dir() -> Path:
     return _user_data_root() / ".local"
 
 # Providers que exigem chave de API própria.
-API_KEY_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "openrouter", "nvidia"})
+API_KEY_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "openrouter", "nvidia", "groq"})
 # Endpoints compatíveis com OpenAI que dispensam chave ("custom" exige URL base).
 LOCAL_ENDPOINT_PROVIDERS = frozenset({"custom", "ollama", "lmstudio", "vllm"})
 # Runtimes de CLI locais: autenticação e sessão pertencem ao próprio CLI.
@@ -150,11 +150,12 @@ class Settings:
         if not 1 <= self.max_steps <= 100 or not 1 <= self.timeout_seconds <= 3600:
             raise ConfigurationError("Limites inválidos de passos ou timeout.")
         if credentials and model and not self.model.strip():
-            raise ConfigurationError("Escolha um modelo em Configurar API.")
+            raise ConfigurationError("Escolha um modelo no painel Brain.")
         if credentials and self.provider == "codex" and self.api_key:
             raise ConfigurationError("Codex usa login oficial da conta ChatGPT; não aceita chave API neste provider.")
         if credentials and self.provider in API_KEY_PROVIDERS and not self.api_key:
-            raise ConfigurationError("Configure sua chave em Configurar API.")
+            raise ConfigurationError(
+                f"O cérebro {self.provider} não tem chave de API. Adiciona-a no painel Brain.")
         if credentials and self.provider in CLI_PROVIDERS and self.provider != "codex" and self.api_key:
             raise ConfigurationError("Este provider usa a autenticação do próprio CLI; não aceita chave API.")
         if self.app_provider and self.app_provider not in SUPPORTED_PROVIDERS:
@@ -222,7 +223,7 @@ class Settings:
                      or str(app_selection.get("model") or "").strip())
         key_name = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
                     "gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
-                    "nvidia": "NVIDIA_API_KEY"}.get(provider, "LLM_API_KEY")
+                    "nvidia": "NVIDIA_API_KEY", "groq": "GROQ_API_KEY"}.get(provider, "LLM_API_KEY")
         try:
             return cls(
                 provider=provider,

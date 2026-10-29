@@ -64,6 +64,11 @@ export const COMMAND_TYPES = [
   "brain.set",
   "brain.verify",
   "brain.probe",
+  /** Introdução: instalar e entrar no Kiro CLI sem terminal; progresso em `brain.kiro.state`. */
+  "brain.kiro.status",
+  "brain.kiro.install",
+  "brain.kiro.login",
+  "brain.kiro.cancel",
   "approval.get",
   "approval.set",
   "memory.list",
@@ -139,6 +144,8 @@ export const EVENT_TYPES = [
   "task.cancelled",
   "task.error",
   "brain.updated",
+  /** Progresso público da instalação/login do Kiro; sem e-mail da conta. */
+  "brain.kiro.state",
   "memory.changed",
   /** VOICE V1: estado público de voz; nunca carrega texto de conversa. */
   "voice.state",
