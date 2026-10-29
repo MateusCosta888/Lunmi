@@ -15,6 +15,7 @@ anthropic.svg  id="anthropic"  title="Anthropic"  sha256=e833fdfa7e7187a86a05b87
 gemini.svg  id="gemini"  title="Gemini"  sha256=87d5b3c4be75a66f54c1936482a263df68185545b741129badd1b7c2449c18d3
 openrouter.svg  id="openrouter"  title="OpenRouter"  sha256=ae671cc83de9bd45db97a47ed5e38a4e1bd9f93a12be495ba4b4f8b284026bca
 nvidia.svg  id="nvidia"  title="Nvidia"  sha256=5a419b99e0ffdbfbe8caa7ec25581054eae03024da59cb860c54ea55ac8e7e73
+groq.svg  id="groq"  title="Groq"  sha256=078d5cf6e7a54905040c15ddacf5ea33c13042fe7739e820cedc2096e4406651
 ollama.svg  id="ollama"  title="Ollama"  sha256=3a268218fb2e6e81fa31df70f70b51331625047794db81db21d35359428fae7a
 lmstudio.svg  id="lmstudio"  title="LM Studio"  sha256=4a575e8382b52ce742ac5d21d361a7d2a08cea7c12390ee1bbb755ef7d3cc25b
 vllm.svg  id="vllm"  title="vLLM"  sha256=5b025970b51c270775d0528a68ad96583372c94a2a94c4d92b40b74cbe9f7153

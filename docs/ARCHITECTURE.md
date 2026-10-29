@@ -59,4 +59,4 @@ pessoal e não repete ferramentas, confirmações ou fala durante a recuperaçã
 recebem a mesma projeção pública. Pesquisa web mantém conteúdo de trabalho privado em RAM;
 apenas as fontes públicas elegíveis acompanham a resposta e o histórico.
 
-Código e lockfiles são públicos. Configurações de máquina, credenciais, bancos, exportações e evidências de execução são locais e ignorados pelo Git. O checkout não é um instalador empacotado; prepare dependências conforme o README.
+Código e lockfiles são públicos. Configurações de máquina, credenciais, bancos, exportações e evidências de execução são locais e ignorados pelo Git. O checkout não é um instalador empacotado; prepare dependências conforme o README. No pacote instalado, o runtime Python e a voz ficam como componentes em `<pasta de instalação>-runtime\<nome>-<hash>`, resolvidos por `componentDir` em `desktop/electron/backend.ts` a partir de `resources/lunmi-components.json`; ver `docs/UPDATES.md`.

@@ -98,6 +98,32 @@ function renderPanel(bridge: { sendCommand: SendCommandFn }, refreshToken = 0, s
   return render(<PanelHarness bridge={bridge} refreshToken={refreshToken} show={show} />);
 }
 
+it.each(["save", "undo"] as const)("protege o editor enquanto %s aguarda confirmação", async operation => {
+  const state = {
+    profile: profileDoc({ text: "Base.", revision: 1, can_undo: true, char_count: 5, state: "ready" }),
+    options: OPTIONS,
+  };
+  let finish!: (next: MemoryProfileDto) => void;
+  const bridge = makeBridge(state, type => type === `memory.profile.${operation}`
+    ? new Promise<MemoryProfileDto>(resolve => { finish = resolve; }) : undefined);
+  renderPanel(bridge);
+  await waitFor(() => expect((screen.getByTestId("memory-profile-text") as HTMLTextAreaElement).readOnly).toBe(false));
+  const editor = screen.getByTestId("memory-profile-text") as HTMLTextAreaElement;
+  if (operation === "save") fireEvent.change(editor, { target: { value: "Rascunho enviado." } });
+  const submitted = editor.value;
+  fireEvent.click(screen.getByTestId(`memory-profile-${operation}`));
+  await waitFor(() => expect(editor.readOnly).toBe(true));
+  expect(editor.value).toBe(submitted);
+  const text = operation === "save" ? submitted : "Texto anterior.";
+  state.profile = { ...state.profile, text, revision: 2, char_count: text.length };
+  finish(state.profile);
+  await waitFor(() => expect(editor.readOnly).toBe(false));
+  expect(editor.value).toBe(text);
+  fireEvent.change(editor, { target: { value: "Rascunho novo após confirmação." } });
+  expect(editor.value).toBe("Rascunho novo após confirmação.");
+  expect(bridge.calls.filter(call => call.type === `memory.profile.${operation}`)).toHaveLength(1);
+});
+
 async function waitForDoc(): Promise<void> {
   await waitFor(() => expect(screen.getByTestId("memory-profile-editor")).toBeTruthy());
 }

@@ -20,6 +20,7 @@ import { UpdateNotice } from "./features/preferences/UpdatesCard";
 import { ModelPicker } from "./features/chat/ModelPicker";
 import { useAttachments } from "./features/chat/useAttachments";
 import { ProfileModal } from "./features/profile/ProfileModal";
+import { needsOnboarding, Onboarding } from "./features/onboarding/Onboarding";
 import { EMPTY_PROFILE } from "./features/profile/useProfile";
 import type { ProfileDto } from "./shared/types";
 import { Starfield } from "./shared/Starfield";
@@ -77,6 +78,8 @@ export function App(): React.ReactElement {
   const [profileBusy, setProfileBusy] = useState(false);
   const attachments = useAttachments();
   const [introFinished, setIntroFinished] = useState(false);
+  // Decidido uma vez, quando preferências e Brain chegam: aplicar o cérebro a meio não fecha a introdução.
+  const [onboarding, setOnboarding] = useState<"unknown" | "open" | "closed">("unknown");
   const openedRef = useRef(false);
   const [controlsSession, setControlsSession] = useState("");
   const [memorySession, setMemorySession] = useState("");
@@ -211,6 +214,10 @@ export function App(): React.ReactElement {
     return () => { alive = false; };
   }, [sendCommand, session.status, chat.memoryVersion, view, revision, sessionId]);
 
+  useEffect(() => {
+    if (onboarding === "unknown" && preferences && brain) setOnboarding(needsOnboarding(preferences, brain) ? "open" : "closed");
+  }, [onboarding, preferences, brain]);
+
   const initialized = session.status === "ready" && Boolean(sessionId)
     && controlsSession === sessionId && memorySession === sessionId && fontReady && !startupError
     && warmup.settled;
@@ -282,6 +289,17 @@ export function App(): React.ReactElement {
       else setRevision(r => r + 1);
     }} />
   </>;
+
+  // Primeira abertura sem cérebro: a introdução vem antes do chat.
+  if (onboarding === "open") return (
+    <div className="lunmi-shell lunmi-shell-enter">
+      <Starfield themeId={themeId} />
+      <WindowControls />
+      <Onboarding sendCommand={sendCommand} onDone={next => {
+        setOnboarding("closed"); setView(next); setRevision(r => r + 1);
+      }} />
+    </div>
+  );
 
   return (
     <div className="lunmi-shell lunmi-shell-enter">
@@ -361,6 +379,7 @@ export function App(): React.ReactElement {
                 onClick={() => void sendCommand('chat.history.read', { conversation_id: chat.conversationId,
                   before: chat.history?.before }).catch(err => setShellError(String(err.message ?? 'Não foi possível carregar mensagens.')))}>Carregar mensagens anteriores</button>}
               <ChatPanel chat={chat} session={session.session} draft={draft} setDraft={setDraft} modelChanging={modelBusy}
+                showTaskResults={preferences?.show_task_results === true}
                 voiceInput={{ api: voiceApi, holdNotice: hold.notice }} reportVoiceMode={reportVoiceMode}
                 autoApprove={{ ready: Boolean(approval), enabled: approval?.auto_approve ?? false, busy: policyBusy || modelBusy, onToggle: next => void changePolicy(next) }}
                 attachments={attachments.items}
@@ -383,6 +402,7 @@ export function App(): React.ReactElement {
               onDraftChange={onMemoryDraftChange} />}
             {view === "preferences" && <PreferencesPanel sendCommand={sendCommand} session={session.session}
               history={chat.history} historyLocked={chat.busy || chat.submitting}
+              onTaskResultsChanged={show => setPreferences(current => current ? { ...current, show_task_results: show } : current)}
               onThemeChanged={theme => { setPreferences(current => current ? { ...current, theme } : current); setRevision(r => r + 1); }} />}
           </main>
           {view === "chat" && (railCollapsed ? (

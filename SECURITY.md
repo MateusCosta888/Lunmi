@@ -68,6 +68,16 @@ O lock de runtime usa pins PyPI para pip e setuptools, em vez de URLs locais da 
 
 O atualizador usa descritores assinados com Ed25519 e hash do instalador. Só aceita a origem fixa e uma versão superior; não instala ao sair normalmente. Chave privada e tokens GitHub nunca entram no cliente ou nos artefactos. Ver [Atualizações](docs/UPDATES.md).
 
+### Revisão de estabilidade da Alpha 6 — 2026-10-29
+
+Vite passa de 6.4.4 para 6.4.5, a correção de patch indicada pelo mantenedor para
+[GHSA-8g5g-mxqh-grgj](https://github.com/vitejs/vite/security/advisories/GHSA-8g5g-mxqh-grgj).
+O aviso afeta o servidor de desenvolvimento exposto na rede; a aplicação instalada carrega
+ficheiros locais. A auditoria npm da árvore resultante não reporta avisos conhecidos.
+O gate Python de distribuição também passou: o runtime mantém apenas as seis exceções
+revistas acima e o runtime de voz não reportou avisos conhecidos. O prazo de reavaliação
+de 15 de novembro mantém-se. Estes resultados não certificam ausência de vulnerabilidades.
+
 Na auditoria do pacote, três metadados de build dos wheels públicos Windows CPython 3.11 de [NumPy 2.4.6](https://pypi.org/project/numpy/2.4.6/#files) e [pandas 2.2.3](https://pypi.org/project/pandas/2.2.3/#files) contêm o nome comum de runner `runneradmin`. A exceção exige caminho e SHA-256 exatos, conferidos contra os wheels oficiais e os hashes publicados no PyPI. Alterar qualquer byte ou mover o conteúdo para outro caminho volta a bloquear; a exceção não desliga a procura de credenciais. Não há uma exclusão geral para `site-packages` ou nomes de utilizadores.
 
 No runtime de voz do Alpha 5, a mesma verificação inclui duas localizações dos metadados NumPy e três ficheiros públicos de [PyAV 18.1.0](https://pypi.org/project/av/18.1.0/#files) e [SciPy 1.17.1](https://pypi.org/project/scipy/1.17.1/#files). Foram novamente obtidos os wheels Windows oficiais, conferidos os hashes do lock e comparados os três ficheiros byte a byte antes de fixar os seus SHA-256. As exceções continuam limitadas ao caminho e conteúdo exatos. A auditoria também procura o caminho do runner Windows nos ensaios locais, para reproduzir este gate antes do CI; outros conteúdos com esse caminho continuam bloqueados.

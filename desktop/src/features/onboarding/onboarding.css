@@ -1,0 +1,46 @@
+/* Introdução: um cartão centrado sobre o fundo da Lunmi, com os tokens do tema. */
+.lunmi-onboarding { position: fixed; inset: 0; z-index: 1; display: grid; place-items: center; padding: 24px; overflow: auto; }
+.lunmi-onboarding-card {
+  width: min(520px, 100%); display: flex; flex-direction: column; gap: 14px; padding: 32px;
+  border-radius: 22px; border: 1px solid var(--lunmi-border-subtle);
+  background: color-mix(in srgb, var(--lunmi-bg-card) 92%, transparent);
+  box-shadow: var(--lunmi-depth-raised); color: var(--lunmi-text-secondary); font-size: 14px; line-height: 1.55;
+  animation: lunmi-onboarding-in .35s ease-out;
+}
+.lunmi-onboarding-card h1 { margin: 0; color: var(--lunmi-text-primary); font-size: 24px; font-weight: 600; letter-spacing: -.01em; }
+.lunmi-onboarding-card p { margin: 0; }
+.lunmi-onboarding-eyebrow { color: var(--lunmi-accent); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+.lunmi-onboarding-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.lunmi-onboarding-primary, .lunmi-onboarding-secondary, .lunmi-onboarding-key button {
+  border-radius: 12px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--lunmi-border-subtle);
+}
+.lunmi-onboarding-primary { background: var(--lunmi-accent); border-color: var(--lunmi-accent); color: var(--lunmi-bg-window); }
+.lunmi-onboarding-secondary, .lunmi-onboarding-key button { background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-primary); }
+.lunmi-onboarding-card button:disabled { opacity: .55; cursor: default; }
+.lunmi-onboarding-card button:focus-visible, .lunmi-onboarding-card input:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-onboarding-options { display: grid; gap: 10px; }
+.lunmi-onboarding-option {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 16px 18px; border-radius: 16px; cursor: pointer;
+  border: 1px solid var(--lunmi-border-subtle); background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 13px;
+}
+.lunmi-onboarding-option:hover { border-color: var(--lunmi-accent); }
+.lunmi-onboarding-option strong { display: flex; align-items: center; gap: 8px; color: var(--lunmi-text-primary); font-size: 15px; }
+.lunmi-onboarding-badge { padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; color: var(--lunmi-accent);
+  background: color-mix(in srgb, var(--lunmi-accent) 14%, transparent); }
+.lunmi-onboarding-steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.lunmi-onboarding-key { display: grid; gap: 6px; font-size: 12px; color: var(--lunmi-text-muted); }
+.lunmi-onboarding-key > div { display: flex; gap: 8px; }
+.lunmi-onboarding-key input {
+  flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; font: inherit; font-size: 13px;
+  border: 1px solid var(--lunmi-border-subtle); background: var(--lunmi-bg-input); color: var(--lunmi-text-primary);
+}
+.lunmi-onboarding-card progress { width: 100%; accent-color: var(--lunmi-accent); }
+.lunmi-onboarding-url code { word-break: break-all; font-size: 12px; }
+.lunmi-onboarding-status { color: var(--lunmi-text-muted); font-size: 12.5px; }
+.lunmi-onboarding-error { color: var(--lunmi-error); font-size: 12.5px; }
+.lunmi-onboarding-footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.lunmi-onboarding-footer .lunmi-link:last-child { margin-left: auto; }
+@keyframes lunmi-onboarding-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .lunmi-onboarding-card { animation: none; } }
+@media (max-width: 560px) { .lunmi-onboarding-card { padding: 22px; } }

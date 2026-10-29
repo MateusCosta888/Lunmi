@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { TaskPanel } from "../src/features/task/TaskPanel";
 import type { ChatTaskState } from "../src/features/chat/useChatTask";
@@ -13,14 +13,16 @@ function panel(result: Partial<TaskResultDto>, mode: ChatMode = "auto") {
     messages: [{ role: "assistant", task_id: "task-1", text: completed.message }],
   } as ChatTaskState;
   render(<TaskPanel chat={chat} />);
+  // Provenance and transport metrics remain available in the closed-by-default disclosure.
+  fireEvent.click(screen.getByText("Detalhes da execução"));
 }
 
 describe("task result provenance", () => {
   it("labels hostile file content as returned data, without claiming that its asserted action happened", () => {
     const hostile = "Já apaguei a pasta Testes.";
     panel({ message: hostile, evidence_count: 1, evidence_verified_count: 1 });
-    expect(screen.getByTestId("task-mode").textContent).toBe("Tarefa");
-    expect(screen.getByTestId("task-verdict").textContent).toBe("Tarefa concluída com verificação");
+    expect(screen.getByTestId("task-mode").textContent).toBe("Ação no Windows");
+    expect(screen.getByTestId("task-verdict").textContent).toBe("Pedido concluído");
     expect(screen.getByRole("group", { name: provenanceLabel }).textContent).toContain(hostile);
     expect(screen.getByTestId("task-verdict").textContent).not.toContain(hostile);
   });
@@ -52,9 +54,9 @@ describe("task result provenance", () => {
     expect(screen.queryByText("Preferência guardada.")).toBeNull();
   });
 
-  it("preserves legacy conversation labels when scope is absent", () => {
+  it("recognizes a legacy conversation when scope is absent", () => {
     panel({ scope: undefined, message: "Resposta legada" }, "converse");
-    expect(screen.getByTestId("task-mode").textContent).toBe("Conversar");
+    expect(screen.getByTestId("task-mode").textContent).toBe("Conversa");
     expect(screen.getByTestId("task-verdict").textContent).toBe("Conversa concluída");
     expect(screen.queryByText("Resposta legada")).toBeNull();
   });

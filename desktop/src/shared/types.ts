@@ -503,6 +503,9 @@ export interface UiPreferencesDto {
   theme?: string;
   window: number[] | null;
   scale_pct: number;
+  reduce_motion?: boolean;
+  onboarding_done?: boolean;
+  show_task_results?: boolean;
   actions: QuickActionDto[];
   profile?: { name: string; avatar_data_url: string };
 }
@@ -741,6 +744,7 @@ export type PresenceAction =
   | "toggle-mini"
   | "hide-mini"
   | "stop-voice"
+  | "cancel-dictation"
   | "quit"
   // LUNMI NODE V1 (N1): ações do Node, aceites apenas a partir da janela companheira.
   | "node-reveal"
@@ -898,6 +902,8 @@ export type PresenceEventDto =
  * o remetente e a allowlist de cada janela: os métodos opcionais existem só na janela indicada.
  */
 export interface LunmiPresenceApi {
+  /** Local system-media controls, only exposed to the companion. */
+  media?: import("./media").NodeMediaApi;
   snapshot(): Promise<PresenceSnapshotDto>;
   action(action: PresenceAction): Promise<PresenceActionResultDto>;
   setDraft(text: string, conversationId?: string): Promise<{ ok: boolean }>;

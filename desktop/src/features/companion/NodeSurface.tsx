@@ -48,19 +48,24 @@ const SURFACE_LAYER: Record<NodeSurfaceKind, NodeLayer | null> = {
 
 /**
  * Etiquetas honestas por estado finito. São texto fixo do enum publicado pelo main — nunca
- * progresso, instrução ou mensagem da conversa.
+ * progresso, instrução ou mensagem da conversa. Curtas para caberem nos 280 px da cápsula e
+ * dizem o que o clique faz: confirmar/responder acontece na janela principal; os estados
+ * terminais abrem o chat onde o resultado já está.
  */
 const STATUS_LABEL: Record<NodeStatus, string> = {
-  idle: "Pronta a ajudar",
+  idle: "Pronta",
   working: "A trabalhar",
-  needs_confirm: "Preciso da tua confirmação",
-  needs_input: "Preciso da tua resposta",
-  done: "Tarefa concluída",
-  not_verified: "Resultado por verificar",
-  cancelled: "Tarefa cancelada",
-  failed: "A tarefa falhou",
-  offline: "Sem ligação ao backend",
+  needs_confirm: "Confirmar na principal",
+  needs_input: "Responder na principal",
+  done: "Concluída",
+  not_verified: "Por verificar",
+  cancelled: "Cancelada",
+  failed: "Falhou",
+  offline: "Sem ligação",
 };
+
+/** Para onde a cápsula leva: decisões ficam na principal; resultados abrem no chat. */
+const SHOW_MAIN_STATUSES: ReadonlySet<NodeStatus> = new Set<NodeStatus>(["needs_confirm", "needs_input"]);
 
 const IDLE_LABEL = "Lunmi";
 
@@ -149,6 +154,16 @@ export function NodeSurface(): React.ReactElement | null {
   const open = useCallback(() => request("node-open"), [request]);
   const close = useCallback(() => request("node-close"), [request]);
 
+  useEffect(() => {
+    const onBlur = () => {
+      if (state?.surface !== "chat" || state.phase !== "settled" || state.voice_phase
+        || state.status === "working" || state.status === "needs_confirm" || state.status === "needs_input") return;
+      close();
+    };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [state, close]);
+
   /** Hover sobre o arco recolhido: UM pedido, só quando a mudança acontece. */
   const onPointerEnter = useCallback(() => {
     if (settled !== "docked") return;
@@ -183,7 +198,18 @@ export function NodeSurface(): React.ReactElement | null {
   const tone = state.tone;
   const status = state.status;
   const voicePhase = state.voice_phase ?? null;
-  const label = voicePhase ? VOICE_LABEL[voicePhase] : status ? STATUS_LABEL[status] : IDLE_LABEL;
+  // Saída de voz (TTS) é um facto do main; a etiqueta «A falar» só aparece quando ele é real.
+  const label = voicePhase ? VOICE_LABEL[voicePhase]
+    : presenceVoice?.state === "playing" ? "A falar"
+    : presenceVoice?.state === "synthesizing" ? "A preparar a voz"
+    : status ? STATUS_LABEL[status] : IDLE_LABEL;
+  // A cápsula é acionável: confirmação/resposta levam à principal (onde se decide) e os estados
+  // terminais abrem o chat, onde o resultado já está. Nunca aprova nem responde no Node.
+  const pillNeedsMain = status !== null && SHOW_MAIN_STATUSES.has(status);
+  const pillAction = pillNeedsMain
+    ? () => request("show-main")
+    : open;
+  const pillLabel = pillNeedsMain ? `Ir para a janela principal — ${label}` : `Abrir o chat — ${label}`;
   // ORB REACTIVE V1: estados reais espelhados na face circular — voice_phase do main manda;
   // TTS playing → speaking; nada de áudio medido nem estados inventados.
   const orbMode = deriveOrbMode({
@@ -239,12 +265,13 @@ export function NodeSurface(): React.ReactElement | null {
           type="button"
           className="lunmi-node-layer lunmi-node-pill"
           data-testid="node-pill"
+          data-action={pillNeedsMain ? "show-main" : "node-open"}
           hidden={layer !== "pill"}
           style={rectStyle(rects.pill.x, rects.pill.y, rects.pill.width, rects.pill.height)}
-          aria-label={`Abrir o chat — ${label}`}
+          aria-label={pillLabel}
           disabled={!pillActive}
           tabIndex={pillActive ? 0 : -1}
-          onClick={open}
+          onClick={pillAction}
         >
           <span className="lunmi-node-dot" aria-hidden="true" />
           <span className="lunmi-node-pill-text" data-testid="node-pill-text">{label}</span>

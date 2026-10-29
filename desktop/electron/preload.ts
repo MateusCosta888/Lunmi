@@ -13,6 +13,7 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import type { Envelope, SessionReadyPayload } from "../src/shared/protocol";
 import type { UpdatesApi, UpdateState } from "../src/shared/updates";
+import type { MediaCommandInput, MediaCommandResultDto, MediaStateDto } from "../src/shared/media";
 import type {
   LunmiPresenceApi,
   NodePreferencesDto,
@@ -77,6 +78,10 @@ export interface LunmiBridgeApi {
     resume(): Promise<VoiceInputShortcutControlDto>;
   };
   restartBackend(): Promise<SessionReadyPayload>;
+  onboarding: {
+    open(target: "groq-keys" | "kiro-docs"): Promise<{ opened: boolean }>;
+    groqKey(): Promise<{ key: string | null }>;
+  };
   shutdown(): Promise<{ status: string; session_id: string }>;
   onEvent(callback: (event: Envelope) => void): () => void;
 }
@@ -90,6 +95,10 @@ const companionWindow = (() => {
 })();
 
 const lunmiApi: LunmiBridgeApi = Object.freeze({
+  onboarding: Object.freeze({
+    open: (target: "groq-keys" | "kiro-docs") => ipcRenderer.invoke("lunmi:onboarding-open", { target }),
+    groqKey: (): Promise<{ key: string | null }> => ipcRenderer.invoke("lunmi:onboarding-groq-key"),
+  }),
   updates: Object.freeze({
     get: (): Promise<UpdateState> => ipcRenderer.invoke("lunmi:updates-get"),
     check: (): Promise<UpdateState> => ipcRenderer.invoke("lunmi:updates-check"),
@@ -213,6 +222,10 @@ const presenceApi: LunmiPresenceApi = Object.freeze({
   },
   ...(companionWindow
     ? {
+        media: Object.freeze({
+          get: (): Promise<MediaStateDto> => ipcRenderer.invoke("lunmi:node-media-get"),
+          command: (input: MediaCommandInput): Promise<MediaCommandResultDto> => ipcRenderer.invoke("lunmi:node-media-command", input),
+        }),
         dragBy(dx: number, dy: number): Promise<{ ok: boolean }> {
           return ipcRenderer.invoke("lunmi:presence-drag", { dx, dy });
         },

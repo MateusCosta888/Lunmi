@@ -28,6 +28,7 @@ export interface PreferencesPanelProps {
   sendCommand: SendCommandFn;
   session: SessionReadyPayload | null;
   onThemeChanged?: (theme: string) => void;
+  onTaskResultsChanged?: (show: boolean) => void;
 }
 
 export const MAX_ACTIONS = 8;
@@ -194,13 +195,15 @@ function NodeCard(): React.ReactElement | null {
   );
 }
 
-export function PreferencesPanel({ sendCommand, session, onThemeChanged, history, historyLocked = false }: PreferencesPanelProps): React.ReactElement {
+export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskResultsChanged, history, historyLocked = false }: PreferencesPanelProps): React.ReactElement {
   const [approval, setApproval] = useState<ApprovalDto | null>(null);
   const [actions, setActions] = useState<QuickActionDto[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [theme, setTheme] = useState("celestial");
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [showTaskResults, setShowTaskResults] = useState(false);
 
   const sessionReady = Boolean(session);
 
@@ -218,6 +221,8 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, history
         setApproval(approvalDto);
         setActions(prefs.actions ?? []);
         setTheme(getTheme(prefs.theme).id);
+        setReduceMotion(prefs.reduce_motion === true);
+        setShowTaskResults(prefs.show_task_results === true);
       })
       .catch((err) => {
         if (alive) {
@@ -237,6 +242,30 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, history
       const next = getTheme(saved.theme).id;
       setTheme(next); onThemeChanged?.(next);
       setStatusMessage(`Tema ${getTheme(next).label} aplicado e salvo.`);
+    } catch (err) { setError(describeError(err)); }
+    finally { setBusy(false); }
+  };
+
+  const toggleReduceMotion = async () => {
+    if (!sessionReady || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const saved = await sendCommand<UiPreferencesDto>("ui.preferences.set", { reduce_motion: !reduceMotion });
+      setReduceMotion(saved.reduce_motion === true);
+      setStatusMessage("Animações guardadas. A mudança aplica-se ao reiniciar a Lunmi.");
+    } catch (err) { setError(describeError(err)); }
+    finally { setBusy(false); }
+  };
+
+  const toggleTaskResults = async () => {
+    if (!sessionReady || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const saved = await sendCommand<UiPreferencesDto>("ui.preferences.set", { show_task_results: !showTaskResults });
+      if (typeof saved.show_task_results !== "boolean") throw new Error("Esta versão não confirmou a preferência dos resultados.");
+      setShowTaskResults(saved.show_task_results);
+      onTaskResultsChanged?.(saved.show_task_results);
+      setStatusMessage("Apresentação dos resultados guardada.");
     } catch (err) { setError(describeError(err)); }
     finally { setBusy(false); }
   };
@@ -333,6 +362,22 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, history
             <span className="lunmi-theme-name">{item.label}{theme === item.id && <Icon name="check" size={16} />}</span>
             <span className="lunmi-theme-description">{item.description}</span>
           </button>)}
+        </div>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
+          <input type="checkbox" data-testid="reduce-motion" checked={reduceMotion} disabled={!sessionReady || busy}
+            onChange={() => void toggleReduceMotion()} />
+          Reduzir animações
+        </label>
+        <p style={{ ...statusStyle, color: TOKENS.textMuted }}>
+          Para o orb, o fundo e as transições. Não depende das animações do Windows; aplica-se ao reiniciar a Lunmi.
+        </p>
+        <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${TOKENS.borderHairline}` }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
+            <input type="checkbox" data-testid="show-task-results" checked={showTaskResults} disabled={!sessionReady || busy}
+              onChange={() => void toggleTaskResults()} />
+            Mostrar resultado da tarefa no chat
+          </label>
+          <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Resumo opcional com duração, passos e detalhes de execução.</p>
         </div>
       </div>
 
