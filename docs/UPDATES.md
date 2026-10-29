@@ -1,6 +1,6 @@
 # Atualizações da Lunmi
 
-Disponível no pacote instalado Windows x64 com o atualizador. No checkout está desligado. O Alpha 3 precisa de instalar o Alpha 5 manualmente uma vez. O Alpha 4 já recebe as versões seguintes pelo atualizador.
+Disponível no pacote instalado Windows x64 com o atualizador. No checkout está desligado. O Alpha 3 precisa de instalar o Alpha 6 manualmente uma vez. O Alpha 4 já recebe as versões seguintes pelo atualizador.
 
 A Lunmi procura atualizações 30 segundos após abrir e a cada seis horas. Baixa em segundo plano e apresenta **Reiniciar e atualizar** nas configurações. É possível procurar manualmente. Fechar a janela ou sair normalmente não instala nada. Tarefas, confirmações, comandos pendentes, ligações de conta e voz bloqueiam o reinício. Guarda rascunhos e alterações nos formulários antes de confirmar.
 

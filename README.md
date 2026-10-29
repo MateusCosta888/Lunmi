@@ -13,25 +13,25 @@ Um assistente de desktop com interface Electron, backend Python e automação as
 [![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-242938?style=flat-square&logo=electron&logoColor=white)](desktop/)
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
 
-[**Baixar Lunmi Alpha 5 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.5/Lunmi-0.1.0-alpha.5-Setup.exe)
+[**Baixar Lunmi Alpha 6 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.6/Lunmi-0.1.0-alpha.6-Setup.exe)
 
-[Instalar](#instalar-o-alpha-5) · [Executar pelo código](#começar) · [Funcionalidades](#o-que-a-lunmi-faz) · [Arquitetura](docs/ARCHITECTURE.md) · [Privacidade](SECURITY.md) · [Contribuir](CONTRIBUTING.md)
+[Instalar](#instalar-o-alpha-6) · [Executar pelo código](#começar) · [Funcionalidades](#o-que-a-lunmi-faz) · [Arquitetura](docs/ARCHITECTURE.md) · [Privacidade](SECURITY.md) · [Contribuir](CONTRIBUTING.md)
 
 </div>
 
 <p align="center">
-  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi Alpha 5 instalada no tema Celestial, com o orb e o ecrã inicial da conversa" />
+  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Lunmi instalada no tema Celestial, com o orb e o ecrã inicial da conversa" />
 </p>
 
-> **Alpha 5 disponível para testes.** Inclui voz e ditado offline por CPU e atualizações pelo GitHub Releases, com verificação Ed25519 e confirmação antes de reiniciar para instalar. O setup ainda não tem certificado de editor Windows. A automação depende do aplicativo e da verificação disponível. Consulte [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.5) e [os limites de segurança](SECURITY.md).
+> **Alpha 6 disponível para testes.** Inclui introdução com Groq ou Kiro, pesquisa web que abre páginas, voz e ditado offline por CPU e atualizações pelo GitHub Releases, com verificação Ed25519 e confirmação antes de reiniciar para instalar. O setup ainda não tem certificado de editor Windows. A automação depende do aplicativo e da verificação disponível. Consulte [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.6) e [os limites de segurança](SECURITY.md).
 
-## Instalar o Alpha 5
+## Instalar o Alpha 6
 
-1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.5/Lunmi-0.1.0-alpha.5-Setup.exe), com cerca de 2,08 GB. Inclui os modelos de voz; a instalação pode demorar vários minutos.
+1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.6/Lunmi-0.1.0-alpha.6-Setup.exe), com cerca de 2,08 GB. Inclui os modelos de voz; a instalação pode demorar vários minutos.
 2. Execute o setup e abra a Lunmi. O Python necessário acompanha o instalador; não precisa instalar Python, Node.js ou Git para usar esta versão.
-3. Em **Brain**, escolha uma API, endpoint ou CLI suportado e configure o seu próprio acesso. Créditos e chaves de IA não estão incluídos. O setup inclui voz e ditado por CPU, sem exigir NVIDIA; a ativação continua opcional.
+3. Na primeira abertura, a introdução ajuda a ligar o Groq (gratuito) ou o Kiro CLI. Em **Brain**, pode escolher outra API, endpoint ou CLI suportado com o seu próprio acesso. Créditos e chaves de IA não estão incluídos. O setup inclui voz e ditado por CPU, sem exigir NVIDIA; a ativação continua opcional.
 
-Quem usa o Alpha 3 precisa instalar o Alpha 5 manualmente uma vez. Quem tem o Alpha 4 recebe esta versão pelo atualizador; o primeiro download com os modelos será grande. Depois, a Lunmi procura novas versões e baixa em segundo plano, aproveitando blocos existentes quando possível. Em **Configurações → Atualizações**, pode procurar manualmente e escolher **Reiniciar e atualizar** quando estiver pronta. Tarefas e operações de voz ativas bloqueiam a instalação; histórico, memória e configurações continuam fora da pasta instalada.
+Quem usa o Alpha 3 precisa instalar o Alpha 6 manualmente uma vez. Quem tem o Alpha 4 ou o Alpha 5 recebe esta versão pelo atualizador; a primeira atualização para o Alpha 6 substitui todos os ficheiros e demora mais. Depois, a Lunmi procura novas versões e baixa em segundo plano, aproveitando blocos existentes quando possível. Em **Configurações → Atualizações**, pode procurar manualmente e escolher **Reiniciar e atualizar** quando estiver pronta. Tarefas e operações de voz ativas bloqueiam a instalação; histórico, memória e configurações continuam fora da pasta instalada.
 
 As atualizações chegam quando publicamos uma **Release**. Um envio de código a `main` executa testes; a distribuição exige preparar e publicar uma versão. O modo `run.bat` continua sem auto-update. [Funcionamento, publicação e recuperação →](docs/UPDATES.md)
 
