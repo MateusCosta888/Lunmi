@@ -73,3 +73,26 @@ def test_provider_budget_drops_whole_old_pairs_and_session_lifecycle(tmp_path: P
         assert controller.turns.pairs(controller.session_id) == []
 
     asyncio.run(scenario())
+
+
+def test_only_the_last_assistant_turn_is_sent_in_full(tmp_path: Path):
+    async def scenario():
+        settings = Settings(provider="custom", api_key="synthetic", model="fixture",
+                            base_url="http://127.0.0.1:1/v1", prewarm=False,
+                            fast_path=False, app_index=False, app_search=False,
+                            collect_metrics=False, logs_path=tmp_path, state_root=tmp_path)
+        controller = TaskController(settings, memory=MemoryManager(tmp_path / "memory.sqlite3"))
+        brain = SmallBrain()
+        brain.capabilities = Capabilities.of(max_safe_prompt_chars=24000)
+        controller.brain = brain
+        controller.turns.add(controller.session_id, "Pergunta antiga", "velha " + "a" * 1500)
+        controller.turns.add(controller.session_id, "Pergunta recente", "nova " + "b" * 1500)
+        try:
+            await controller.run("E o ponto 3?", conversation=True)
+            older = [m["content"] for m in brain.calls[0] if "Lunmi (turno anterior):" in m["content"]]
+            assert older[0].endswith("…") and len(older[0]) < 700
+            assert older[1].endswith("b" * 1500)
+        finally:
+            await controller.close()
+
+    asyncio.run(scenario())

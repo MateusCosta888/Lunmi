@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import codecs
+import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
@@ -17,6 +19,33 @@ from app.settings import ConfigurationError, Settings
 MAX_COMPLETION_BYTES = 262_144
 MAX_SSE_BYTES = 4 * 1024 * 1024
 MAX_SSE_FRAME_BYTES = 262_144
+
+
+# Um 429 é recusado antes de o modelo gerar algo: repetir uma vez não duplica trabalho. Só se o
+# fornecedor disser que o limite volta depressa (o plano gratuito do Groq tem ~8 mil tokens/min).
+RATE_LIMIT_MAX_WAIT_SECONDS = 30.0
+_DURATION = re.compile(r"^(?:(\d+)m)?(?:([\d.]+)s)?$")
+
+
+def rate_limit_wait(headers: Any) -> float | None:
+    """Segundos até o limite voltar (`retry-after` ou `x-ratelimit-reset-tokens`), se <= 30 s."""
+    raw = str(headers.get("retry-after") or headers.get("x-ratelimit-reset-tokens") or "").strip()
+    seconds: float | None = None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        match = _DURATION.match(raw)
+        if match and any(match.groups()):
+            seconds = int(match.group(1) or 0) * 60 + float(match.group(2) or 0)
+    if seconds is None or not 0 <= seconds <= RATE_LIMIT_MAX_WAIT_SECONDS:
+        return None
+    return seconds + 0.5
+
+
+class _RateLimited(Exception):
+    def __init__(self, wait: float | None) -> None:
+        super().__init__("rate limited")
+        self.wait = wait
 
 
 class ProviderError(RuntimeError):
@@ -120,7 +149,7 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def generate(self, instruction: str) -> Generation:
-        """One API round-trip, with no automatic retries or local inference."""
+        """One API round-trip, with no automatic retries or local inference (except one bounded 429 wait)."""
 
     async def complete(self, messages: list[dict[str, Any]]) -> Completion:
         """Complete the official UFO HostAgent/AppAgent messages, without a second planner."""
@@ -133,11 +162,23 @@ class LLMProvider(ABC):
         await self.client.aclose()
 
     async def _post(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
+        for attempt in (0, 1):
+            try:
+                return await self._post_once(url, headers, body)
+            except _RateLimited as limited:
+                if attempt or limited.wait is None:
+                    raise ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.") from None
+                await asyncio.sleep(limited.wait)
+        raise AssertionError("unreachable")
+
+    async def _post_once(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
         first_event_ms = None
         ok = False
         try:
             async with self.client.stream("POST", url, headers=headers, json=body) as response:
+                if response.status_code == 429:
+                    raise _RateLimited(rate_limit_wait(response.headers))
                 if response.status_code != 200:
                     # Do not expose response bodies: these may echo credentials/prompts.
                     raise ProviderError(f"API retornou HTTP {response.status_code}. Confira chave, modelo, saldo e endpoint.")
@@ -170,6 +211,20 @@ class LLMProvider(ABC):
         del self.call_metrics[:-32]
 
     async def _sse(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> AsyncGenerator[str, None]:
+        # O 429 chega antes de qualquer evento, por isso repetir nunca duplica texto já emitido.
+        for attempt in (0, 1):
+            try:
+                # aclosing: quem para de ler fecha já a ligação HTTP do gerador interno.
+                async with aclosing(self._sse_once(url, headers, body)) as events:
+                    async for event in events:
+                        yield event
+                return
+            except _RateLimited as limited:
+                if attempt or limited.wait is None:
+                    raise ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.") from None
+                await asyncio.sleep(limited.wait)
+
+    async def _sse_once(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> AsyncGenerator[str, None]:
         """Bounded SSE framing; EOF never manufactures a provider completion."""
         decoder = codecs.getincrementaldecoder("utf-8")("strict")
         buffer = ""
@@ -179,6 +234,8 @@ class LLMProvider(ABC):
         try:
             async with self.client.stream("POST", url, headers={**headers, "Accept": "text/event-stream"},
                                           json=body) as response:
+                if response.status_code == 429:
+                    raise _RateLimited(rate_limit_wait(response.headers))
                 if response.status_code != 200:
                     raise ProviderError(f"API retornou HTTP {response.status_code}. Confira chave, modelo, saldo e endpoint.")
                 if response.headers.get("content-type", "").split(";", 1)[0].strip() != "text/event-stream":

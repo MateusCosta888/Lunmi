@@ -40,7 +40,10 @@ _DEFINITION = re.compile(
     r'como funciona\b|defin(?:e|icao|ition)\b|qual (?:e )?o significado\b)')
 _OFFICE = re.compile(
     r'\b(?:presidente|presidenta|primeiro[- ]ministro|primeira[- ]ministra|prefeito|prefeita|'
-    r'governador|governadora|president|prime minister|mayor|governor)\b')
+    r'governador|governadora|president|prime minister|mayor|governor|'
+    r'papa|pope|ceo|diretor executivo|diretora executiva|rei|rainha|king|queen|chanceler|'
+    r'chancellor|secretario[- ]geral|secretary[- ]general|treinador|treinadora|tecnico|coach|'
+    r'lider|leader)\b')
 _OFFICE_CURRENT = re.compile(
     r'\b(?:atual|atuais|current|hoje|agora|em exercicio|no cargo|who is|quem e)\b')
 _OFFICE_PAST = re.compile(r'\b(?:foi|foram|was|were|historico|history)\b')
@@ -77,7 +80,10 @@ _ATTRIBUTE_STOP = {
     'prices', 'custa', 'custam', 'cost', 'cotacao', 'quote', 'quem', 'where', 'onde', 'site',
     'vale', 'valor', 'quanto', 'presidente', 'presidenta', 'president', 'primeiro', 'primeira',
     'ministro', 'ministra', 'prefeito', 'prefeita', 'governador', 'governadora', 'mayor',
-    'governor', 'proximo', 'proxima', 'next', 'jogo', 'partida', 'fixture', 'match', 'qual',
+    'governor', 'papa', 'pope', 'ceo', 'diretor', 'diretora', 'executivo', 'executiva', 'rei',
+    'rainha', 'king', 'queen', 'chanceler', 'chancellor', 'secretario', 'geral', 'treinador',
+    'treinadora', 'tecnico', 'coach', 'lider', 'leader',
+    'proximo', 'proxima', 'next', 'jogo', 'partida', 'fixture', 'match', 'qual',
     'quais', 'como',
 }
 _NUMBER_WORDS = {
@@ -650,7 +656,7 @@ def constraints(query: str, *, today: date | None = None) -> WebConstraints:
     current = bool(re.search(r'\b(?:novidades|atualizacoes|releases?)\b', text)
                    or (version and re.search(r'\b(?:recente|latest|ultima|atual)\b', text)))
     read_required = (official or current or bool(freshness) or quote
-                     or requires_page_evidence(query))
+                     or bool(present_or_latest(text)) or requires_page_evidence(query))
     depth = research_depth(query)
     if 'myanimelist' in text and re.search(r'avaliad|ranking|nota|posicao', text):
         domains = ('myanimelist.net',)
@@ -670,10 +676,29 @@ def _project_domains(text: str) -> tuple[str, ...]:
                  if re.search(r'\b' + name + r'\b', text)), ())
 
 
+# "quem é o atual X", "os últimos papas": the answer changes over time, so excerpts of an old
+# list are not enough and recent sources rank first.
+_PRESENT_OR_LATEST = re.compile(
+    r'\b(?:atual|atuais|atualmente|hoje|agora|neste momento|current|currently|nowadays|'
+    r'ultim[oa]s?|mais recentes?|latest)\b')
+
+
+def present_or_latest(text: str) -> bool:
+    return bool(_PRESENT_OR_LATEST.search(normalized(text)))
+
+
+def _recent_year_hint(source: dict[str, Any], today: date) -> bool:
+    """Year in the URL/title/snippet (published_at is often missing); a hint, never proof."""
+    blob = f"{source.get('url', '')} {source.get('title', '')} {source.get('snippet', '')}"
+    years = [int(y) for y in re.findall(r'(?<!\d)(20\d{2})(?!\d)', blob)]
+    return bool(years) and max(years) >= today.year - 1
+
+
 def rank_sources(query: str, sources: list[dict[str, Any]],
                  policy: WebConstraints) -> list[dict[str, Any]]:
     """Stable, local ranking before HTTP; metadata is a hint, not proof of truth."""
     terms = _terms(query)
+    recency = present_or_latest(query)
     attribute = requested_attribute(query)
     today = datetime.now().date()
     preferred = policy.domains or _project_domains(normalized(query))
@@ -707,6 +732,7 @@ def rank_sources(query: str, sources: list[dict[str, Any]],
                 + 6 * bool(policy.quote and has_quote_value(str(source.get('snippet') or '')))
                 + attribute_bonus
                 + 16 * bool(source_required and scholarly)
+                + 4 * bool(recency and _recent_year_hint(source, today))
                 - 8 * bool(policy.freshness and source.get('published_at') and not policy.dated(source)))
 
     candidates = [source for source in sources if policy.accepts(source)
@@ -828,9 +854,14 @@ def select_evidence(query: str, documents: list[dict[str, Any]], budget: int
     return selected
 
 
-def search_query(query: str, policy: WebConstraints) -> str:
-    return query + ' JavaScript biblioteca' if policy.topic == 'react' and not re.search(
-        r'\bjavascript\b', query, re.IGNORECASE) else query
+def search_query(query: str, policy: WebConstraints, *, today: date | None = None) -> str:
+    if policy.topic == 'react' and not re.search(r'\bjavascript\b', query, re.IGNORECASE):
+        return query + ' JavaScript biblioteca'
+    # "o atual papa", "os 8 últimos papas": sem ano, os motores devolvem listas antigas que
+    # terminam antes da mudança. O ano corrente puxa as páginas atualizadas.
+    if present_or_latest(query) and not re.search(r'(?<!\d)(?:19|20)\d{2}(?!\d)', query):
+        return f"{query} {(today or datetime.now().date()).year}"
+    return query
 
 
 def publication_hint(item: dict[str, Any], retrieved_at: str) -> str | None:
