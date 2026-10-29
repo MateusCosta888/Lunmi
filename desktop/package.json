@@ -1,7 +1,7 @@
 {
   "name": "lunmi-desktop",
   "productName": "Lunmi",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "private": true,
   "description": "Lunmi Desktop Shell (Electron + React + TypeScript) communicating with Python backend over stdio JSONL v1",
   "main": "dist-electron/electron/main.js",
