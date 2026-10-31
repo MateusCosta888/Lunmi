@@ -49,6 +49,8 @@ SilentInstall silent
 !define isForceRun '0 = 1'
 Var launchLink
 Var appExe
+Var newDesktopLink
+Var newStartMenuLink
 Var visible
 Var lunmiRuntime
 Var lunmiTarget
@@ -146,6 +148,11 @@ SectionEnd
             # The probe runs with /S semantics: only an app update may turn the window back on.
             assert visibility == ('visible' if updated else 'silent'), (updated, explicit, visibility)
             cases.append(dict(updated=updated, explicit_directory=bool(explicit), shows_progress=updated, passed=True))
+        # The Lunmi setup window (--lunmi-ui) already shows progress: NSIS must stay hidden.
+        subprocess.run([str(work / 'probe.exe'), '--lunmi-ui'], check=True, timeout=20)
+        visibility = (work / 'destination.txt').read_text(encoding='utf-16-le').lstrip('﻿').split('|')[1]
+        assert visibility == 'silent', (updated, 'lunmi-ui', visibility)
+        cases.append(dict(updated=updated, lunmi_ui=True, shows_progress=False, passed=True))
         missing = subprocess.run([str(work / 'probe.exe'), r'/D=C:\Uninstaller Missing'], timeout=20).returncode
         assert missing == 2, (updated, missing)
         cases.append(dict(updated=updated, uninstaller_launch_failure_stops=True, passed=True))

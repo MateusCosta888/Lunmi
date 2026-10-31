@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { UpdatesCard, UpdateNotice } from "../src/features/preferences/UpdatesCard";
+import { UpdateModal, UpdatesCard, UpdateNotice } from "../src/features/preferences/UpdatesCard";
 import type { UpdateState } from "../src/shared/updates";
 import type { LunmiBridgeApi } from "../src/shared/ipc/client";
 
 afterEach(() => { delete window.lunmi; });
 function bridge(phase: UpdateState["phase"]) {
-  const state: UpdateState = { phase, currentVersion: "0.1.0-alpha.4", version: "0.1.0-alpha.5", percent: 32 };
+  const state: UpdateState = { phase, currentVersion: "0.1.0-alpha.4", version: "0.1.0-alpha.5", percent: 32, notes: "Instalador novo" };
   const api = { get: vi.fn(async () => state), check: vi.fn(async () => state), install: vi.fn(async () => state), onState: vi.fn(() => vi.fn()) };
   window.lunmi = { updates: api } as unknown as LunmiBridgeApi;
   return api;
@@ -36,5 +36,23 @@ describe("update presentation", () => {
     const api = bridge("ready"); const open = vi.fn(); render(<UpdateNotice onOpen={open} />);
     fireEvent.click(await screen.findByRole("button", { name: "Ver atualização" }));
     expect(open).toHaveBeenCalledTimes(1); expect(api.install).not.toHaveBeenCalled();
+  });
+  it("offers the new version with its notes and installs only on request", async () => {
+    const api = bridge("available"); render(<UpdateModal />);
+    expect(await screen.findByText("Instalador novo")).toBeTruthy();
+    expect(screen.getByRole("dialog").textContent).toContain("0.1.0-alpha.5");
+    expect(api.install).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Instalar agora" }));
+    await waitFor(() => expect(api.install).toHaveBeenCalledTimes(1));
+  });
+  it("closes on Later without installing", async () => {
+    const api = bridge("available"); render(<UpdateModal />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mais tarde" }));
+    expect(screen.queryByTestId("update-modal")).toBeNull();
+    expect(api.install).not.toHaveBeenCalled();
+  });
+  it("stays hidden when there is nothing new", async () => {
+    bridge("idle"); render(<UpdateModal />);
+    await waitFor(() => expect(screen.queryByTestId("update-modal")).toBeNull());
   });
 });

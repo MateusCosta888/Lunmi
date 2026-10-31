@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<title>Instalador da Lunmi</title>
+<style>
+@font-face { font-family: "Plus Jakarta Sans"; src: url("font.ttf") format("truetype"); font-weight: 200 800; }
+
+/* Paleta celestial da app (desktop/src/shared/theme.ts) */
+:root {
+  --bg: #030508; --input: #0B1019; --line: #26334A; --hair: #1B2536;
+  --text: #F3F6FC; --text2: #B4C3D7; --muted: #91A3BD;
+  --accent: #7DAFFF; --accent-hover: #95BFFF; --accent-pressed: #6B99E6; --on-accent: #06101E;
+  --success: #76CFA9; --error: #E58D99; --hover: #162A45;
+  --ease: cubic-bezier(.16, 1, .3, 1);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; user-select: none; -webkit-user-select: none; }
+body { background: var(--bg); color: var(--text); font: 400 14px/1.5 "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif; cursor: default; }
+
+.win { position: relative; width: 100vw; height: 100vh; overflow: hidden; background: radial-gradient(700px 520px at 24% 52%, #13204a 0%, #070b1f 55%, #03050f 100%); }
+.sky, .sky2 { position: absolute; inset: 0; pointer-events: none; background-repeat: repeat; }
+.sky { background-image: radial-gradient(1.5px 1.5px at 40px 60px, #fff9, transparent), radial-gradient(1px 1px at 210px 140px, #fff7, transparent), radial-gradient(1.5px 1.5px at 330px 280px, #bcd4ff99, transparent), radial-gradient(1px 1px at 120px 330px, #fff8, transparent); background-size: 380px 380px; animation: tw 4s ease-in-out infinite alternate; }
+.sky2 { background-image: radial-gradient(1px 1px at 90px 200px, #fffa, transparent), radial-gradient(1px 1px at 260px 40px, #fff9, transparent); background-size: 290px 290px; animation: tw 6s 1s ease-in-out infinite alternate; }
+@keyframes tw { to { opacity: .35; } }
+.meteors { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.titlebar { position: absolute; top: 0; left: 0; right: 0; height: 42px; display: flex; align-items: center; padding: 0 6px 0 16px; gap: 10px; z-index: 5; color: var(--muted); font-size: 12.5px; }
+.titlebar img { width: 16px; height: 16px; }
+.titlebar .grow { flex: 1; align-self: stretch; }
+.tb-btn { width: 40px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.tb-btn:hover { background: #ffffff12; color: var(--text); }
+.tb-btn.close:hover { background: #c4314b; color: #fff; }
+.tb-btn svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.3; fill: none; }
+.busy .tb-btn.close { visibility: hidden; }
+
+/* Esfera: o motor original da app (liveRenderer.js) */
+.orb { position: absolute; left: 40px; top: 70px; width: 360px; height: 360px; }
+.orb canvas { display: block; width: 100%; height: 100%; }
+.compact .orb { left: 24px; top: 70px; width: 200px; height: 200px; }
+
+.screen { position: absolute; left: 440px; right: 48px; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; opacity: 0; transform: translateY(14px); pointer-events: none; transition: opacity .45s var(--ease), transform .45s var(--ease); }
+.screen.on { opacity: 1; transform: none; pointer-events: auto; transition-delay: .12s; }
+.compact .screen { left: 240px; right: 32px; }
+
+.kicker { font-size: 11.5px; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+h1 { margin: 0; font-size: 64px; font-weight: 300; letter-spacing: -.03em; line-height: 1.05; background: linear-gradient(180deg, #fff 35%, #a9c4ff); -webkit-background-clip: text; background-clip: text; color: transparent; padding-bottom: .1em; }
+h2 { margin: 0; font-size: 28px; font-weight: 400; letter-spacing: -.015em; line-height: 1.2; }
+.compact h2 { font-size: 22px; }
+.lead { color: var(--text2); font-size: 15px; margin: 10px 0 0; max-width: 330px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 18px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted); width: max-content; }
+.chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+.actions { display: flex; align-items: center; gap: 12px; margin-top: 34px; }
+.compact .actions { margin-top: 22px; }
+.btn { height: 42px; padding: 0 22px; border-radius: 10px; border: 1px solid transparent; font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; transition: background .15s, transform .15s, box-shadow .2s; }
+.btn:focus-visible, .link:focus-visible, .check input:focus-visible + span, .tb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 8px 24px #7dafff33; }
+.btn.primary:hover { background: var(--accent-hover); box-shadow: 0 0 22px #7dafff66, 0 8px 24px #7dafff33; }
+.btn.primary:active { background: var(--accent-pressed); transform: translateY(1px); }
+.btn.ghost { background: transparent; color: var(--text2); border-color: var(--line); }
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.link { background: none; border: 0; padding: 0; font: inherit; color: var(--text2); cursor: pointer; text-decoration: underline; text-decoration-color: #b4c3d755; text-underline-offset: 3px; }
+.link:hover { color: var(--text); }
+.fine { margin-top: 18px; font-size: 12px; color: var(--muted); }
+
+.field { margin-top: 24px; }
+.label { font-size: 12.5px; color: var(--text2); margin-bottom: 8px; }
+.path { display: flex; gap: 8px; }
+.path output { flex: 1; min-width: 0; height: 40px; display: block; line-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--input); color: var(--text); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
+.path .btn { height: 40px; padding: 0 14px; }
+.space { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.space b { color: var(--success); font-weight: 500; }
+.space b.low { color: var(--error); }
+.checks { margin-top: 22px; display: grid; gap: 12px; }
+.check { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text2); width: max-content; }
+.check input { position: absolute; opacity: 0; }
+.check span { width: 18px; height: 18px; border-radius: 5px; border: 1px solid var(--line); background: var(--input); display: grid; place-items: center; transition: all .15s; }
+.check input:checked + span { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px #7dafff55; }
+.check input:checked + span::after { content: ""; width: 9px; height: 5px; border: solid var(--on-accent); border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+
+.bar { margin-top: 30px; height: 6px; border-radius: 99px; background: #ffffff10; overflow: hidden; }
+.compact .bar { margin-top: 22px; }
+.bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, #4f7dff, var(--accent), #cfe1ff); box-shadow: 0 0 14px #7dafffaa; transition: width .4s linear; position: relative; }
+.bar i::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, #ffffff88, transparent); animation: sheen 1.6s linear infinite; }
+@keyframes sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.meta { display: flex; justify-content: space-between; margin-top: 12px; font-size: 13px; color: var(--text2); }
+.meta .pct { color: var(--text); font-variant-numeric: tabular-nums; }
+.steps { list-style: none; margin: 22px 0 0; padding: 0; display: grid; gap: 9px; font-size: 13px; color: var(--muted); }
+.steps li { display: flex; align-items: center; gap: 10px; transition: color .3s; }
+.steps li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--line); transition: all .3s; }
+.steps li.now { color: var(--text); }
+.steps li.now::before { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.steps li.done { color: var(--text2); }
+.steps li.done::before { border-color: var(--success); background: var(--success); }
+@keyframes pulse { 50% { opacity: .4; } }
+
+.err { color: var(--error); }
+.notice { margin-top: 16px; padding: 12px 14px; border: 1px solid #e58d9944; background: #e58d9910; border-radius: 10px; color: var(--text2); font-size: 13px; }
+
+.sheet { position: absolute; inset: 42px 0 0; z-index: 4; background: #030508ee; backdrop-filter: blur(6px); padding: 26px 48px 28px; display: flex; flex-direction: column; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.sheet.on { opacity: 1; pointer-events: auto; }
+.sheet pre { flex: 1; margin: 14px 0 18px; padding: 16px; overflow: auto; white-space: pre-wrap; font: 12px/1.6 "Cascadia Mono", Consolas, monospace; color: var(--text2); background: var(--input); border: 1px solid var(--hair); border-radius: 10px; user-select: text; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="win" id="win">
+  <div class="sky"></div><div class="sky2"></div>
+  <canvas class="meteors" id="meteors"></canvas>
+  <div class="orb"><canvas id="orb"></canvas></div>
+
+  <div class="titlebar" id="titlebar">
+    <img src="lunmi-symbol.svg" alt=""><span id="wintitle">Instalador da Lunmi</span><span class="grow"></span>
+    <button class="tb-btn" data-cmd="minimize" title="Minimizar" aria-label="Minimizar"><svg viewBox="0 0 12 12"><path d="M1 6h10"/></svg></button>
+    <button class="tb-btn close" data-cmd="close" title="Fechar" aria-label="Fechar"><svg viewBox="0 0 12 12"><path d="M1 1l10 10M11 1L1 11"/></svg></button>
+  </div>
+
+  <section class="screen" data-screen="welcome">
+    <div class="kicker">Instalador</div>
+    <h1>Lunmi</h1>
+    <p class="lead">Um assistente para o Windows. Pedes no chat, ela faz e confirma o resultado.</p>
+    <span class="chip"><i></i>Versão <span class="version"></span></span>
+    <div class="actions">
+      <button class="btn primary" data-act="install">Instalar</button>
+      <button class="btn ghost" data-go="options">Opções</button>
+    </div>
+    <p class="fine">Ao instalar, aceitas a <button class="link" data-act="license">licença</button>.</p>
+  </section>
+
+  <section class="screen" data-screen="options">
+    <div class="kicker">Opções</div>
+    <h2>Onde instalar</h2>
+    <div class="field">
+      <div class="label">Pasta de instalação</div>
+      <div class="path"><output id="path"></output><button class="btn ghost" data-act="pick">Alterar</button></div>
+      <div class="space"><span>Precisa de <span id="need"></span></span><span>Livre no disco <span class="drive"></span> <b id="free"></b></span></div>
+    </div>
+    <div class="checks">
+      <label class="check"><input type="checkbox" checked id="desktop"><span></span>Atalho no ambiente de trabalho</label>
+      <label class="check"><input type="checkbox" checked id="startMenu"><span></span>Atalho no menu Iniciar</label>
+    </div>
+    <div class="actions">
+      <button class="btn primary" data-act="install">Instalar</button>
+      <button class="btn ghost" data-go="welcome">Voltar</button>
+    </div>
+  </section>
+
+  <section class="screen" data-screen="installing">
+    <div class="kicker">A instalar</div>
+    <h2>A preparar a Lunmi</h2>
+    <div class="bar"><i class="fill"></i></div>
+    <div class="meta"><span class="stepText">A preparar o instalador</span><span class="pct">0%</span></div>
+    <ul class="steps">
+      <li data-step="python">Python</li><li data-step="voice">Voz local</li><li data-step="app">Aplicação</li><li data-step="shortcuts">Atalhos</li>
+    </ul>
+  </section>
+
+  <section class="screen" data-screen="done">
+    <div class="kicker" style="color:var(--success)">Concluído</div>
+    <h1 style="font-size:56px">Está pronta.</h1>
+    <p class="lead">A Lunmi foi instalada. Podes abri-la pelo menu Iniciar ou pelo ambiente de trabalho.</p>
+    <div class="checks"><label class="check"><input type="checkbox" checked id="launch"><span></span>Abrir a Lunmi agora</label></div>
+    <div class="actions"><button class="btn primary" data-act="finish">Concluir</button></div>
+  </section>
+
+  <section class="screen" data-screen="space">
+    <div class="kicker err">Falta espaço</div>
+    <h2>Falta espaço no disco <span class="drive"></span></h2>
+    <div class="notice">A instalação precisa de <span class="needText"></span> livres e há <span class="freeText"></span>. Nada foi alterado no computador. Liberta espaço ou escolhe outra pasta.</div>
+    <div class="actions">
+      <button class="btn primary" data-go="options">Escolher outra pasta</button>
+      <button class="btn ghost" data-act="force">Instalar mesmo assim</button>
+    </div>
+  </section>
+
+  <section class="screen" data-screen="error">
+    <div class="kicker err">Não foi possível instalar</div>
+    <h2 id="errTitle">A instalação não foi concluída</h2>
+    <div class="notice" id="errText"></div>
+    <div class="actions">
+      <button class="btn primary install-only" data-act="force">Tentar de novo</button>
+      <button class="btn ghost" data-cmd="close">Fechar</button>
+    </div>
+  </section>
+
+  <section class="screen" data-screen="update">
+    <div class="kicker">Atualização</div>
+    <h2>A atualizar para a<br><span class="version" style="white-space:nowrap"></span></h2>
+    <div class="bar"><i class="fill"></i></div>
+    <div class="meta"><span class="stepText">A preparar a atualização</span><span class="pct">0%</span></div>
+    <p class="fine">A Lunmi volta a abrir sozinha quando terminar.</p>
+  </section>
+
+  <div class="sheet" id="sheet">
+    <div class="kicker">Licença</div>
+    <h2>Avisos e licenças</h2>
+    <pre>A Lunmi inclui componentes de terceiros, cada um com a sua licença:
+
+• Supertonic (voz): OpenRAIL-M
+• Whisper (reconhecimento de voz): MIT
+• Python: PSF License
+• Electron e Chromium: MIT e BSD
+
+O texto completo fica em NOTICE.txt, na pasta de instalação, e está também no repositório da Lunmi no GitHub.</pre>
+    <div><button class="btn primary" data-act="license-close">Fechar</button></div>
+  </div>
+</div>
+
+<script src="orb.js"></script>
+<script>
+const INIT = window.LUNMI_INIT || { mode: 'install', version: '0.0.0', dir: 'C:\\Lunmi', free: null, need: 0 };
+const UPDATE = INIT.mode === 'update';
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const post = o => window.ipc && window.ipc.postMessage(JSON.stringify(o));
+const win = $('#win');
+const state = { dir: INIT.dir, free: INIT.free, need: INIT.need, screen: '', busy: false, skipped: [] };
+const orb = typeof mountLiveOrb === 'function' ? mountLiveOrb($('#orb')) : { setMode() {}, setActive() {} };
+orb.setActive(true);
+
+const gb = b => b == null ? '?' : (b / 1073741824).toLocaleString('pt-PT', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + ' GB';
+const STEP_TEXT = { prepare: UPDATE ? 'A preparar a atualização' : 'A preparar o instalador', python: 'A preparar o Python', voice: 'A preparar a voz local', app: UPDATE ? 'A instalar a nova versão' : 'A copiar a aplicação', shortcuts: 'A concluir' };
+const ORDER = ['prepare', 'python', 'voice', 'app', 'shortcuts'];
+
+if (UPDATE) { win.classList.add('compact'); $('#wintitle').textContent = 'Atualização da Lunmi'; $$('.install-only').forEach(e => e.remove()); }
+$$('.version').forEach(e => e.textContent = INIT.version);
+
+function renderDir() {
+  $('#path').textContent = state.dir; $('#path').title = state.dir;
+  $$('.drive').forEach(e => e.textContent = state.dir.slice(0, 2));
+  $('#need').textContent = gb(state.need);
+  $('#free').textContent = gb(state.free);
+  $('#free').classList.toggle('low', state.free != null && state.free < state.need);
+  $$('.needText').forEach(e => e.textContent = gb(state.need));
+  $$('.freeText').forEach(e => e.textContent = gb(state.free));
+}
+
+function go(name) {
+  state.screen = name;
+  $$('.screen').forEach(s => s.classList.toggle('on', s.dataset.screen === name));
+  orb.setMode(name === 'installing' || name === 'update' ? 'thinking' : name === 'done' ? 'speaking' : 'idle');
+  if (name === 'done') setTimeout(() => orb.setMode('idle'), 2400);
+  const first = $(`.screen[data-screen="${name}"] .btn.primary`);
+  if (first) setTimeout(() => first.focus({ preventScroll: true }), 200);
+}
+
+function install(force) {
+  if (!force && state.free != null && state.free < state.need) return go('space');
+  state.busy = true; win.classList.add('busy');
+  $$('.fill').forEach(f => f.style.width = '0%');
+  $$('.steps li').forEach(li => li.className = '');
+  go(UPDATE ? 'update' : 'installing');
+  post({ cmd: 'install', dir: state.dir, desktop: $('#desktop').checked, startMenu: $('#startMenu').checked });
+}
+
+function finished(code) { state.busy = false; win.classList.remove('busy'); post({ cmd: 'finished', code }); }
+
+// Mensagens do instalador (Rust)
+window.lunmi = {
+  update(msg) {
+    if (msg.type === 'dir') { Object.assign(state, { dir: msg.dir, free: msg.free, need: msg.need }); renderDir(); }
+    if (msg.type === 'skipped') { state.skipped = msg.steps; }
+    if (msg.type === 'progress') {
+      const p = Math.max(0, Math.min(100, msg.percent));
+      $$('.fill').forEach(f => f.style.width = p + '%');
+      $$('.pct').forEach(e => e.textContent = Math.floor(p) + '%');
+      $$('.stepText').forEach(e => e.textContent = STEP_TEXT[msg.step] || '');
+      const now = ORDER.indexOf(msg.step);
+      $$('.steps li').forEach(li => {
+        const k = ORDER.indexOf(li.dataset.step);
+        li.className = state.skipped.includes(li.dataset.step) || k < now ? 'done' : k === now ? 'now' : '';
+      });
+    }
+    if (msg.type === 'done') {
+      $$('.fill').forEach(f => f.style.width = '100%'); $$('.pct').forEach(e => e.textContent = '100%');
+      $$('.steps li').forEach(li => li.className = 'done');
+      finished(0);
+      if (UPDATE) { $$('.stepText').forEach(e => e.textContent = 'A abrir a Lunmi…'); orb.setMode('speaking'); setTimeout(() => post({ cmd: 'finished', code: 0, exit: true }), 1800); }
+      else setTimeout(() => go('done'), 500);
+    }
+    if (msg.type === 'error') {
+      finished(msg.code > 0 ? msg.code : 1);
+      $('#errText').textContent = msg.code === -1
+        ? `Não foi possível preparar o instalador${msg.detail ? ' (' + msg.detail + ')' : ''}. Confirma o espaço livre no disco do sistema e volta a tentar.`
+        : msg.code === 2
+          ? (UPDATE ? 'A atualização parou antes de mexer na versão instalada, que continua a funcionar. Confirma o espaço em disco e o antivírus e tenta mais tarde.'
+                    : 'A instalação parou antes de alterar o computador. Confirma o espaço em disco e o antivírus e tenta de novo.')
+          : `O instalador terminou com o código ${msg.code}. Volta a tentar; se o erro continuar, reinicia o computador e executa o instalador outra vez.`;
+      go('error');
+    }
+  },
+};
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-go],[data-act],[data-cmd]');
+  if (!t) return;
+  if (t.dataset.go) go(t.dataset.go);
+  if (t.dataset.cmd) post({ cmd: t.dataset.cmd });
+  switch (t.dataset.act) {
+    case 'install': install(false); break;
+    case 'force': install(true); break;
+    case 'pick': post({ cmd: 'pick', dir: state.dir }); break;
+    case 'license': $('#sheet').classList.add('on'); break;
+    case 'license-close': $('#sheet').classList.remove('on'); break;
+    case 'finish': post({ cmd: 'finished', code: 0, exit: true, open: $('#launch').checked, dir: state.dir }); break;
+  }
+});
+$('#titlebar').addEventListener('mousedown', e => { if (e.button === 0 && !e.target.closest('button')) post({ cmd: 'drag' }); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#sheet').classList.remove('on'); });
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+renderDir();
+if (UPDATE) install(true); else go('welcome');
+// Mostrar a janela só depois de a fonte carregar, sem flash branco nem troca de letra.
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => requestAnimationFrame(() => post({ cmd: 'ready' })));
+
+/* Meteoros: mesma pintura e trajetória do ecrã de arranque da app, um de cada vez */
+(() => {
+  const canvas = $('#meteors'), ctx = canvas.getContext('2d');
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  let meteors = [], last = 0, next = 1.5, t = 0, W = 0, H = 0;
+  const fit = () => { const r = canvas.getBoundingClientRect(), d = devicePixelRatio || 1; W = r.width; H = r.height; canvas.width = W * d; canvas.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0); };
+  new ResizeObserver(fit).observe(canvas);
+  function paint(m) {
+    const tx = m.x - m.dx * m.tail, ty = m.y - m.dy * m.tail;
+    ctx.save(); ctx.globalAlpha = m.opacity;
+    const tail = ctx.createLinearGradient(m.x, m.y, tx, ty);
+    tail.addColorStop(0, 'rgba(255,255,255,1)'); tail.addColorStop(.12, 'rgba(215,235,255,.95)');
+    tail.addColorStop(.35, 'rgba(150,195,255,.6)'); tail.addColorStop(.7, 'rgba(99,140,255,.2)'); tail.addColorStop(1, 'rgba(99,140,255,0)');
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(tx, ty);
+    ctx.strokeStyle = tail; ctx.lineWidth = m.head * .75; ctx.lineCap = 'round'; ctx.stroke();
+    const glow = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.head * 4.8);
+    glow.addColorStop(0, 'rgba(255,255,255,.95)'); glow.addColorStop(.35, 'rgba(180,215,255,.5)'); glow.addColorStop(1, 'rgba(99,135,255,0)');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(m.x, m.y, m.head * 4.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.shadowColor = '#fff'; ctx.shadowBlur = 7;
+    ctx.beginPath(); ctx.arc(m.x, m.y, m.head, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  }
+  function frame(now) {
+    const dt = Math.min(.05, (now - (last || now)) / 1000); last = now; t += dt;
+    ctx.clearRect(0, 0, W, H);
+    if (!motion.matches && t >= next) {
+      const angle = (218 + Math.random() * 4) * Math.PI / 180;
+      meteors.push({ x: W * .3 + Math.random() * W, y: -40, dx: Math.cos(angle), dy: -Math.sin(angle),
+        speed: (9 + Math.random() * 4) * 60, tail: 110 + Math.random() * 70, head: 1.6 + Math.random() * .8, opacity: 0 });
+      next = t + 4 + Math.random() * 6;
+    }
+    for (const m of meteors) { m.x += m.dx * m.speed * dt; m.y += m.dy * m.speed * dt; m.opacity = Math.min(1, m.opacity + dt * 4.8); paint(m); }
+    meteors = meteors.filter(m => m.x > -m.tail * 1.5 && m.y < H + m.tail * 1.5);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

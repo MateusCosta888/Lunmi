@@ -1450,16 +1450,7 @@ function setupUpdates(): void {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lunmi:updates-state", state);
     },
     blocked: updateRestartBlocked,
-    confirmRestart: async () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return false;
-      const result = await dialog.showMessageBox(mainWindow, {
-        type: "question", title: "Atualizar a Lunmi", buttons: ["Mais tarde", "Reiniciar e atualizar"],
-        defaultId: 0, cancelId: 0, noLink: true,
-        message: "Reiniciar para instalar a atualização?",
-        detail: "Guarda primeiro as alterações nos formulários. Rascunhos de conversa e alterações por guardar serão perdidos. O histórico e as configurações guardadas serão mantidos.\n\nA Lunmi fecha e o instalador mostra o progresso. A instalação pode demorar alguns minutos; no fim, a Lunmi abre sozinha.",
-      });
-      return result.response === 1;
-    },
+    // The renderer modal ("O que há de novo") is the confirmation; no second native dialog.
     finish: () => requestQuit(() => {
       updater!.once("error", () => {
         dialog.showErrorBox("Atualização não iniciada", "Não foi possível iniciar o instalador. Abre novamente a Lunmi para continuar na versão atual e tentar de novo.");

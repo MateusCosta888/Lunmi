@@ -2,14 +2,21 @@
 ; desktop/scripts/components.py. Ficam em "<instalação>-runtime\<nome>-<chave>", fora de
 ; $INSTDIR, e só voltam a ser extraídos quando o conteúdo muda.
 !include "${BUILD_RESOURCES_DIR}\components\lunmi-components.nsh"
+!include "FileFunc.nsh"
 
 !ifndef BUILD_UNINSTALLER
   Var lunmiUpdateDir
   !macro customInit
-    ; The app starts updates with /S. A multi-minute install without a window looks like Lunmi vanished.
+    ; The app starts updates with /S. A multi-minute install without a window looks like Lunmi vanished,
+    ; unless the Lunmi setup window (--lunmi-ui) is already showing the progress.
     ${If} ${isUpdated}
       StrCpy $lunmiUpdateDir $INSTDIR
-      SetSilent normal
+      ${GetParameters} $R0
+      ClearErrors
+      ${GetOptions} $R0 "--lunmi-ui" $R1
+      ${If} ${Errors}
+        SetSilent normal
+      ${EndIf}
     ${EndIf}
     ; Manual setups start in the standard per-user folder; updates keep /D and the installed path.
     ${IfNot} ${isUpdated}
@@ -161,6 +168,19 @@
       FindNext $lunmiHandle $lunmiValue
     ${Loop}
     FindClose $lunmiHandle
+    ; Shortcut choices from the Lunmi setup window (fresh installs only).
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "--no-desktop-shortcut" $R1
+    ${IfNot} ${Errors}
+      Delete "$newDesktopLink"
+    ${EndIf}
+    ClearErrors
+    ${GetOptions} $R0 "--no-start-menu-shortcut" $R1
+    ${IfNot} ${Errors}
+      Delete "$newStartMenuLink"
+      StrCpy $launchLink "$appExe"
+    ${EndIf}
     ClearErrors
     ; Update from the app: reopen Lunmi and close the progress window, like the former silent run.
     ${If} ${isUpdated}

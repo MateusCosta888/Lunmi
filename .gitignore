@@ -33,6 +33,10 @@
 !/desktop/licenses/
 # Scripts de empacotamento/verificação: sem eles a entrega não é reproduzível.
 !/desktop/scripts/
+# Interface própria do instalador (Rust + WebView2); o build e o demo ficam fora.
+!/desktop/installer/
+/desktop/installer/target/
+/desktop/installer/demo/
 # One-off local diagnostic, not a maintained product regression.
 /desktop/tests/scratch-gate-probe.test.tsx
 # Hook NSIS de remoção: o build no clone precisa dele; o resto de build/ fica fora.

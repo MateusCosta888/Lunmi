@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import type { NsisUpdater } from "electron-updater";
-import { LunmiUpdates, RELEASE_BASE } from "../electron/updates";
+import { LunmiUpdates, RELEASE_BASE, releaseNotesText } from "../electron/updates";
 import { verifyDescriptor, verifyInstaller } from "../electron/update-signature";
 import { fetchReleaseFile } from "../electron/update-download";
 
@@ -22,7 +22,7 @@ let signature: Buffer;
 function fixture(overrides: Partial<ConstructorParameters<typeof LunmiUpdates>[0]> = {}) {
   const updater = Object.assign(new EventEmitter(), {
     autoDownload: true, autoInstallOnAppQuit: true, allowDowngrade: true, allowPrerelease: false,
-    checkForUpdates: vi.fn(async () => ({ isUpdateAvailable: true, updateInfo: { version, files: [{ url: descriptor.file, size: descriptor.size, sha512: descriptor.sha512 }] } })),
+    checkForUpdates: vi.fn(async () => ({ isUpdateAvailable: true, updateInfo: { version, releaseNotes: "<ul><li>Novo instalador</li><li>Modal &amp; notas</li></ul>", files: [{ url: descriptor.file, size: descriptor.size, sha512: descriptor.sha512 }] } })),
     downloadUpdate: vi.fn(async () => [installer]), quitAndInstall: vi.fn(),
   });
   const blocked = vi.fn(() => false);
@@ -59,15 +59,29 @@ describe("signed updates", () => {
     const value = Buffer.from(JSON.stringify({ ...descriptor, platform: "linux" }));
     expect(() => verifyDescriptor(value, sign(null, value, keys.privateKey), publicKey, version)).toThrow();
   });
-  it("downloads only after verification and never installs on download", async () => {
+  it("offers a verified update with its notes and downloads nothing before the user accepts", async () => {
     const f = fixture();
     expect(f.updater.autoDownload).toBe(false);
     expect(f.updater.autoInstallOnAppQuit).toBe(false);
     expect(f.updater.allowDowngrade).toBe(false);
-    expect(await f.controller.check()).toMatchObject({ phase: "ready", version, percent: 100 });
+    expect(await f.controller.check()).toMatchObject({ phase: "available", version, notes: "• Novo instalador\n• Modal & notas" });
     expect(f.fetch).toHaveBeenCalledWith(`${RELEASE_BASE}v${version}/lunmi-update.json`);
+    expect(f.updater.downloadUpdate).not.toHaveBeenCalled();
+    expect(await f.controller.check()).toMatchObject({ phase: "available" });
+    expect(f.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+  it("downloads, verifies and hands off in one accepted install", async () => {
+    const f = fixture({ confirmRestart: undefined });
+    await f.controller.check();
+    expect(await f.controller.install()).toMatchObject({ phase: "installing" });
     expect(f.updater.downloadUpdate).toHaveBeenCalledTimes(1);
-    expect(f.updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(f.finish).toHaveBeenCalledTimes(1);
+  });
+  it("turns release notes into plain text", () => {
+    expect(releaseNotesText("<h2>Novidades</h2><p>Linha <b>um</b></p><script>x</script>")).toBe("Novidades\nLinha um\nx");
+    expect(releaseNotesText([{ version, note: "A" }, { version, note: "B" }])).toBe("A\nB");
+    expect(releaseNotesText(null)).toBeUndefined();
+    expect(releaseNotesText("x".repeat(5000))).toHaveLength(4000);
   });
   it("does not download an unsigned update", async () => {
     signature = Buffer.alloc(64);
@@ -77,7 +91,7 @@ describe("signed updates", () => {
   });
   it("rejects mismatched metadata or external download URLs", async () => {
     const f = fixture();
-    f.updater.checkForUpdates.mockResolvedValueOnce({ isUpdateAvailable: true, updateInfo: { version, files: [{ url: "https://attacker.invalid/setup.exe", size: descriptor.size, sha512: descriptor.sha512 }] } });
+    f.updater.checkForUpdates.mockResolvedValueOnce({ isUpdateAvailable: true, updateInfo: { version, releaseNotes: "", files: [{ url: "https://attacker.invalid/setup.exe", size: descriptor.size, sha512: descriptor.sha512 }] } });
     expect(await f.controller.check()).toMatchObject({ error: "verification" });
     expect(f.updater.downloadUpdate).not.toHaveBeenCalled();
   });
@@ -98,22 +112,22 @@ describe("signed updates", () => {
     const f = fixture();
     f.fetch.mockRejectedValueOnce(new Error("secret URL should never reach renderer"));
     expect(await f.controller.check()).toMatchObject({ phase: "error", error: "unavailable" });
-    expect(await f.controller.check()).toMatchObject({ phase: "ready" });
+    expect(await f.controller.check()).toMatchObject({ phase: "available" });
   });
   it("rejects a corrupt or interrupted download", async () => {
     await writeFile(installer, "incomplete");
     const f = fixture();
-    expect(await f.controller.check()).toMatchObject({ phase: "error", error: "verification" });
-    await f.controller.install();
+    await f.controller.check();
+    expect(await f.controller.install()).toMatchObject({ phase: "error", error: "verification" });
     expect(f.finish).not.toHaveBeenCalled();
   });
   it("keeps installation disabled after disk failure and recovers on retry", async () => {
     const f = fixture();
     f.updater.downloadUpdate.mockRejectedValueOnce(Object.assign(new Error("disk full"), { code: "ENOSPC" }));
-    expect(await f.controller.check()).toMatchObject({ phase: "error", error: "unavailable" });
-    await f.controller.install();
+    await f.controller.check();
+    expect(await f.controller.install()).toMatchObject({ phase: "error", error: "unavailable" });
     expect(f.finish).not.toHaveBeenCalled();
-    expect(await f.controller.check()).toMatchObject({ phase: "ready" });
+    expect(await f.controller.check()).toMatchObject({ phase: "available" });
   });
   it("projects progress without marking it ready prematurely", async () => {
     const f = fixture();
@@ -123,18 +137,22 @@ describe("signed updates", () => {
       return [installer];
     });
     await f.controller.check();
+    await f.controller.install();
   });
   it("revalidates cache before installation", async () => {
-    const f = fixture();
+    const f = fixture({ confirmRestart: async () => {
+      const changed = await readFile(installer); changed[0] ^= 1;
+      await writeFile(installer, changed);
+      return true;
+    } });
     await f.controller.check();
-    const changed = await readFile(installer); changed[0] ^= 1;
-    await writeFile(installer, changed);
     expect(await f.controller.install()).toMatchObject({ phase: "error", error: "verification" });
     expect(f.finish).not.toHaveBeenCalled();
   });
-  it("blocks active operations without showing a restart dialog", async () => {
+  it("blocks active operations before downloading", async () => {
     const f = fixture(); await f.controller.check(); f.blocked.mockReturnValue(true);
-    expect(await f.controller.install()).toMatchObject({ phase: "ready", error: "busy" });
+    expect(await f.controller.install()).toMatchObject({ phase: "available", error: "busy" });
+    expect(f.updater.downloadUpdate).not.toHaveBeenCalled();
     expect(f.confirmRestart).not.toHaveBeenCalled();
   });
   it("rechecks activity after the dialog", async () => {
