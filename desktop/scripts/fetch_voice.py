@@ -9,6 +9,7 @@ import subprocess
 import urllib.request
 
 from fetch_runtime import REPO, RESOURCES, fetch_python
+from bundle_vc_runtime import install_vc_runtime
 
 
 def digest(path: Path) -> str:
@@ -68,6 +69,7 @@ def main() -> None:
                     '--no-warn-script-location', '--disable-pip-version-check', '--no-input',
                     '-r', str(RESOURCES / 'requirements-voice.lock')], check=True)
     subprocess.run([str(python), '-I', '-m', 'pip', 'check'], check=True)
+    install_vc_runtime(destination / 'runtime')
     subprocess.run([str(python), '-I', '-c',
                     'import supertonic, faster_whisper, sounddevice, onnxruntime, scipy; '
                     'import importlib.util; assert importlib.util.find_spec("nvidia") is None'], check=True)

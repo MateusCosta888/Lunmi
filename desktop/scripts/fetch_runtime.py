@@ -10,6 +10,8 @@ import tarfile
 import tempfile
 import urllib.request
 
+from bundle_vc_runtime import install_vc_runtime
+
 REPO = Path(__file__).resolve().parents[2]
 RESOURCES = REPO / "desktop" / "resources"
 
@@ -37,6 +39,7 @@ def main() -> None:
         "--disable-pip-version-check", "--no-input", "-r", str(RESOURCES / "requirements-runtime.lock"),
     ], cwd=REPO, check=True)
     subprocess.run([str(destination / "python.exe"), str(REPO / "desktop/scripts/prepare_runtime.py")], check=True)
+    install_vc_runtime(destination)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Runtime advisory review failed" }
           python -m pip check
       - run: python desktop/scripts/fetch_runtime.py
+      - run: python desktop/scripts/fetch_web.py
       - run: python desktop/scripts/fetch_voice.py
       - run: python desktop/scripts/assemble_resources.py
       - run: python desktop/scripts/components.py pack

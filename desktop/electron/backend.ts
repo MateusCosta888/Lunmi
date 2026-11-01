@@ -284,6 +284,7 @@ export class PythonBackendSupervisor {
     }
     if (this.options.resourcesRoot) {
       childEnv.LUNMI_BUNDLED_VOICE_HOME = componentDir(this.options.resourcesRoot, "voice");
+      childEnv.LUNMI_BUNDLED_WEB_HOME = componentDir(this.options.resourcesRoot, "python");
     }
 
     let child: ChildProcessWithoutNullStreams;

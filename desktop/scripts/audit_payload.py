@@ -48,6 +48,10 @@ PERSONAL_PATHS = tuple(value.encode("utf-8")
 # Exact public wheel bytes only: upstream CI also uses the username "runneradmin".
 # PyPI cp311-win_amd64 wheels: numpy 2.4.6 (1e254a00...1500147), pandas 2.2.3 (3fc6873a...5ab2c5).
 PUBLIC_BUILD_METADATA_SHA256 = {
+    "resources/python/web-packages/curl_cffi-0.17.0.dist-info/DELVEWHEEL":
+        "834774cfd61a0d050b60a8ce59a94f318ea99417e146f4300c4b16b64455ce90",
+    "resources/python/web-packages/rapidfuzz-3.14.6.dist-info/DELVEWHEEL":
+        "1134e52fde7967389578c86040fc97058fb5319ef5513349cf0733f693d6cb09",
     "resources/python/Lib/site-packages/numpy/__config__.py":
         "7ff3893d0f50f52c748988bbc88bfe970a052fd81e4dfa65bc536d61d20ae18d",
     "resources/python/Lib/site-packages/numpy-2.4.6.dist-info/DELVEWHEEL":
@@ -64,6 +68,11 @@ PUBLIC_BUILD_METADATA_SHA256 = {
         "ee1de88617d5488d192044e28dd47ceb4c31632c30e4c98d317a7458dbb25645",
     "resources/voice/runtime/Lib/site-packages/scipy-1.17.1.dist-info/DELVEWHEEL":
         "bfde4e6a348d78f3cfb5ac14c6af2d312ba63bbcb29f1cd16103dbb0a65d20a1",
+}
+# Public format marker constants, byte-compared against the hash-pinned PyPI wheel.
+PUBLIC_SOURCE_SHA256 = {
+    "resources/python/web-packages/cryptography/hazmat/primitives/serialization/ssh.py":
+        "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c",
 }
 SECRET_PATTERNS = (
     re.compile(rb"sk-[A-Za-z0-9]{20,}"),
@@ -103,7 +112,8 @@ def _scan_bytes(relative: Path, blob: bytes) -> str | None:
     public_metadata = PUBLIC_BUILD_METADATA_SHA256.get(relative.as_posix()) == hashlib.sha256(blob).hexdigest()
     if any(token in blob for token in PERSONAL_PATHS) and not public_metadata:
         return f"caminho pessoal: {relative}"
-    if _inside_site_packages(relative) and relative.suffix == ".py":
+    public_source = PUBLIC_SOURCE_SHA256.get(relative.as_posix()) == hashlib.sha256(blob).hexdigest()
+    if relative.suffix == ".py" and (_inside_site_packages(relative) or public_source):
         return None
     if any(pattern.search(blob) for pattern in SECRET_PATTERNS):
         return f"aparência de credencial: {relative}"

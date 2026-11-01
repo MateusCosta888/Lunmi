@@ -73,6 +73,26 @@ def test_public_build_metadata_exception_does_not_skip_secret_checks(monkeypatch
     assert "credencial" in audit._scan_bytes(relative, content)
 
 
+def test_web_public_serializer_literal_exception_is_exact_and_never_skips_personal_paths(monkeypatch):
+    audit = _load_script('audit_payload.py')
+    relative = Path('resources/python/web-packages/cryptography/hazmat/primitives/serialization/ssh.py')
+    content = b'HEADER = b"-----BEGIN OPENSSH PRIVATE KEY-----"'
+    monkeypatch.setattr(audit, 'PUBLIC_SOURCE_SHA256', {relative.as_posix(): hashlib.sha256(content).hexdigest()},
+                        raising=False)
+    assert audit._scan_bytes(relative, content) is None
+    assert audit._scan_bytes(relative, content + b' changed')
+    assert audit._scan_bytes(Path('resources/app/ssh.py'), content)
+    monkeypatch.setattr(audit, 'PERSONAL_PATHS', (b'HEADER',))
+    assert 'pessoal' in audit._scan_bytes(relative, content)
+
+
+def test_web_unreviewed_code_and_agent_directories_remain_audited():
+    audit = _load_script('audit_payload.py')
+    assert audit._scan_bytes(Path('resources/python/web-packages/unknown.py'),
+                             b'-----BEGIN OPENSSH PRIVATE KEY-----')
+    assert audit._name_finding(Path('resources/python/web-packages/typer/.agents'))
+
+
 def test_a_forbidden_component_anywhere_in_the_path_is_rejected() -> None:
     assemble = _load_assembler()
     # O defeito: só o último componente era olhado, então o que estava *dentro* de um

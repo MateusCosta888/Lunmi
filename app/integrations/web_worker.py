@@ -3,9 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import importlib.metadata
+import os
+import site
 import sys
 from pathlib import Path
 from typing import Any
+
+# -I -S keeps the product's MCP version out; only these shipped wheels are enabled.
+packages = os.environ.get('LUNMI_WEB_PACKAGES', '')
+if packages:
+    if not sys.flags.no_site or not Path(packages).is_absolute() or not Path(packages).is_dir():
+        raise RuntimeError('invalid_web_packages')
+    site.addsitedir(packages)
 
 # Isolated Python (-I): add only the trusted application root, never the CWD.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))

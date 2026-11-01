@@ -7,6 +7,8 @@ O runtime pinado vive fora do processo principal:
 `state_root` vem de `Settings` (sandbox incluído). `LUNMI_WEB_HOME` é um override absoluto
 apenas para o processo/backend confiável de QA; nada aqui aceita caminhos do renderer.
 Este módulo nunca cria o runtime, nunca o importa e nunca abre rede.
+No instalador, o interpretador Python é partilhado mas as dependências web ficam em
+`web-packages/`, carregadas com `-I -S`. A cache continua na raiz de dados do utilizador.
 
 A partir dos contratos `.agents/WEB-SEARCH-ORIGIN-V1-CONTRACT.md` e
 `.agents/WEB-SEARCH-AUTO-V1-CONTRACT.md`, o mesmo ficheiro `web-search.json` guarda
@@ -94,6 +96,7 @@ class WebEnvironment:
     python: Path
     worker: Path
     reason: str = ""
+    packages: Path | None = None
 
     @property
     def available(self) -> bool:
@@ -132,19 +135,31 @@ def resolve_environment(
 ) -> WebEnvironment:
     """Resolve caminhos e diz honestamente se os artefactos existem. Nunca cria nada."""
     home = web_home(state_root)
+    bundled = os.environ.get('LUNMI_BUNDLED_WEB_HOME', '').strip()
+    bundle = Path(bundled).resolve() if bundled and Path(bundled).is_absolute() else None
+    explicit_home = os.environ.get(WEB_HOME_ENV, '').strip()
+    packages = None
     python = Path(runtime_python).expanduser().resolve() if runtime_python is not None else (
         home.joinpath(*RUNTIME_RELATIVE).resolve())
+    # Installed builds share only the interpreter, never the backend's MCP/site-packages.
+    if (runtime_python is None and not python.is_file() and bundle is not None
+            and not (explicit_home and Path(explicit_home).expanduser().is_absolute())):
+        python = bundle / 'python.exe'
+        packages = bundle / 'web-packages'
     worker = Path(worker_path).expanduser().resolve() if worker_path is not None else (
         Path(__file__).resolve().with_name(WORKER_FILENAME))
 
     reason = ""
-    if not _within(python, home):
+    if not _within(python, home) and not (packages is not None and bundle is not None
+                                        and _within(python, bundle) and _within(packages, bundle)):
         reason = REASON_OUTSIDE_HOME
     elif not python.is_file():
         reason = REASON_RUNTIME_MISSING
+    elif packages is not None and not (packages / 'search_mcp').is_dir():
+        reason = REASON_RUNTIME_MISSING
     elif not worker.is_file():
         reason = REASON_WORKER_MISSING
-    return WebEnvironment(home=home, python=python, worker=worker, reason=reason)
+    return WebEnvironment(home=home, python=python, worker=worker, reason=reason, packages=packages)
 
 
 @dataclass(frozen=True)

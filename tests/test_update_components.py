@@ -58,6 +58,18 @@ def test_nsis_defines_refuse_paths_that_would_break_the_script() -> None:
             components._nsis_string(bad)
 
 
+@pytest.mark.skipif(not (REPO / 'desktop/node_modules/app-builder-lib').is_dir(),
+                    reason='7za unavailable before npm ci')
+def test_component_size_limit_still_refuses_an_oversized_payload(tmp_path, monkeypatch):
+    components = _components()
+    resources = tmp_path / 'resources'
+    _tree(resources / 'python', {'python.exe': b'python'})
+    _tree(resources / 'voice', {'runtime/python.exe': b'voice'})
+    monkeypatch.setattr(components, 'MAX_ARCHIVES_BYTES', 1)
+    with pytest.raises(SystemExit, match='limite de 2 GiB'):
+        components.pack(resources, tmp_path / 'components')
+
+
 @pytest.mark.skipif(not (REPO / "desktop/node_modules/app-builder-lib").is_dir() or shutil.which("node") is None,
                     reason="7za do electron-builder indisponível antes de npm ci")
 def test_pack_and_materialize_reproduce_the_installed_layout(tmp_path: Path) -> None:

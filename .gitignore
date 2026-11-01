@@ -49,6 +49,7 @@
 /desktop/resources/*
 !/desktop/resources/RUNTIME-SOURCE.json
 !/desktop/resources/requirements-runtime.lock
+!/desktop/resources/requirements-web.lock
 !/desktop/resources/VOICE-SOURCE.json
 !/desktop/resources/requirements-voice.lock
 !/desktop/THIRD-PARTY-MOTION.md

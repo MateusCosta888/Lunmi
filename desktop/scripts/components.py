@@ -36,7 +36,7 @@ SENTINELS = {"python": "python.exe", "voice": "runtime/python.exe"}
 MANIFEST = "lunmi-components.json"
 COMPLETE = ".lunmi-complete"
 # O NSIS não gera instaladores com mais de 2 GiB; a margem cobre a app e o próprio NSIS.
-MAX_ARCHIVES_BYTES = 1_990_000_000
+MAX_ARCHIVES_BYTES = 2_020_000_000
 KEY = re.compile(r"[0-9a-f]{16}")
 SEVEN_ZIP_ARGS = ("a", "-t7z", "-mx=9", "-md=1m", "-ms=off", "-mtc=off", "-mtm=off", "-mta=off", "-bd")
 

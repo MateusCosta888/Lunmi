@@ -35,6 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import components  # noqa: E402
+from bundle_vc_runtime import missing_vc_runtime  # noqa: E402
+from verify_runtime_engines import run_probe  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_ROOT = REPO / "desktop" / "release" / "win-unpacked"
@@ -110,6 +112,7 @@ def _run_bridge(app_root: Path, python: Path, voice: Path, user_data: Path) -> d
     env.pop("LLM_MODEL", None)
     env.pop('LUNMI_VOICE_HOME', None)
     env['LUNMI_BUNDLED_VOICE_HOME'] = str(voice)
+    env['LUNMI_BUNDLED_WEB_HOME'] = str(python.parent)
     proc = subprocess.Popen(
         [str(python), "-u", "-m", "app.bridge.server"],
         cwd=str(app_root), env=env,
@@ -121,6 +124,7 @@ def _run_bridge(app_root: Path, python: Path, voice: Path, user_data: Path) -> d
         json.dumps({"v": 1, "id": "mem", "type": "memory.list", "payload": {"limit": 10}}),
         json.dumps({'v': 1, 'id': 'voice_out', 'type': 'voice.get', 'payload': {}}),
         json.dumps({'v': 1, 'id': 'voice_in', 'type': 'voice.input.get', 'payload': {}}),
+        json.dumps({'v': 1, 'id': 'web', 'type': 'web.get', 'payload': {}}),
         json.dumps({"v": 1, "id": "shut", "type": "app.shutdown", "payload": {}}),
         "",
     ]).encode("utf-8")
@@ -258,6 +262,15 @@ def main() -> int:
     report['voice'] = {name: next((m.get('payload', {}) for m in bridge['messages'] if m.get('id') == name), {})
                        for name in ('voice_out', 'voice_in')}
     report['voice_assets_valid'] = _voice_assets_valid(component_dirs['voice'])
+    report['native_runtime_missing'] = {
+        'python': missing_vc_runtime(component_dirs['python']),
+        'voice': missing_vc_runtime(component_dirs['voice'] / 'runtime'),
+    }
+    report['engine_probes'] = {
+        'voice': run_probe('voice', component_dirs['voice'] / 'runtime/python.exe',
+                           app_root, user_data / 'voice-probe', component_dirs['voice']),
+        'web': run_probe('web', python, app_root, user_data / 'web-probe'),
+    }
 
     # O worker fica por último de propósito: é o caminho que importa `vendor/UFO` e a pilha de
     # UIA, onde os wrappers COM eram gravados. Com o snapshot antigo (antes do worker) o PASS de
@@ -300,6 +313,8 @@ def main() -> int:
         and worker["rc"] == 0
         and all(value.get('available') is True for value in report['voice'].values())
         and report['voice_assets_valid'] is True
+        and not any(report['native_runtime_missing'].values())
+        and all(probe['ok'] is True for probe in report['engine_probes'].values())
     )
     print(f"[verify] evidência: {evidence / 'package-verification.json'}")
     print(f"[verify] RESULTADO: {'PASS' if ok else 'FAIL'}")

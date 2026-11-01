@@ -28,6 +28,7 @@ import { VoiceInputControls } from "../voice/VoiceInputControls";
 import type { VoiceInputApi } from "../voice/useVoiceInput";
 import { deriveOrbMode } from "./orb/orbState";
 import { useBentoSurface } from "../../shared/bento";
+import "./chat-layout.css";
 
 export interface ChatPanelProps {
   chat: ChatTaskState;
@@ -144,7 +145,8 @@ export function ChatPanel({
     const input = inputRef.current;
     if (!input) return;
     input.style.height = "auto";
-    input.style.height = `${Math.min(176, Math.max(64, input.scrollHeight))}px`;
+    // CSS bounds follow the available window height, including Windows display scaling.
+    input.style.height = `${input.scrollHeight}px`;
   }, [text]);
 
   useEffect(() => {

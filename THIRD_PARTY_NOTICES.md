@@ -42,7 +42,20 @@ radiumcoders (Jay Sharma), com material procedural de partículas e ciclo de apl
 A [página pública do componente](https://preview.21st.dev/@radiumcoders/components/live-orb)
 declara MIT; a fonte é https://23rd.dev/r/live-orb.json. Texto da licença e atribuição em
 [desktop/licenses/radiumcoders-LiveOrb-MIT.txt](desktop/licenses/radiumcoders-LiveOrb-MIT.txt).
-# App and provider marks used in Lunmi settings (2026-10-27)
+## Runtimes distribuídos com o instalador
+
+A pesquisa HTTP usa [Free Search MCP](https://github.com/sweetcornna/free-search-mcp),
+versão 0.16.0, sob licença MIT. As dependências da pesquisa ficam separadas das do backend;
+as licenças acompanham os respetivos pacotes em `python/web-packages/`. O pacote não inclui
+o navegador nem o driver Node do Playwright, que a política de pesquisa HTTP não utiliza.
+
+Os runtimes Python incluem os ficheiros redistribuíveis x64 do Microsoft Visual C++
+para carregar as suas extensões nativas sem uma instalação global do Visual C++.
+Estes ficheiros têm os termos de distribuição da Microsoft, não a licença do código Lunmi.
+O aviso `VC-REDIST.txt` e a proveniência `VC-RUNTIME.json` acompanham cada runtime.
+Consultar [Redistribute Visual C++ Files](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files).
+
+## App and provider marks used in Lunmi settings (2026-10-27)
 
 Provider marks are bundled from [LobeHub lobe-icons](https://github.com/lobehub/lobe-icons),
 commit `8b7bbc433d38437fa2b0cca58ae896917162b812`, under the MIT license

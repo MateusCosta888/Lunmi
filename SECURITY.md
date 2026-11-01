@@ -81,3 +81,15 @@ de 15 de novembro mantém-se. Estes resultados não certificam ausência de vuln
 Na auditoria do pacote, três metadados de build dos wheels públicos Windows CPython 3.11 de [NumPy 2.4.6](https://pypi.org/project/numpy/2.4.6/#files) e [pandas 2.2.3](https://pypi.org/project/pandas/2.2.3/#files) contêm o nome comum de runner `runneradmin`. A exceção exige caminho e SHA-256 exatos, conferidos contra os wheels oficiais e os hashes publicados no PyPI. Alterar qualquer byte ou mover o conteúdo para outro caminho volta a bloquear; a exceção não desliga a procura de credenciais. Não há uma exclusão geral para `site-packages` ou nomes de utilizadores.
 
 No runtime de voz do Alpha 5, a mesma verificação inclui duas localizações dos metadados NumPy e três ficheiros públicos de [PyAV 18.1.0](https://pypi.org/project/av/18.1.0/#files) e [SciPy 1.17.1](https://pypi.org/project/scipy/1.17.1/#files). Foram novamente obtidos os wheels Windows oficiais, conferidos os hashes do lock e comparados os três ficheiros byte a byte antes de fixar os seus SHA-256. As exceções continuam limitadas ao caminho e conteúdo exatos. A auditoria também procura o caminho do runner Windows nos ensaios locais, para reproduzir este gate antes do CI; outros conteúdos com esse caminho continuam bloqueados.
+
+Na preparação do runtime web (01/11/2026), foram conferidos da mesma forma os metadados
+`DELVEWHEEL` de [curl_cffi 0.17.0](https://pypi.org/project/curl-cffi/0.17.0/#files) e
+[RapidFuzz 3.14.6](https://pypi.org/project/RapidFuzz/3.14.6/#files). Apenas os bytes públicos,
+nos caminhos e hashes listados no auditor, podem conter o caminho do runner.
+O serializador SSH de [cryptography 50.0.2](https://pypi.org/project/cryptography/50.0.2/#files)
+contém cabeçalhos de formato de chave em constantes. Esse ficheiro também foi comparado com
+o wheel oficial e tem uma exceção de conteúdo exato para a heurística de credenciais.
+A procura de caminhos pessoais continua ativa. Modificar um byte ou mover o ficheiro retira
+a exceção; as restantes fontes web e pastas de agente continuam a ser auditadas.
+A pasta `.agents` trazida pelo Typer é retirada antes de empacotar. Estas exceções de conteúdo
+público não são exclusões de vulnerabilidades; o lock web passa pela auditoria sem dispensas.

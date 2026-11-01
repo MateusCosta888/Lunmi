@@ -1,0 +1,49 @@
+/* The main chat adapts in logical pixels; Node geometry and the user's zoom stay unchanged. */
+.lunmi-conversation { container: conversation / inline-size; }
+.lunmi-conversation .lunmi-conversation-face .lunmi-galaxy-orb { width: clamp(112px, 25vh, 272px); max-width: 85%; }
+.lunmi-conversation .lunmi-conversation-body[data-has-messages="true"] .lunmi-galaxy-orb { width: clamp(48px, 9vh, 112px); }
+.lunmi-conversation .lunmi-galaxy-orb > svg { max-width: 100%; max-height: 100%; }
+.lunmi-conversation > [role="alertdialog"] { max-height: 32vh; overflow-y: auto; flex-shrink: 0; }
+
+/* A flexible model name lets the action row fit before resorting to another row. */
+.lunmi-conversation .lunmi-composer .lunmi-composer-toolbar > .lunmi-model-picker { flex: 1 1 0; min-width: 64px; max-width: 240px; }
+.lunmi-conversation .lunmi-model-trigger { width: 100%; max-width: 100%; }
+.lunmi-conversation .lunmi-composer-actions { gap: 8px; }
+.lunmi-conversation :is(.lunmi-model-trigger, .lunmi-auto-approve, .lunmi-attach-button, .lunmi-send) { min-height: 44px; }
+
+@media (max-height: 820px) {
+  .lunmi-conversation .lunmi-conversation-face { padding-top: 0; }
+  .lunmi-conversation .lunmi-welcome { padding-bottom: 4px; }
+  .lunmi-conversation .lunmi-composer { padding: 8px 16px 12px; gap: 6px; }
+  .lunmi-conversation .lunmi-composer-surface { padding: 12px; gap: 8px; }
+  .lunmi-conversation .lunmi-input-well { padding: 8px 12px; }
+  .lunmi-conversation .lunmi-composer-input { min-height: 48px; max-height: min(120px, 16vh); }
+  .lunmi-conversation .lunmi-input-hint { display: none; }
+  .lunmi-conversation .lunmi-composer-toolbar { gap: 8px; }
+  .lunmi-conversation .lunmi-auto-approve { gap: 5px; padding-inline: 10px; }
+}
+
+/* Width of the actual chat, including a visible sidebar/context rail. */
+@container conversation (max-width: 560px) {
+  .lunmi-conversation .lunmi-composer-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+  .lunmi-conversation .lunmi-composer .lunmi-composer-toolbar > .lunmi-model-picker { grid-column: 2; grid-row: 1; max-width: none; }
+  .lunmi-conversation .lunmi-composer-toolbar > .lunmi-auto-approve { grid-column: 1; grid-row: 2; justify-self: start; }
+  .lunmi-conversation .lunmi-composer-actions { grid-column: 2; grid-row: 2; width: auto; margin: 0; justify-self: end; }
+  .lunmi-conversation .lunmi-attach-zone:has(.lunmi-attach-list) { grid-column: 1 / -1; }
+  .lunmi-conversation .lunmi-composer-toolbar:has(.lunmi-attach-list) > .lunmi-model-picker { grid-row: 2; grid-column: 1 / -1; }
+  .lunmi-conversation .lunmi-composer-toolbar:has(.lunmi-attach-list) > :is(.lunmi-auto-approve, .lunmi-composer-actions) { grid-row: 3; }
+}
+
+@container conversation (max-width: 440px) {
+  .lunmi-conversation .lunmi-composer-toolbar > .lunmi-auto-approve { grid-column: 1 / -1; }
+  .lunmi-conversation .lunmi-composer-actions { grid-column: 1 / -1; grid-row: 3; }
+  .lunmi-conversation .lunmi-composer-toolbar:has(.lunmi-attach-list) > .lunmi-composer-actions { grid-row: 4; }
+}
+
+@media (max-height: 560px) {
+  .lunmi-conversation .lunmi-welcome p { display: none; }
+  .lunmi-conversation .lunmi-composer { padding-block: 6px; }
+  .lunmi-conversation .lunmi-composer-surface { padding: 8px 10px; gap: 4px; }
+  .lunmi-conversation .lunmi-input-well { padding-block: 6px; }
+  .lunmi-conversation .lunmi-composer-input { max-height: 72px; }
+}

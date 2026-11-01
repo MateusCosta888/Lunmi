@@ -166,7 +166,7 @@ def main() -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             written.append(target)
-    for name in ("RUNTIME-SOURCE.json", "requirements-runtime.lock"):
+    for name in ("RUNTIME-SOURCE.json", "requirements-runtime.lock", "requirements-web.lock"):
         source = REPO / "desktop" / "resources" / name
         if source.is_file():
             target = DEST / name

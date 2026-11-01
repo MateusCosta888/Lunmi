@@ -151,6 +151,8 @@ def _worker_environment(environment: WebEnvironment) -> tuple[dict[str, str], Pa
         "SEARCH_MCP_CONFIG_DIR": str(config),
         **_WORKER_POLICY,
     }
+    if environment.packages is not None:
+        env['LUNMI_WEB_PACKAGES'] = str(environment.packages)
     system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR") or ""
     if system_root:
         env["SYSTEMROOT"] = system_root
@@ -505,7 +507,8 @@ class MCPWebClient:
         env, work = _worker_environment(self.environment)
         params = StdioServerParameters(
             command=str(self.environment.python),
-            args=["-I", "-B", str(self.environment.worker)],
+            args=["-I", "-B", *(["-S"] if self.environment.packages is not None else []),
+                  str(self.environment.worker)],
             env=env,
             cwd=str(work),
         )

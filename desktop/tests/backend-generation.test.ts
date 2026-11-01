@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { spawn } from "child_process";
+import * as path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { PythonBackendSupervisor } from "../electron/backend";
 import type { Envelope } from "../src/shared/protocol";
@@ -30,6 +31,19 @@ class Child extends EventEmitter {
 }
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+it("passes the shipped web and voice roots to an installed backend", async () => {
+  vi.mocked(spawn).mockImplementation((() => new Child(200)) as unknown as typeof spawn);
+  const resourcesRoot = path.resolve("fixture-install/resources");
+  const supervisor = new PythonBackendSupervisor({
+    repoRoot: ".", resourcesRoot, clientVersion: "test", getHostPids: () => [], onEvent: () => undefined,
+  });
+  await supervisor.startAndHandshake();
+  const options = vi.mocked(spawn).mock.calls.at(-1)?.[2];
+  expect(options?.env?.LUNMI_BUNDLED_WEB_HOME).toBe(path.join(resourcesRoot, "python"));
+  expect(options?.env?.LUNMI_BUNDLED_VOICE_HOME).toBe(path.join(resourcesRoot, "voice"));
+  await supervisor.shutdown();
+});
 
 it.each(["exit", "stdin", "stdout", "process"])("um %s tardio do backend antigo não invalida a sessão nova", async source => {
   vi.useFakeTimers();
