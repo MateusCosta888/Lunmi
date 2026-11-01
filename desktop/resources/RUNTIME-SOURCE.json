@@ -9,6 +9,6 @@
   },
   "requirements_txt_sha256": "949d57578767c0aa32270dbe1a50521b6ad03f8514a6799573934e9a384ac473",
   "installed_lock": "requirements-runtime.lock",
-  "installed_lock_sha256": "fcbf3d4aa281311386d01e6a3abf6e1866c7bc72b606bd04686989de58796d13",
+  "installed_lock_sha256": "616ed35572839daad37d9feeda6d5f1a7c7953980d2aeaf0726bb519f27da7b4",
   "install_command": "resources/python/python.exe -m pip install --no-warn-script-location --disable-pip-version-check --no-input -r desktop/resources/requirements-runtime.lock"
 }
