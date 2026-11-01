@@ -91,6 +91,13 @@ def resolve_input_environment(
         home.joinpath(*WHISPER_MODEL_RELATIVE).resolve())
     silero = Path(silero_path).expanduser().resolve() if silero_path is not None else (
         home.joinpath(*SILERO_MODEL_RELATIVE).resolve())
+    if models_dir is None and silero_path is None and not model.is_dir():
+        # Downloaded after install (01/11): used only once verified; see app/voice/models.py.
+        from app.voice.models import verified_models
+        downloaded = verified_models(state_root, home, "dictation")
+        if downloaded is not None:
+            model = downloaded.joinpath(*WHISPER_MODEL_RELATIVE)
+            silero = downloaded.joinpath(*SILERO_MODEL_RELATIVE)
     worker = Path(worker_path).expanduser().resolve() if worker_path is not None else (
         Path(__file__).resolve().with_name(WORKER_FILENAME))
 

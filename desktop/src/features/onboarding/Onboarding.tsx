@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { describeError, getBridgeApi, type SendCommandFn } from "../../shared/ipc/client";
 import type { BrainGetDto, BrainStateDto, ModelListingDto, UiPreferencesDto } from "../../shared/types";
+import { VoiceModelsPanel } from "../voice/VoiceModelsPanel";
 import "./onboarding.css";
 
 type Step = "welcome" | "choose" | "groq" | "kiro" | "done";
@@ -238,6 +239,9 @@ export function Onboarding({ sendCommand, onDone }: {
           <p className="lunmi-onboarding-eyebrow">Pronto</p>
           <h1>A Lunmi já tem cérebro.</h1>
           <p>Ligada a {connected}. Podes mudar de cérebro quando quiseres, em Brain.</p>
+          <p>Queres que a Lunmi fale contigo? Transfere a voz e, se quiseres, o ditado. Continua em
+            segundo plano depois de entrares; também está nas Configurações.</p>
+          <VoiceModelsPanel compact />
           <div className="lunmi-onboarding-actions">
             <button type="button" className="lunmi-onboarding-primary" data-testid="onboarding-finish"
               onClick={() => void finish("chat")}>Entrar na Lunmi</button>

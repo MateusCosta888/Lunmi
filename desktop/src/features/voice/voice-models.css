@@ -1,0 +1,20 @@
+/* Modelos de voz transferidos depois da instalação: uma linha por grupo, com os tokens do tema. */
+.lunmi-voice-models { display: grid; gap: 10px; }
+.lunmi-voice-model {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 14px; border: 1px solid var(--lunmi-border-subtle);
+  background: var(--lunmi-bg-card-subtle); color: var(--lunmi-text-secondary); font-size: 13px;
+}
+.lunmi-voice-model-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 220px; }
+.lunmi-voice-model-text strong { color: var(--lunmi-text-primary); font-size: 14px; }
+.lunmi-voice-model-text progress { width: 100%; height: 6px; accent-color: var(--lunmi-accent); }
+.lunmi-voice-model-actions { display: flex; gap: 8px; }
+.lunmi-voice-model-actions button {
+  min-height: 36px; padding: 8px 14px; border-radius: 10px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--lunmi-border-subtle); background: var(--lunmi-bg-card); color: var(--lunmi-text-primary);
+}
+.lunmi-voice-model-actions .lunmi-voice-model-primary {
+  background: var(--lunmi-accent); border-color: var(--lunmi-accent); color: var(--lunmi-bg-window);
+}
+.lunmi-voice-model-actions button:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
+.lunmi-voice-models-error { margin: 0; color: var(--lunmi-error, #d9534f); font-size: 13px; }

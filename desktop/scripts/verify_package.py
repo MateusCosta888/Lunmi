@@ -47,16 +47,23 @@ def _snapshot(root: Path) -> dict[str, int]:
     return {str(p): p.stat().st_mtime_ns for p in root.rglob("*") if p.is_file()}
 
 
-def _voice_assets_valid(bundle: Path) -> bool:
+# The models the setup no longer ships: the build's verified download, as a user would get.
+VOICE_MODELS_SOURCE = REPO / 'desktop' / 'resources' / 'voice'
+
+
+def _voice_assets_valid(bundle: Path, models: Path = VOICE_MODELS_SOURCE) -> bool:
+    """The component carries the pins, licences and runtime but no models (01/11); the models
+    the app would download exist with the pinned size and SHA-256."""
     try:
         pin = json.loads((REPO / 'desktop/resources/VOICE-SOURCE.json').read_text(encoding='utf-8'))
         if json.loads((bundle / 'VOICE-SOURCE.json').read_text(encoding='utf-8')) != pin:
             return False
-        if (bundle / 'runtime/Lib/site-packages/nvidia').exists():
+        if (bundle / 'runtime/Lib/site-packages/nvidia').exists() or (bundle / 'models').exists():
             return False
         for item in pin['files']:
-            file = bundle / item['path']
-            if not file.resolve().is_relative_to(bundle.resolve()) or file.stat().st_size != item['bytes']:
+            root = models if item['path'].startswith('models/') else bundle
+            file = root / item['path']
+            if not file.resolve().is_relative_to(root.resolve()) or file.stat().st_size != item['bytes']:
                 return False
             with file.open('rb') as stream:
                 if hashlib.file_digest(stream, 'sha256').hexdigest() != item['sha256']:
@@ -218,6 +225,27 @@ def _inspect_database(path: Path) -> dict[str, object]:
     return result
 
 
+def _stage_downloaded_models(user_data: Path, models: Path = VOICE_MODELS_SOURCE) -> dict[str, str]:
+    """What a user gets after "Transferir": the models in their data folder, activated by the
+    app's own VoiceModels (full hash, no network), so the packaged voice must resolve them."""
+    sys.path.insert(0, str(REPO))
+    from app.voice.models import GROUPS, VoiceModels, models_root  # noqa: E402
+    root = models_root(user_data)
+    pin = REPO / 'desktop/resources/VOICE-SOURCE.json'
+    for item in json.loads(pin.read_text(encoding='utf-8'))['files']:
+        if item['path'].startswith('models/'):
+            target = root / item['path']
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(models / item['path'], target)
+    manager = VoiceModels(root, pin)
+    states = {}
+    for group in GROUPS:
+        manager.download(group, repair=True)  # every file is present: verified, nothing fetched
+        manager.wait(group, 600)
+        states[group] = manager.snapshot()['groups'][group]['state']
+    return states
+
+
 def main() -> int:
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_ROOT
     evidence = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else REPO / "output" / "alpha-acceptance"
@@ -251,6 +279,7 @@ def main() -> int:
                                  "pre_generated_wrappers": pre_generated[:20],
                                  "pre_generated_wrappers_total": len(pre_generated)}
 
+    report["voice_models_staged"] = _stage_downloaded_models(user_data)
     bridge = _run_bridge(app_root, python, component_dirs["voice"], user_data)
     report["bridge"] = {k: v for k, v in bridge.items() if k not in {"stdout"}}
     report["bridge_messages"] = [m.get("type") for m in bridge["messages"]]
@@ -268,7 +297,8 @@ def main() -> int:
     }
     report['engine_probes'] = {
         'voice': run_probe('voice', component_dirs['voice'] / 'runtime/python.exe',
-                           app_root, user_data / 'voice-probe', component_dirs['voice']),
+                           app_root, user_data / 'voice-probe', component_dirs['voice'],
+                           models=user_data / '.local' / 'voice-models'),
         'web': run_probe('web', python, app_root, user_data / 'web-probe'),
     }
 
@@ -313,6 +343,7 @@ def main() -> int:
         and worker["rc"] == 0
         and all(value.get('available') is True for value in report['voice'].values())
         and report['voice_assets_valid'] is True
+        and all(state == 'installed' for state in report['voice_models_staged'].values())
         and not any(report['native_runtime_missing'].values())
         and all(probe['ok'] is True for probe in report['engine_probes'].values())
     )

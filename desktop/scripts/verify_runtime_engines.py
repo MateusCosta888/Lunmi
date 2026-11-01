@@ -18,12 +18,15 @@ def load_worker(name, filename):
 tts = load_worker('voice_output_probe', 'worker_main.py')
 stt = load_worker('voice_input_probe', 'input_worker.py')
 bundle = Path(sys.argv[2])
-worker = tts.VoiceWorker(model_dir=str(bundle / 'models/supertonic-3'), total_steps=2)
+# Since 01/11 the setup ships no models: they are downloaded after install. The probe loads the
+# verified copy it is given (the build's fetched models) with the shipped runtime.
+models = Path(sys.argv[3]) if len(sys.argv) > 3 else bundle
+worker = tts.VoiceWorker(model_dir=str(models / 'models/supertonic-3'), total_steps=2)
 assert worker.preload(), 'native imports failed'
 worker.warm_up()
 assert worker._warmed_up, 'silent synthesis failed'
-model = stt.load_whisper(bundle / 'models/whisper-large-v3-turbo', device='cpu', compute_type='int8_float32')
-vad = stt.load_silero(bundle / 'models/silero/silero_vad.onnx')
+model = stt.load_whisper(models / 'models/whisper-large-v3-turbo', device='cpu', compute_type='int8_float32')
+vad = stt.load_silero(models / 'models/silero/silero_vad.onnx')
 # A developer/CI system-wide CRT must not hide missing dynamically loaded libraries.
 import ctypes
 import re
@@ -86,12 +89,13 @@ def probe_environment(python: Path, data: Path) -> dict[str, str]:
 
 
 def run_probe(kind: str, python: Path, app_root: Path, data: Path,
-              voice: Path | None = None) -> dict[str, object]:
+              voice: Path | None = None, models: Path | None = None) -> dict[str, object]:
     code = VOICE_PROBE if kind == 'voice' else WEB_PROBE
     argument = voice if kind == 'voice' else data
+    extra = [str(models)] if kind == 'voice' and models is not None else []
     try:
         result = subprocess.run([str(python), '-I', '-B', '-X', 'utf8', '-c', code,
-                                 str(app_root), str(argument)],
+                                 str(app_root), str(argument), *extra],
                                 env=probe_environment(python, data), cwd=data,
                                 capture_output=True, timeout=180, text=True, encoding='utf-8')
     except (OSError, subprocess.TimeoutExpired) as exc:

@@ -99,6 +99,9 @@
     "voice.test",
     "voice.warmup",
     "voice.warmup.get",
+    "voice.models.get",
+    "voice.models.download",
+    "voice.models.cancel",
     "web.get",
     "web.set"
   ],
@@ -133,6 +136,7 @@
     "task.started",
     "voice.input.state",
     "voice.readiness",
+    "voice.models",
     "voice.state",
     "web.changed"
   ],

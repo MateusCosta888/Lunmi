@@ -163,7 +163,11 @@
       ${AndIf} $lunmiValue != ".."
       ${AndIf} $lunmiValue != "python-${LUNMI_PYTHON_KEY}"
       ${AndIf} $lunmiValue != "voice-${LUNMI_VOICE_KEY}"
-        RMDir /r "$lunmiRuntime\$lunmiValue"
+        ; An older voice component that still holds its models stays until the app has verified
+        ; and moved them into the user's data (app/voice/models.py); the next update removes it.
+        ${IfNot} ${FileExists} "$lunmiRuntime\$lunmiValue\models\*.*"
+          RMDir /r "$lunmiRuntime\$lunmiValue"
+        ${EndIf}
       ${EndIf}
       FindNext $lunmiHandle $lunmiValue
     ${Loop}

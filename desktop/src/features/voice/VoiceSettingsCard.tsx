@@ -13,6 +13,7 @@ import React, { useEffect, useState } from "react";
 import { TOKENS } from "../../shared/theme";
 import { useVoice } from "./useVoice";
 import { KeyRecorder, shortcutErrorMessage, useVoiceShortcutApi } from "./KeyRecorder";
+import { VoiceModelsPanel } from "./VoiceModelsPanel";
 import "./voice.css";
 
 const cardStyle: React.CSSProperties = {
@@ -68,6 +69,7 @@ export function VoiceSettingsCard({ sessionId }: VoiceSettingsCardProps): React.
   return (
     <div className="lunmi-voice-settings-card" style={cardStyle} data-testid="voice-card">
       <h3 style={subHeadingStyle}>Voz</h3>
+      <div style={{ marginBottom: "14px" }}><VoiceModelsPanel sessionId={sessionId} /></div>
       <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
         <input type="checkbox" data-testid="voice-enabled" checked={enabled} disabled={busy}
           onChange={event => setEnabled(event.target.checked)} />

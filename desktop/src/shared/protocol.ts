@@ -98,6 +98,9 @@ export const COMMAND_TYPES = [
   /** VOICE REFINEMENTS V2: warmup de introdução e release hold; ver `.agents/VOICE-REFINEMENTS-V2-CONTRACT.md`. */
   "voice.warmup",
   "voice.warmup.get",
+  "voice.models.get",
+  "voice.models.download",
+  "voice.models.cancel",
   /** VOICE INPUT V1 (aditivo): ditado revisto; ver `.agents/VOICE-INPUT-V1-CONTRACT.md`. */
   "voice.input.get",
   "voice.input.start",
@@ -151,6 +154,7 @@ export const EVENT_TYPES = [
   "voice.state",
   /** VOICE REFINEMENTS V2: readiness de TTS+STT; sem texto, áudio ou teclas. */
   "voice.readiness",
+  "voice.models",
   /** VOICE INPUT V1: estado público do ditado; nunca carrega transcrição/áudio. */
   "voice.input.state",
   /** SPOTIFY INTEGRAÇÃO V1 (aditivo): payload fechado `{spotify}`; ver `shared/spotify.ts`. */

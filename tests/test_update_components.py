@@ -90,7 +90,10 @@ def test_pack_and_materialize_reproduce_the_installed_layout(tmp_path: Path) -> 
     shutil.copy(resources / components.MANIFEST, unpacked / "resources" / components.MANIFEST)
     dirs = components.materialize(unpacked, out)
     assert dirs["python"] == tmp_path / "win-unpacked-runtime" / f"python-{keys['python']}"
-    assert (dirs["voice"] / "models/m.bin").read_bytes() == bytes(range(256)) * 64
+    # 01/11: the voice models are downloaded after install, never shipped in the component.
+    assert (dirs["voice"] / "runtime/python.exe").read_bytes() == b"voice"
+    assert not (dirs["voice"] / "models").exists()
+    assert components.content_key(resources / "voice", ("models",)) == keys["voice"]
     assert components.ensure_materialized(unpacked, out) == dirs
 
     # Um arquivo que não corresponde ao manifesto nunca é aceite como componente desta versão.

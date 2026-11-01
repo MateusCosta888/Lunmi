@@ -71,6 +71,9 @@ from app.bridge.dto import filter_trusted_host_pids, public_memory_item_dto, pub
 from app.voice.eligibility import SpeechStream, speakable_reply
 from app.voice.input_manager import VoiceInputManager
 from app.voice.manager import VoiceError, VoiceManager
+from app.voice.models import GROUPS as VOICE_MODEL_GROUPS
+from app.voice.models import ModelsError, VoiceModels, manifest_for, models_root
+from app.voice.runtime import voice_home
 from app.voice.warmup import VoiceWarmup
 
 LOCATION_TIMEOUT_SECONDS = 45.0
@@ -210,6 +213,18 @@ class BridgeService:
             stt=self.voice_input,
             emit=self._emit_voice_warmup,
         )
+        # Voice models are downloaded after install, on the user's request (01/11).
+        self.voice_models = VoiceModels(
+            models_root(self.settings.state_root),
+            manifest_for(voice_home(self.settings.state_root)),
+            emit=self._emit_voice_models,
+            legacy_dirs=self._older_voice_components,
+        )
+        if self._older_voice_components():
+            # An update from Alpha 4-9: verify and keep the models that install already had,
+            # without downloading or asking. Nothing happens when there is nothing to adopt.
+            for group in VOICE_MODEL_GROUPS:
+                self.voice_models.download(group, network=False)
 
         # Antes de criar o controlador (que pode importar pywinauto/UIA): wrappers COM gerados em
         # memória, para nada ser escrito em `resources/` do pacote. Ver `app/computer/com_cache.py`.
@@ -478,6 +493,40 @@ class BridgeService:
         except concurrent.futures.TimeoutError:
             raise protocol.ProtocolError("unavailable",
                                          "Não foi possível guardar as definições da pesquisa web.") from None
+
+    def _emit_voice_models(self, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        self._emit("voice.models", {**payload, "session_id": self.session_id})
+
+    @staticmethod
+    def _older_voice_components() -> list[Path]:
+        """Voice components of earlier versions next to the current one that still hold models."""
+        bundled = os.environ.get("LUNMI_BUNDLED_VOICE_HOME", "").strip()
+        if not bundled or not Path(bundled).is_absolute():
+            return []
+        current = Path(bundled)
+        try:
+            return [folder for folder in current.parent.glob("voice-*")
+                    if folder != current and (folder / "models").is_dir()]
+        except OSError:
+            return []
+
+    def _handle_voice_models(self, cmd: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if cmd == "voice.models.get":
+            if payload:
+                raise protocol.ProtocolError("invalid_payload", "voice.models.get não aceita campos.")
+            return self.voice_models.snapshot()
+        group = payload.get("group")
+        allowed = {"group", "repair"} if cmd == "voice.models.download" else {"group"}
+        if set(payload) - allowed or group not in VOICE_MODEL_GROUPS or not isinstance(payload.get("repair", False), bool):
+            raise protocol.ProtocolError("invalid_payload", "Indica group: speech ou dictation.")
+        try:
+            if cmd == "voice.models.download":
+                return self.voice_models.download(str(group), repair=bool(payload.get("repair", False)))
+            return self.voice_models.cancel(str(group))
+        except ModelsError as exc:
+            raise protocol.ProtocolError("unavailable", str(exc)) from None
 
     def _emit_voice_warmup(self, payload: dict[str, Any]) -> None:
         if self._closed:
@@ -870,6 +919,8 @@ class BridgeService:
             return self._handle_voice_warmup(payload)
         if cmd == "voice.warmup.get":
             return self._handle_voice_warmup_get(payload)
+        if cmd in {"voice.models.get", "voice.models.download", "voice.models.cancel"}:
+            return self._handle_voice_models(cmd, payload)
         if cmd == "voice.input.get":
             return self._handle_voice_input_get(payload)
         if cmd == "voice.input.start":

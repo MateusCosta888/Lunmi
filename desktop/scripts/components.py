@@ -35,8 +35,11 @@ NAMES = ("python", "voice")
 SENTINELS = {"python": "python.exe", "voice": "runtime/python.exe"}
 MANIFEST = "lunmi-components.json"
 COMPLETE = ".lunmi-complete"
+# Top-level folders left out of a component. The voice models (~2 GB) are downloaded and
+# verified after installation by app/voice/models.py (01/11): the setup was 18 MB under 2 GiB.
+EXCLUDED: dict[str, tuple[str, ...]] = {"voice": ("models",)}
 # O NSIS não gera instaladores com mais de 2 GiB; a margem cobre a app e o próprio NSIS.
-MAX_ARCHIVES_BYTES = 2_020_000_000
+MAX_ARCHIVES_BYTES = 1_990_000_000
 KEY = re.compile(r"[0-9a-f]{16}")
 SEVEN_ZIP_ARGS = ("a", "-t7z", "-mx=9", "-md=1m", "-ms=off", "-mtc=off", "-mtm=off", "-mta=off", "-bd")
 
@@ -49,10 +52,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def content_key(root: Path) -> str:
+def component_files(root: Path, excluded: tuple[str, ...] = ()) -> list[Path]:
+    """The component's files, without the top-level folders it leaves out."""
+    return [p for p in root.rglob("*") if p.is_file() and p.relative_to(root).parts[0] not in excluded]
+
+
+def content_key(root: Path, excluded: tuple[str, ...] = ()) -> str:
     """Hash estável do conteúdo: caminho relativo e SHA-256 de cada ficheiro, por ordem."""
     digest = hashlib.sha256()
-    for relative, path in sorted((p.relative_to(root).as_posix(), p) for p in root.rglob("*") if p.is_file()):
+    for relative, path in sorted((p.relative_to(root).as_posix(), p) for p in component_files(root, excluded)):
         if relative != COMPLETE:
             digest.update(f"{relative}\0{_sha256(path)}\n".encode("utf-8"))
     return digest.hexdigest()[:16]
@@ -92,15 +100,16 @@ def pack(resources: Path = RESOURCES, out: Path = OUT) -> dict[str, dict[str, ob
         source = resources / name
         if not (source / SENTINELS[name]).is_file():
             raise SystemExit(f"[components] {name} ausente ou incompleto em {source}")
-        files = [p for p in source.rglob("*") if p.is_file()]
+        excluded = EXCLUDED.get(name, ())
+        files = component_files(source, excluded)
         archive = out / f"{name}.7z"
         partial = archive.with_suffix(".7z.partial")
         partial.unlink(missing_ok=True)
-        subprocess.run([tool, *SEVEN_ZIP_ARGS, str(partial), "."], cwd=source, check=True,
-                       stdout=subprocess.DEVNULL)
+        subprocess.run([tool, *SEVEN_ZIP_ARGS, str(partial), ".", *(f"-x!{folder}" for folder in excluded)],
+                       cwd=source, check=True, stdout=subprocess.DEVNULL)
         os.replace(partial, archive)
         report[name] = {
-            "key": content_key(source),
+            "key": content_key(source, excluded),
             "archive": str(archive),
             "archive_bytes": archive.stat().st_size,
             "archive_sha256": _sha256(archive),

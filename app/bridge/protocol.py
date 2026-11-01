@@ -166,6 +166,10 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     # VOICE REFINEMENTS V2: preparação de introdução e release hold, ambos aditivos.
     "voice.warmup",
     "voice.warmup.get",
+    # Modelos de voz descarregados depois da instalação (01/11): estado, transferir, cancelar.
+    "voice.models.get",
+    "voice.models.download",
+    "voice.models.cancel",
     # VOICE INPUT V1: entrada separada da saída; nunca reutiliza `capture_supported`.
     "voice.input.get",
     "voice.input.start",
@@ -208,6 +212,8 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "voice.state",
     # VOICE REFINEMENTS V2: readiness agregado (TTS+STT) da introdução; sem texto/áudio.
     "voice.readiness",
+    # Progresso dos modelos de voz: grupos, bytes e estado; nunca caminhos nem URLs.
+    "voice.models",
     # VOICE INPUT V1: estado do ditado; nunca carrega transcrição, áudio ou device.
     "voice.input.state",
     # SPOTIFY INTEGRAÇÃO V1 (aditivo): estado público do Spotify; payload fechado `{spotify}`.

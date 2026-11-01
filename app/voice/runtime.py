@@ -79,6 +79,13 @@ def resolve_environment(
         (home / 'runtime/python.exe').resolve() if (home / 'runtime/python.exe').is_file() else legacy.resolve())
     models = Path(models_dir).expanduser().resolve() if models_dir is not None else (
         home.joinpath(*MODELS_RELATIVE).resolve())
+    if models_dir is None and not models.is_dir():
+        # Since 01/11 the setup no longer ships the models: they are downloaded and verified
+        # into the user's data. Older installs and source checkouts keep theirs in the home.
+        from app.voice.models import verified_models
+        downloaded = verified_models(state_root, home, "speech")
+        if downloaded is not None:
+            models = downloaded.joinpath(*MODELS_RELATIVE)
     worker = Path(worker_path).expanduser().resolve() if worker_path is not None else (
         Path(__file__).resolve().with_name(WORKER_FILENAME))
 
