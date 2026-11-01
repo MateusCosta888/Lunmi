@@ -27,6 +27,8 @@ npm run build
 
 Use diretórios temporários, credenciais fictícias e serviços locais controlados. Nunca use banco pessoal como fixture. Um mock não certifica tarefa executada em aplicativo real. Testes com inferência ou controle do desktop exigem ambiente e efeitos definidos; não entram automaticamente na CI.
 
+Cada funcionalidade nova leva pelo menos um teste que passa pelo código real do produto (dispatcher, bridge, gestor de voz…), simulando só a fronteira externa: o desktop, o provedor ou o dispositivo de áudio. Um teste que substitui a própria peça que está a ser testada não conta: foi assim que a escrita direta passou nos testes enquanto falhava sempre.
+
 ## Publicação limpa
 
 O `.gitignore` seleciona a superfície pública. Relatórios internos, pesquisas, agentes, `.local/`, `logs/`, `output/`, `.env`, dependências e vendor permanecem locais.

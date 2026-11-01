@@ -68,59 +68,81 @@ def test_direct_app_entry_follows_any_verified_launch_but_not_settings() -> None
 
 @pytest.mark.parametrize('mode,failure', [('new', ''), ('append', ''), ('new', 'launch'),
     ('append', 'ambiguous'), ('new', 'write'), ('append', 'write'), ('new', 'not_blank')])
-def test_macro_uses_dispatcher_and_never_replays_partial_effects(monkeypatch, mode: str, failure: str) -> None:
+def test_macro_runs_through_the_real_dispatcher_and_never_replays_partial_effects(
+        monkeypatch, mode: str, failure: str) -> None:
+    """01/11: the old version replaced the dispatcher with a fake, so it missed that every
+    real macro failed on `round.agent` (there is no UFO round). Only the desktop is fake now."""
     with runtime_module() as module:
         runtime = module.UFORuntime.__new__(module.UFORuntime)
-        calls = []
+        calls: list[tuple[str, str, dict]] = []
         window = SimpleNamespace(handle=10, is_visible=lambda: True, process_id=lambda: 100,
                                  element_info=SimpleNamespace(name='Notepad'))
-        runtime.state = SimpleNamespace(last_app_windows={'1': window})
+        runtime.state = SimpleNamespace(last_app_windows={'1': window}, selected_app_window=None)
         if failure == 'ambiguous':
             runtime.state.last_app_windows['2'] = window
         runtime.config = SimpleNamespace(system=SimpleNamespace(max_step=20))
         runtime.tools = SimpleNamespace(cancelled=False, evidence=[], pending_ui=False,
-            uia=SimpleNamespace(resolve=lambda **kw: {'status': 'unique',
-                'candidates': [{'id': 'editor', 'name': 'Text editor'}]},
+            uia=SimpleNamespace(references={}, invalidate_tree=lambda: None,
+                resolve=lambda **kw: {'status': 'unique', 'candidates': [{'id': 'editor', 'name': 'Text editor'}]},
                 text=lambda *a: {'readable': True, 'truncated': False,
                                   'text': 'existing' if failure == 'not_blank' else ''}))
-        runtime.actions = 0
-        runtime.approval_mode = 'manual'
-        runtime.approvals = []
+        runtime.round, runtime.macro_computer = None, ''
+        runtime.task_id, runtime.worker_instance, runtime.allow_actions = 'task', 'worker', True
+        runtime.operation_events = False
+        runtime.batches = runtime.max_batch_actions = runtime.multi_action_batches = 0
+        runtime.actions = runtime.actions_executed = 0
+        runtime.verification_ms = runtime.execution_ms = runtime.observation_ms = 0.0
+        runtime.approval_mode, runtime.approvals = 'manual', []
         runtime._fast_result = lambda *args: {'evidence': args[4], 'message': args[1]}
 
-        class Dispatcher:
-            operations: dict = {}
+        async def exchange(event):
+            return {}
 
-            def __init__(self, value):
-                assert value is runtime
+        async def check_risk(command):
+            return None
 
-            async def execute_commands(self, commands):
-                command = commands[0]
-                calls.append((command.tool_name, command.parameters))
-                if ((failure == 'launch' and command.tool_name == 'launch_application')
-                        or (failure == 'write' and command.tool_name == 'set_edit_text')):
-                    runtime.tools.evidence.append({'operation': command.tool_name, 'verified': False})
-                    return [SimpleNamespace(status=module.ResultStatus.FAILURE, result={})]
-                result = ({'verified': True, 'blank_editor': True, 'handle': 10}
-                          if command.tool_name == 'launch_application' else
-                          {'verified': True, 'comparison': 'exact_content'})
-                return [SimpleNamespace(status=module.ResultStatus.SUCCESS, result=result)]
+        class Desktop:
+            def __init__(self, kind):
+                self.kind = kind
 
-            def operation_states(self):
-                return []
+            def command2tool(self, command):
+                return SimpleNamespace(namespace='fixture', command=command)
 
-        monkeypatch.setattr(module, 'RuntimeDispatcher', Dispatcher)
+            async def run_actions(self, tools):
+                command = tools[0].command
+                name = command.tool_name
+                calls.append((self.kind, name, command.parameters))
+                if name == 'launch_application':
+                    data = {'verified': failure != 'launch', 'blank_editor': True, 'handle': 10}
+                elif name == 'set_edit_text':
+                    data = ({'verified': False, 'executed': True} if failure == 'write'
+                            else {'verified': True, 'comparison': 'exact_content'})
+                elif name == 'select_application_window':
+                    runtime.state.selected_app_window = window
+                    data = {'id': '1'}
+                else:
+                    data = {'windows': 1}
+                if name == 'set_edit_text':
+                    runtime.tools.evidence.append({'operation': name, **data})
+                return [SimpleNamespace(is_error=False, data=data)]
+
+        async def computer(kind):
+            return Desktop(kind)
+
+        runtime.exchange, runtime.check_risk, runtime.computer = exchange, check_risk, computer
         monkeypatch.setattr(module, 'psutil_name', lambda w: 'notepad.exe')
         monkeypatch.setattr(module, 'assistant_process_ids', lambda: set())
         result = asyncio.run(runtime._write_document({'app': 'notepad', 'text': 'pão\n', 'mode': mode}))
-        assert result['status'] == ('SUCCESS' if not failure else 'NOT_VERIFIED')
-        names = [name for name, _ in calls]
+        assert result['status'] == ('SUCCESS' if not failure else 'NOT_VERIFIED'), result['message']
+        names = [name for _, name, _ in calls]
         assert names.count('launch_application') == (1 if mode == 'new' else 0)
         assert names.count('set_edit_text') <= 1
         assert not any(name in {'keyboard_input', 'filesystem'} for name in names)
+        # Writing runs on the AppAgent executor, opening and selecting on the Host's.
+        assert all(kind == ('AppAgent' if name == 'set_edit_text' else 'HostAgent') for kind, name, _ in calls)
         if not failure:
-            assert calls[-1] == ('set_edit_text', {'id': 'editor', 'name': 'Text editor',
-                'text': 'pão\n', 'clear_current_text': mode == 'new'})
+            assert calls[-1][1:] == ('set_edit_text', {'id': 'editor', 'name': 'Text editor',
+                                                       'text': 'pão\n', 'clear_current_text': mode == 'new'})
 
 
 def test_disabled_macro_rejected_before_reset_or_dispatch(monkeypatch) -> None:

@@ -142,3 +142,30 @@ def test_a_streamed_answer_is_closed_not_spoken_again_at_the_end() -> None:
     result = TaskResult(task_id="t", status="SUCCESS", message="Olá.", scope="conversation")
     BridgeService._observe_voice(owner, result, attachments=False, verified_prefix="", speech=stream)  # type: ignore[arg-type]
     assert voice.closed == ["Olá."] and voice.observed == []  # type: ignore[attr-defined]
+
+
+def test_a_streamed_answer_reaches_the_worker_through_the_real_backend_path(tmp_path: Path) -> None:
+    """Real path, only the audio process is fake: response -> SpeechStream -> VoiceManager ->
+    worker pipe. The parts were tested alone; this is how they are wired in the bridge."""
+    worker, log = _logging_worker(tmp_path)
+    (tmp_path / "models").mkdir()
+    manager = VoiceManager(emit=lambda event: None, root_dir=tmp_path / "root", state_root=tmp_path / "root",
+                           session_id="s", environment=VoiceEnvironment(
+                               home=tmp_path, python=Path(sys.executable), models=tmp_path / "models", worker=worker))
+    try:
+        manager.set(enabled=True, auto_speak=True)
+        response = PublicResponse(lambda kind, data: None, "s", "t")
+        response.speech = SpeechStream(manager, attachments=False)
+        answer = SUMMARY + "\n\n" + DETAILS
+        response.finish(answer, "SUCCESS")
+        eligible = speakable_reply(message=answer, status="SUCCESS", scope="conversation")
+        assert response.speech.finish(eligible) is True
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (not log.exists() or log.read_text(encoding="utf-8").count("\n") < 3):
+            time.sleep(0.02)
+        sent = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        spoken = [item["text"] for item in sent if item["type"] == "stream" and item["text"]]
+        assert spoken == [SUMMARY]  # the long details are never read aloud
+        assert sent[-1]["final"] is True and manager.snapshot()["can_speak_last"] is True
+    finally:
+        manager.close()
