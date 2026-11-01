@@ -92,7 +92,9 @@ _KIND_MESSAGES: dict[ErrorKind, str] = {
     ErrorKind.RATE_LIMITED: ("O provedor atingiu um limite de uso. O Groq gratuito limita tokens por "
                              "minuto e por dia; tenta de novo mais tarde ou usa outro cérebro."),
     ErrorKind.MODEL_UNAVAILABLE: "O provedor não reconhece este modelo. Escolha outro na lista.",
-    ErrorKind.REQUEST_TOO_LARGE: "O pedido excedeu o limite de tamanho do provedor.",
+    ErrorKind.REQUEST_TOO_LARGE: ("O pedido excedeu o limite de tamanho do provedor. O Groq gratuito aceita "
+                                  "cerca de 8 000 tokens por pedido, pouco para tarefas dentro de apps; "
+                                  "usa outro cérebro para o agente das apps."),
     ErrorKind.CONFIGURATION: "O provedor recusou o pedido: confira modelo, chave e endpoint.",
     ErrorKind.TIMEOUT: "O provedor não respondeu dentro do tempo limite.",
 }

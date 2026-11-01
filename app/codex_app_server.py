@@ -425,6 +425,7 @@ class CodexAppServer:
         texts: list[str] = []
         streamed = ""
         streamed_item: str | None = None
+        several = False
         input_tokens = output_tokens = None
         try:
             turn_payload: dict[str, Any] = {
@@ -460,7 +461,10 @@ class CodexAppServer:
                         if not isinstance(item_id, str) or not isinstance(delta, str):
                             raise CodexError("Delta de texto Codex inválido.", code="transport")
                         if streamed_item is not None and streamed_item != item_id:
-                            raise CodexError("Codex enviou mais de uma resposta incremental.", code="transport")
+                            # Measured 01/11 (gpt-5.6-luna): a commentary message, then the
+                            # answer, in one turn. Only the first streams; the last is final.
+                            several = True
+                            continue
                         streamed_item = item_id
                         streamed += delta
                         if len(streamed.encode("utf-8")) > 262_144:
@@ -494,7 +498,7 @@ class CodexAppServer:
                         if not texts:
                             raise CodexError("Codex não retornou resposta UFO.")
                         final = texts[-1]
-                        if streamed_item is not None and final != streamed:
+                        if streamed_item is not None and not several and final != streamed:
                             raise CodexError("O texto final Codex não coincide com os deltas recebidos.", code="transport")
                         ok = True
                         yield Completion(final, input_tokens, output_tokens)

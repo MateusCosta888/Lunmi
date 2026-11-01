@@ -119,11 +119,13 @@ def test_a_plan_entry_that_is_not_a_call_is_never_repaired_into_one() -> None:
     Repairing it would be inventing an action, and a fabricated action is worse than a
     retry: the retry restates the protocol and the model sends a readable one.
     """
-    for plan in ('[{"description": "click the button"}]',
-                 '[{"function": "click", "arguments": "not an object"}]',
+    for plan in ('[{"function": "click", "arguments": "not an object"}]',
                  '[{"arguments": {"x": 1}}]'):
         raw = '{"observation": "o", "thought": "t", "plan": ' + plan + '}'
         assert normalize_reply(raw) == raw
+    # A described step keeps its words as plan text, and still never becomes an action.
+    described = json.loads(normalize_reply('{"observation": "o", "thought": "t", "plan": [{"description": "click the button"}]}'))
+    assert described["plan"] == ["click the button"] and "action" not in described
 
 
 def test_a_host_reply_is_never_translated() -> None:
@@ -215,3 +217,50 @@ def test_another_phase_failure_names_the_phase_instead_of_blaming_the_provider()
 def test_a_round_whose_phases_all_succeeded_has_no_cause_to_report() -> None:
     assert no_action_reason([processor(ok(), ok())]) == ("", "")
     assert no_action_reason([]) == ("", "")
+
+
+def test_a_single_string_where_the_schema_wants_a_list_is_listed_verbatim() -> None:
+    """Measured on Kilo: HostAgent 'message' as one string ended the task at its first step."""
+    raw = '{"status": "ASSIGN", "message": "Escreva o seguinte poema: O mar", "plan": "(1) escrever"}'
+    data = json.loads(normalize_reply(raw))
+    assert data["message"] == ["Escreva o seguinte poema: O mar"] and data["plan"] == ["(1) escrever"]
+    already = '{"status": "FINISH", "message": ["a"], "plan": []}'
+    assert normalize_reply(already) == already
+
+
+def test_plan_steps_written_as_objects_keep_their_words_as_text() -> None:
+    raw = '{"observation": "o", "thought": "t", "plan": [{"step": 1, "action": "Abrir o menu"}, "(2) guardar"]}'
+    assert json.loads(normalize_reply(raw))["plan"] == ["(1) Abrir o menu", "(2) guardar"]
+
+
+def test_a_bare_call_becomes_the_only_action_of_the_reply() -> None:
+    """Measured on Kilo: the AppAgent answered only {"name": ..., "args": ...} and the step failed."""
+    data = json.loads(normalize_reply('{"name": "uia_observe", "args": {"root_id": "uia-1-3"}}'))
+    assert data["action"] == [{"function": "uia_observe", "arguments": {"root_id": "uia-1-3"}, "status": "CONTINUE"}]
+    assert data["observation"] == "" and data["plan"] == []
+    # Anything beyond a call is not a bare call and is left for the parser to judge.
+    other = '{"name": "x", "args": {}, "extra": 1}'
+    assert normalize_reply(other) == other
+
+
+def test_described_future_calls_in_the_plan_stay_plan_text_when_an_action_is_decided() -> None:
+    """Measured on Kilo: plan steps carried description + function + arguments next to a
+    decided action, and the step failed validation."""
+    raw = json.dumps({"observation": "o", "thought": "t",
+                      "action": [{"function": "set_edit_text", "arguments": {"text": "x"}, "status": "CONTINUE"}],
+                      "plan": [{"step": 2, "description": "Guardar com Ctrl+S", "function": "keyboard_input",
+                                "arguments": {"keys": "^s"}}]})
+    data = json.loads(normalize_reply(raw))
+    assert data["plan"] == ["(2) Guardar com Ctrl+S keyboard_input"]
+    assert data["action"] == [{"function": "set_edit_text", "arguments": {"text": "x"}, "status": "CONTINUE"}]
+
+
+def test_an_observation_given_as_an_object_becomes_its_text() -> None:
+    """Measured on Codex (01/11): the observation came back as the observed dict and the
+    whole Save As step was rejected; the action itself was fine."""
+    action = [{"function": "set_edit_text", "arguments": {"text": "x"}, "status": "CONTINUE"}]
+    raw = json.dumps({"observation": {"truncated": True, "reason": "ranked"}, "thought": "t",
+                      "action": action, "plan": []})
+    data = json.loads(normalize_reply(raw))
+    assert json.loads(data["observation"]) == {"truncated": True, "reason": "ranked"}
+    assert data["action"] == action

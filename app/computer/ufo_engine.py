@@ -68,6 +68,8 @@ def build_worker_env(
     # The worker reads the application index the controller keeps; both must use the same
     # state root, or a sandboxed session would search the user's own index.
     env["LUNMI_STATE_ROOT"] = str(settings.state_root)
+    env["COMPUTER_WRITE_MACRO"] = "1" if settings.computer_write_macro else "0"
+    env["COMPUTER_DIRECT_APP"] = "1" if settings.computer_direct_app else "0"
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONUTF8"] = "1"

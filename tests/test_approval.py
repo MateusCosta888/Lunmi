@@ -33,6 +33,7 @@ from app.computer.approval import (  # noqa: E402
     Verdict,
     click_verdict,
     keyboard_verdict,
+    normalize_keys,
     set_text_verdict,
     submit_keys,
     uia_action_verdict,
@@ -290,3 +291,19 @@ def test_the_controller_switches_modes_and_saves_the_choice(tmp_path: Path,
     assert _load_approval() is True
     controller.set_auto_approve(False)
     assert controller.approval_mode == MANUAL and _load_approval() is False
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("{VK_CONTROL}s", "^s"), ("{VK_CONTROL}S", "^s"), ("{VK_LCONTROL}c", "^c"),
+    ("{VK_CONTROL}{VK_SHIFT}s", "^+s"), ("{VK_MENU}{F4}", "%{F4}"), ("{VK_CONTROL}{ENTER}", "^{ENTER}"),
+    ("Ctrl+S", "^s"), ("ctrl + shift + s", "^+s"), ("Alt+F4", "%{F4}"),
+    ("{VK_CONTROL down}s{VK_CONTROL up}", "{VK_CONTROL down}s{VK_CONTROL up}"),
+    ("12*7=", "12*7="), ("lista de compras", "lista de compras"), ("^n", "^n"),
+])
+def test_the_vendor_spelling_of_a_shortcut_becomes_the_shortcut(raw: str, expected: str) -> None:
+    """Measured: '{VK_CONTROL}s' typed an 's' into a Notepad document instead of saving."""
+    assert normalize_keys(raw) == expected
+
+
+def test_a_spelled_save_shortcut_is_judged_as_a_save() -> None:
+    assert keyboard_verdict(keys="{VK_CONTROL}s").level == HIGH

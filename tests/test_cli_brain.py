@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -643,10 +644,10 @@ def test_kilo_is_driven_headless_with_a_read_only_agent_and_stdin_for_the_prompt
     brain = HeadlessCliBrain(Settings(provider="kilo", model="kilo/kilo-auto/free"), spec,
                              executable="kilo")
     # The `-m` value is the full listing id: Kilo parses it as provider/model.
-    assert brain.inference_argv() == ["kilo", "run", "--format", "json", "--agent", "plan",
+    assert brain.inference_argv() == ["kilo", "run", "--format", "json", "--agent", "lunmi",
                                       "-m", "kilo/kilo-auto/free"]
-    # The auto-approval switch is the CLI's, never ours to give: `plan` is the agent
-    # whose edit permission is denied, which is what keeps a coding agent read-only.
+    # The auto-approval switch is the CLI's, never ours to give: the `lunmi` agent denies
+    # every permission, which is what keeps a coding agent from acting on the machine.
     assert "--auto" not in brain.inference_argv()
     # stdin keeps a long agent round off the 32.767-character command line.
     assert spec.prompt_on_stdin is True
@@ -678,6 +679,32 @@ def test_kilo_round_trip_reads_text_and_tokens_from_the_stream(monkeypatch: pyte
     assert brain.cli_calls[-1]["ok"] is True
     assert brain.cli_calls[-1]["prompt_budget_chars"] is None
     assert brain.cli_calls[-1]["argv_utf16_units"] < 100
+
+
+def test_kilo_runs_in_its_own_folder_with_a_tool_less_lunmi_agent(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Measured: `--agent plan` made the free model refuse in prose ("I'm in plan mode")."""
+    spec = find_spec("kilo")
+    assert spec is not None
+    brain = HeadlessCliBrain(Settings(provider="kilo", model="kilo/kilo-auto/free", state_root=tmp_path),
+                             spec, executable="kilo")
+    seen: list[dict[str, object]] = []
+    handles = [_FakeHandle(['{"type":"text","part":{"type":"text","text":"ok"}}\n'])]
+    spawn = _spawn_from(handles)
+
+    async def recording(argv: list[str], **kwargs: object) -> Any:
+        seen.append({**kwargs, "argv": argv})
+        return await spawn(argv, **kwargs)
+
+    monkeypatch.setattr("app.brain.cli.headless.spawn", recording)
+    assert asyncio.run(brain.complete([{"role": "user", "content": "hi"}])).text == "ok"
+    folder = tmp_path / ".local" / "kilo-agent"
+    assert Path(str(seen[0]["cwd"])) == folder
+    # Kilo resolves its project from $PWD, which a parent shell can leave stale: pass it.
+    argv = list(seen[0]["argv"])  # type: ignore[call-overload]
+    assert Path(argv[argv.index("--dir") + 1]) == folder
+    agent = (folder / ".kilo" / "agents" / "lunmi.md").read_text(encoding="utf-8")
+    assert 'permission:\n  "*": deny' in agent and "mode: primary" in agent
 
 
 # --- Kiro CLI (2.28.0) ---------------------------------------------------------------

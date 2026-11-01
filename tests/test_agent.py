@@ -2350,3 +2350,68 @@ def test_a_late_reply_cannot_finish_after_the_deadline(tmp_path: Path) -> None:
         assert time.monotonic() - started < 1.3
 
     asyncio.run(scenario())
+
+
+def test_a_request_over_the_per_request_token_limit_retries_once_with_a_reply_reserve_that_fits() -> None:
+    """Measured on Groq free (8000 TPM): a 7k-token AppAgent prompt plus 2048 reserved was
+    refused with 413, although the reply needed far less than 2048."""
+    async def scenario(requested: int, expect_retry: bool) -> None:
+        provider = OpenAICompatibleProvider(Settings(provider="custom", model="m", api_key="k",
+                                                     base_url="https://api.example.test/v1"))
+        reserves: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            reserves.append(json.loads(request.content)["max_tokens"])
+            if len(reserves) == 1:
+                return httpx.Response(413, text="Request too large ... tokens per minute (TPM): "
+                                                f"Limit 8000, Requested {requested}, please reduce your message size")
+            return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}],
+                                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+        await provider.client.aclose()
+        provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            if expect_retry:
+                await provider.complete([{"role": "user", "content": "x"}])
+                assert reserves == [2048, 8000 - (requested - 2048) - 32]
+            else:
+                with pytest.raises(ProviderError, match="HTTP 413"):
+                    await provider.complete([{"role": "user", "content": "x"}])
+                assert reserves == [2048]
+        finally:
+            await provider.close()
+    asyncio.run(scenario(9118, True))    # ~7070 prompt tokens: a 898-token reply fits
+    asyncio.run(scenario(9700, False))   # ~7652 prompt tokens: under 512 left, no retry
+
+
+def test_verify_window_reads_the_title_but_not_as_document_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Measured 01/11: the title equal to the expected text read False and stalled a saved file."""
+    import app.computer.windows_tools as windows_tools
+    from app.computer.windows_tools import WindowsTools
+
+    class Window:
+        handle = 7
+
+        def window_text(self) -> str:
+            return "lunmi-teste.txt - Notepad"
+
+        def descendants(self, control_type: str = "") -> list[Control]:
+            return [Control()]
+
+    class Control:
+        def get_value(self) -> str:
+            return "teste de gravação"
+
+    async def never(_: str) -> bool:
+        return False
+
+    monkeypatch.setattr(windows_tools.user32, "IsWindow", lambda handle: 1)
+    tools = WindowsTools(state=type("State", (), {"selected_app_window": Window()})(), confirm=never)
+    server = tools.server()
+
+    async def verify(**args: str) -> dict:
+        result = await server.call_tool("verify_window", args)
+        return getattr(result, "structured_content", None) or getattr(result, "data", None) or {}
+
+    assert asyncio.run(verify(expected_text="lunmi-teste.txt - Notepad"))["verified"] is True
+    as_content = asyncio.run(verify(expected_text="lunmi-teste.txt", control_type="Document"))
+    assert as_content["verified"] is False

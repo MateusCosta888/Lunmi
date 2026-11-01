@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from fastmcp import Client
@@ -31,11 +32,11 @@ from aip.messages import Command, Result, ResultStatus
 from config.config_loader import get_ufo_config
 from ufo.client.mcp.local_servers.ui_mcp_server import UIServerState
 
-from app.computer.windows_tools import (PreconditionMissing, WindowsTools, read_text,
+from app.computer.windows_tools import (PreconditionMissing, WindowsTools, read_text, resolve_path,
                                         window_is_live, window_record, windows)
 from app.computer.batches import NoProgressGuard, action_signature, count_actions, is_action
 from app.computer.controls import apply_escalation, tokens
-from app.computer.uia import ACTIONABLE_PATTERNS, UIAError
+from app.computer.uia import ACTIONABLE_PATTERNS, UIAError, UIAPreconditionError
 from app.computer.verification import unresolved_evidence
 from app.computer.approval import (
     HIGH,
@@ -52,7 +53,7 @@ from app.computer.approval import (
     unknown_tool_verdict,
 )
 from app.computer.prompt_budget import APP_PROMPT_BUDGET, fit_app_prompt
-from app.computer.prompts import CompactAppPrompter, CompactHostPrompter, compact_json
+from app.computer.prompts import REFUSED_TOOLS, CompactAppPrompter, CompactHostPrompter, compact_json
 from app.computer.protocol import (
     REPLY_PROTOCOL_NUDGE,
     MalformedReply,
@@ -396,7 +397,7 @@ _OPERATION_CATEGORIES = frozenset({"read_only", "mutation"})
 _OPERATION_FAILURE_REASONS = frozenset({
     "actions_not_authorized", "uncertain_prior_operation", "identity_collision",
     "tool_error", "read_only_exception", "mutation_exception",
-    "postcondition_unconfirmed", "no_effect", "dispatch_uncertain",
+    "postcondition_unconfirmed", "no_effect", "dispatch_uncertain", "precondition_refused",
 })
 _OPERATION_EVENT_FIELDS = ("operation_id", "state", "verified", "tool", "category",
                            "failure_reason")
@@ -674,7 +675,7 @@ class RuntimeDispatcher(BasicCommandDispatcher):
         if command.tool_name == "filesystem":
             return (command.parameters or {}).get("operation") in {"read", "list", "search", "exists", "metadata"}
         return command.tool_name in {"find_application", "uia_observe", "uia_find_element", "uia_verify",
-                                     "verify_window", "texts", "get_text", "list_tools", "N/A", "None", "none"}
+                                     "verify_window", "texts", "get_text", "list_tools", "wait", "N/A", "None", "none"}
 
     @staticmethod
     def evidence_signature(evidence: list[dict[str, Any]],
@@ -741,6 +742,34 @@ class RuntimeDispatcher(BasicCommandDispatcher):
         return hashlib.sha256(json.dumps(payload, ensure_ascii=True,
                                          separators=(",", ":")).encode()).hexdigest()
 
+    @staticmethod
+    def window_process(window: Any) -> str:
+        try:
+            return psutil_name(window)
+        except Exception:  # noqa: BLE001 - a window that vanished proves nothing
+            return ""
+
+    @staticmethod
+    def launch_images(runtime: Any, launched: dict[str, str]) -> set[str]:
+        """The processes whose window proves this launch (calc.exe -> CalculatorApp.exe)."""
+        target, expected = launched.get("target", ""), launched.get("expected", "")
+        if target.startswith("ms-settings:"):
+            return {"systemsettings.exe", "applicationframehost.exe"}
+        names = [name for name in (expected, Path(target).name) if name.casefold().endswith(".exe")]
+        images: set[str] = set()
+        if not names:
+            try:
+                if resolve_path(target).is_dir():
+                    images.add("explorer.exe")
+            except Exception:  # noqa: BLE001 - not a folder either: nothing proves it
+                pass
+        for name in names:
+            wanted, _aumid, frame = runtime.tools._launch_identity(name.casefold(), (), launched.get("aumid", ""), "")
+            images.update(wanted)
+            if frame:
+                images.add("applicationframehost.exe")
+        return {image.casefold() for image in images}
+
     def operation_states(self) -> list[dict[str, Any]]:
         return [{key: record[key] for key in _OPERATION_EVENT_FIELDS if key in record}
                 for record in self.operations.values()]
@@ -774,9 +803,9 @@ class RuntimeDispatcher(BasicCommandDispatcher):
         runtime.max_batch_actions = max(runtime.max_batch_actions, batch)
         if batch > 1:
             runtime.multi_action_batches += 1
-        agent = runtime.round.agent
-        app = isinstance(agent, AppAgent)
-        kind = "AppAgent" if app else "HostAgent"
+        # The write macro runs before any UFO round exists and names the executor itself.
+        kind = getattr(runtime, "macro_computer", "") or (
+            "AppAgent" if isinstance(getattr(runtime.round, "agent", None), AppAgent) else "HostAgent")
         computer = await runtime.computer(kind)
         results = []
         for index, command in enumerate(commands):
@@ -811,16 +840,24 @@ class RuntimeDispatcher(BasicCommandDispatcher):
                                       "fingerprint": fingerprint, "category": category}
             if name in _DIAGNOSTIC_TOOLS:
                 record["tool"] = name
+            if name == "launch_application":
+                # Private (never published): which window may later prove this launch.
+                record["launched"] = {key: str((command.parameters or {}).get(key) or "")
+                                      for key in ("target", "expected", "aumid")}
             self.operations[operation_id] = record
+            # Selecting a window replays nothing and is how the agent checks an uncertain launch;
+            # blocking it left the HostAgent unable to select or verify until the timeout.
             mutation_blocked = not self.read_only(command) and (
                 not getattr(runtime, "allow_actions", True)
-                or any(item["state"] == "uncertain" for item in self.operations.values()))
+                or (name != "select_application_window"
+                    and any(item["state"] == "uncertain" for item in self.operations.values())))
             if mutation_blocked:
                 record.update(state="failed_no_effect", verified=False,
                               failure_reason=("actions_not_authorized"
                                               if not getattr(runtime, "allow_actions", True)
                                               else "uncertain_prior_operation"))
-                denied = Result(status=ResultStatus.FAILURE, error="Alteração não autorizada ou operação anterior incerta; consulte/verifique antes de continuar.", call_id=command.call_id)
+                denied = Result(status=ResultStatus.FAILURE, error=("Alteração não autorizada ou operação anterior incerta. Verifique o efeito no próprio controlo "
+                                             "ou num resultado associado pelo executor; outro texto na mesma janela não prova a ação."), call_id=command.call_id)
                 record["result"] = denied
                 results.append(denied)
                 await self.operation_event(record, "operation.finished")
@@ -840,8 +877,15 @@ class RuntimeDispatcher(BasicCommandDispatcher):
                 record["state"] = "started"
                 await self.operation_event(record, "operation.started")
                 dispatched = True
+                runtime.tools.refused_before_input = False
                 reply = (await computer.run_actions([tool]))[0]
                 returned = True
+                if reply.is_error and getattr(runtime.tools, "refused_before_input", False):
+                    # A local guard refused before any input: nothing happened to verify.
+                    record.update(state="failed_no_effect", verified=False,
+                                  failure_reason="precondition_refused")
+                    results.append(Result(status=ResultStatus.FAILURE, error=str(reply.content), call_id=command.call_id))
+                    break
                 if reply.is_error:
                     returned = False
                     record["failure_reason"] = "tool_error"
@@ -888,9 +932,26 @@ class RuntimeDispatcher(BasicCommandDispatcher):
                                                    "window": data})
                     if runtime.state.selected_app_window is not None:
                         record.update(state="completed_verified", verified=True)
+                        # An uncertain selection replays nothing, and a launch that timed out
+                        # waiting for its window is proven once *its* window is selected; left
+                        # uncertain, either blocked every later action of the task.
+                        process = self.window_process(runtime.state.selected_app_window)
+                        for pending in self.operations.values():
+                            if pending["state"] == "uncertain" and (
+                                    pending.get("tool") == "select_application_window"
+                                    or (pending.get("tool") == "launch_application"
+                                        and process in self.launch_images(runtime, pending.get("launched") or {}))):
+                                pending.update(state="completed_verified", verified=True)
                     # Selecting a document does not prove the delegated subtask (e.g.
                     # writing text) happened. AppAgent must verify before returning.
                     runtime.tools.pending_ui = True
+                elif (action and isinstance(data, dict) and data.get("verified") is True
+                        and not self.read_only(command) and name != "launch_application"):
+                    # A proven mutation (exact text read back, page URL, display, window change,
+                    # own state transition) leaves nothing for uia_verify to repeat. Measured:
+                    # re-verifying a poem stalled the task; 01/11 the proven Save As button kept
+                    # the model's FINISH refused. A read never clears it.
+                    runtime.tools.pending_ui = bool(unresolved_evidence(runtime.tools.evidence))
                 elif action and not self.read_only(command) and name not in {"launch_application", "filesystem", "window_action", "verify_window",
                                             "open_settings_page", "uia_verify", "uia_observe", "uia_find_element", "texts"}:
                     # open_settings_page verifies its own page text: nothing is left for
@@ -906,7 +967,11 @@ class RuntimeDispatcher(BasicCommandDispatcher):
                         call_id=command.call_id))
                     break
             except Exception as exc:
+                if isinstance(exc, UIAPreconditionError):
+                    # Refused by a local guard before any input: nothing happened to verify.
+                    record.update(state="failed_no_effect", verified=False)
                 record["failure_reason"] = ("read_only_exception" if self.read_only(command)
+                                            else "precondition_refused" if isinstance(exc, UIAPreconditionError)
                                             else "mutation_exception")
                 results.append(Result(status=ResultStatus.FAILURE, error=str(exc), call_id=command.call_id))
                 break
@@ -962,8 +1027,13 @@ class RuntimeDispatcher(BasicCommandDispatcher):
             signature, idle=idle, failed=failed,
             evidence_count=len(runtime.tools.evidence),
             read_only=bool(commands) and all(self.read_only(command) for command in commands),
-            pending=bool(getattr(runtime.tools, "pending_ui", False)),
-            evidence_signature=self.evidence_signature(runtime.tools.evidence, observation))
+            # Only an unproven dispatch makes rereading a stall. Reading to find the controls
+            # before the first action is exploration (measured: Calculator was stopped after
+            # three reads looking for its keypad, before pressing anything); max_step bounds it.
+            pending=bool(getattr(runtime.tools, "pending_ui", False)
+                         and unresolved_evidence(runtime.tools.evidence)),
+            evidence_signature=self.evidence_signature(runtime.tools.evidence, observation),
+            round_marker=getattr(runtime, "llm_rounds", None))
         return results
 
 
@@ -1158,6 +1228,7 @@ class UFORuntime:
         self.stack = AsyncExitStack()
         self.tools = WindowsTools(self.state, self.confirm)
         self.round: Any = None
+        self.macro_computer = ""
         self.recent_actions: list[dict[str, Any]] = []
         self.actions = 0
         self.actions_executed = 0
@@ -1294,8 +1365,7 @@ class UFORuntime:
         publishes) — the distinction the reported cases turned on.
         """
         name, arguments = command.tool_name, command.parameters or {}
-        if name in {"click_on_coordinates", "drag_on_coordinates", "summary", "capture_window_screenshot",
-                    "capture_desktop_screenshot"}:
+        if name in REFUSED_TOOLS:
             raise ValueError("Ferramenta visual/coordenada indisponível nesta etapa UIA-only.")
         verdict = self._risk_verdict(name, arguments)
         asked = verdict.needs_consent(self.approval_mode)
@@ -1330,6 +1400,7 @@ class UFORuntime:
                   "For GUI actions select the application with ASSIGN and let AppAgent operate its UIA controls. "
                   "When asked to open an editor and write, call launch_application(target=..., fresh_document=True) "
                   "to create and verify a blank document with UFO Ctrl+N, preserving restored/user documents. "
+                  "Tell the AppAgent only the exact text and whether it replaces or adds a line, never keys to press. "
                   "After writing/navigation use verify_window with literal expected_text or expected_path. "
                   "For editor text verification always pass control_type='Document' (or 'Edit' if that is its editor). "
                   "To finish AppAgent with no mutation use verify_window action with status FINISH. "
@@ -1339,6 +1410,8 @@ class UFORuntime:
                   "Do not invent extra success requirements: foreground is required only for explicit switching/activation. "
                   "A verified Explorer path satisfies folder navigation; do not chase foreground unnecessarily. "
                   "When the last verification can complete the subtask, mark that action FINISH. "
+                  "A sequence of keypad buttons (calculator, dialer) is one keyboard_input (e.g. 12*7=) on a keypad button or the display, control_focus true, "
+                  "then read the display with uia_verify(expected_text). Without an executor-bound result association, report NOT_VERIFIED; a display label alone proves no dispatch. "
                   "After verified window_action(close), finish with no action; a destroyed window needs no UIA read. "
                   "UIA tools: uia_observe expands a listed subtree; uia_find_element combines name/type/AutomationId/root. "
                   "Use parent context to distinguish identical controls. Never invent IDs or assume a truncated tree proves absence. "
@@ -1365,6 +1438,8 @@ class UFORuntime:
                        for item in unresolved_evidence(tools.evidence) if item.get("needs_postcondition")][:6]
             policy += ("\nUnverified dispatches: " + compact_json(pending) +
                        ". Choose a live uia_verify of the requested result, not a focus/title/query precondition. "
+                       "A different control or a dialog/page title alone does not prove a dispatch; "
+                       "use the action's own state transition or an executor-associated result. "
                        "Use a current observed ID and mark that verification status FINISH if it completes the task. "
                        "Do not send action=[] while the result remains unverified; do not repeat mutations.")
         # Retry identity excludes our full/short policy: otherwise round 1 -> 2
@@ -1793,6 +1868,140 @@ class UFORuntime:
             return message
         return "Aplicação aberta e verificada." if name == "launch_application" else "Página de definições aberta e verificada."
 
+    async def _write_document(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """A bounded macro using the normal operation/risk dispatcher, never replayed on failure."""
+        dispatcher = RuntimeDispatcher(self)
+        started = time.perf_counter()
+        status, message = 'NOT_VERIFIED', 'Escrita não confirmada; nenhuma operação será repetida.'
+        sequence = 0
+
+        async def execute(name: str, args: dict[str, Any], *, read: bool = False) -> dict[str, Any]:
+            nonlocal sequence
+            sequence += 1
+            if sequence > self.config.system.max_step:
+                raise RuntimeError('Limite de passos da escrita atingido.')
+            command = Command(tool_name=name, parameters=args, tool_type='data_collection' if read else 'action',
+                              call_id=f'write-{sequence}')
+            # Measured 01/11: with no round the dispatcher failed on round.agent for every macro.
+            self.macro_computer = 'AppAgent' if name == 'set_edit_text' else 'HostAgent'
+            try:
+                reply = (await dispatcher.execute_commands([command]))[0]
+            finally:
+                self.macro_computer = ''
+            if reply.status != ResultStatus.SUCCESS:
+                raise RuntimeError('A escrita parou sem repetir operações já iniciadas.')
+            return reply.result if isinstance(reply.result, dict) else {}
+
+        try:
+            target_handle = 0
+            if arguments['mode'] == 'new':
+                launched = await execute('launch_application', {'target': 'notepad.exe', 'fresh_document': True})
+                if launched.get('verified') is not True or launched.get('blank_editor') is not True:
+                    raise RuntimeError('Documento novo vazio não confirmado.')
+                target_handle = int(launched.get('handle') or 0)
+                if not target_handle:
+                    raise RuntimeError('Documento novo sem identidade confirmada.')
+            await execute('get_desktop_app_info', {'remove_empty': True, 'refresh_app_windows': True}, read=True)
+            candidates = []
+            for label, window in (self.state.last_app_windows or {}).items():
+                if (window.is_visible() and psutil_name(window) == 'notepad.exe'
+                        and window.process_id() not in assistant_process_ids()
+                        and (not target_handle or int(window.handle) == target_handle)):
+                    candidates.append((label, window))
+            if len(candidates) != 1:
+                raise RuntimeError('Não existe um único documento de destino confirmado.')
+            label, window = candidates[0]
+            await execute('select_application_window', {'id': str(label), 'name': str(window.element_info.name)})
+            match = self.tools.uia.resolve(control_type='Document', enabled=True, offscreen=False)
+            if match['status'] == 'not_found':
+                match = self.tools.uia.resolve(control_type='Edit', enabled=True, offscreen=False)
+            if match['status'] != 'unique':
+                raise RuntimeError('O campo de escrita é ambíguo ou não foi observado por completo.')
+            editor = match['candidates'][0]
+            if arguments['mode'] == 'new':
+                current = self.tools.uia.text(editor['id'], editor['name'])
+                if not current.get('readable') or current.get('truncated') or current.get('text'):
+                    raise RuntimeError('O documento deixou de estar vazio; escrita recusada.')
+            proof = await execute('set_edit_text', {'id': editor['id'], 'name': editor['name'],
+                'text': arguments['text'], 'clear_current_text': arguments['mode'] == 'new'})
+            if (proof.get('verified') is not True or proof.get('comparison') != 'exact_content'
+                    or self.tools.pending_ui or unresolved_evidence(self.tools.evidence)
+                    or any(item['state'] == 'uncertain' for item in dispatcher.operations.values())):
+                raise RuntimeError('O conteúdo completo não foi confirmado.')
+            status, message = 'SUCCESS', 'Texto escrito no Bloco de Notas e conteúdo confirmado. Não foi guardado.'
+        except Exception as exc:
+            # The normal dispatcher retains operation identity/evidence; no fallback may replay a partial write.
+            message = str(exc)
+            if self.tools.cancelled:
+                status = 'CANCELLED'
+        result = self._fast_result('success' if status == 'SUCCESS' else 'unverified', message,
+                                  'write', 'Bloco de Notas', list(self.tools.evidence), self.actions,
+                                  (time.perf_counter() - started) * 1000)
+        result.update(status=status, steps=sequence, message=message,
+                      failure_kind='' if status == 'SUCCESS' else 'CANCELLED' if status == 'CANCELLED' else 'VERIFICATION_FAILURE',
+                      approval_mode=self.approval_mode, approvals=self.approvals,
+                      operation_states=dispatcher.operation_states())
+        return result
+
+    @staticmethod
+    def direct_app_eligible(instruction: str, operation: dict[str, Any] | None) -> bool:
+        # The decision already opened the application the request continues in, so the
+        # HostAgent would only select that same window (~8 s and ~28k chars, measured 01/11).
+        # The AppAgent is told to do only its window's part; its FINISH returns the round to
+        # the HostAgent for any other application. Settings pages verify their own text.
+        target = str((operation or {}).get('args', {}).get('target', ''))
+        return bool(operation and operation.get('name') == 'launch_application'
+                    and target and not target.casefold().startswith('ms-settings:'))
+
+    async def _enter_app_directly(self, host: Any, context: Any,
+                                  data: dict[str, Any], instruction: str) -> bool:
+        if data.get('verified') is not True or not data.get('handle'):
+            return False
+        keys = (ContextNames.SUBTASK, ContextNames.HOST_MESSAGE, ContextNames.APPLICATION_ROOT_NAME,
+                ContextNames.APPLICATION_PROCESS_NAME)
+        previous_context = {key: context.get(key) for key in keys}
+        previous_processor = host.processor
+        previous_provisioned = getattr(host, '_context_provision_executed', False)
+        previous_agents = dict(host.appagent_dict)
+        previous_active = getattr(host, '_active_appagent', None)
+        previous_agent, previous_state = self.round.agent, self.round.state
+        try:
+            live = window_record(int(data['handle']))
+            if not live or live.get('pid') != data.get('pid'):
+                return False  # not the window the launch verified: the HostAgent selects
+            detail = await self.bind_selected_window(handle=int(data['handle']), source='verified_bootstrap')
+            if (detail['window_info']['handle'] != data['handle']
+                    or detail['window_info']['process_id'] != data['pid']):
+                return False
+            await host.context_provision(context=context)
+            host._context_provision_executed = True
+            context.set(ContextNames.SUBTASK, instruction)
+            context.set(ContextNames.HOST_MESSAGE, (
+                ('New blank document already opened; do not open another. ' if data.get('blank_editor')
+                 else 'This application window is already open and selected; do not open it again. ')
+                + 'Do only the part of the request inside this window, then FINISH so the '
+                  'HostAgent continues with any other application.'))
+            context.set(ContextNames.APPLICATION_ROOT_NAME, detail['root_name'])
+            context.set(ContextNames.APPLICATION_PROCESS_NAME, detail['window_info']['process_name'])
+            host.processor = UIAHostProcessor(agent=host, global_context=context)
+            app = host.create_subagent(context)
+            from ufo.agents.states.app_agent_state import ContinueAppAgentState
+            state = ContinueAppAgentState()
+            app.set_state(state)
+            self.round.agent, self.round.state = app, state
+            self.tools.pending_ui = True
+            return True
+        except Exception:
+            # Binding or agent construction ran no editor mutation; the Host can inspect the same window.
+            for key, value in previous_context.items():
+                context.set(key, value)
+            host.processor = previous_processor
+            host._context_provision_executed = previous_provisioned
+            host.appagent_dict = previous_agents
+            host._active_appagent = previous_active
+            self.round.agent, self.round.state = previous_agent, previous_state
+            return False
+
     async def run(self, instruction: str, max_steps: int, *,
                   approval_mode: str = "", initial_operation: dict[str, Any] | None = None,
                   task_id: str = "", attachments: list[dict[str, Any]] | None = None,
@@ -1801,7 +2010,18 @@ class UFORuntime:
         if not isinstance(allow_actions, bool):
             raise ValueError("Autorização de alterações inválida.")
         validated_attachments = validate_chat_attachments(attachments or [])
-        initial_command = self.bootstrap_command(initial_operation, validated_attachments) if initial_operation is not None else None
+        write_args = None
+        if isinstance(initial_operation, dict) and initial_operation.get('name') == 'write_document':
+            from app.core.automatic import validate_write_document
+            from app.settings import _env_flag
+            if (not _env_flag('COMPUTER_WRITE_MACRO', True)
+                    or set(initial_operation) - {'name', 'args', 'finish'}
+                    or not isinstance(initial_operation.get('args'), dict)):
+                raise ValueError('A escrita direta não está ativada ou o pedido é inválido.')
+            validate_write_document(initial_operation['args'])
+            write_args = initial_operation['args']
+        initial_command = (self.bootstrap_command(initial_operation, validated_attachments)
+                           if initial_operation is not None and write_args is None else None)
         self._reset_tools()
         self.task_id = task_id or uuid.uuid4().hex
         self.allow_actions = allow_actions
@@ -1824,6 +2044,16 @@ class UFORuntime:
         self.context_provision_ms = self.agent_create_ms = 0.0
         self.app_agents = 0
         self.execution_ms = self.observation_ms = self.planning_ms = self.verification_ms = 0
+        self.config.system.max_step = max_steps
+        if write_args is not None:
+            written = await self._write_document(write_args)
+            if (written['status'] == 'SUCCESS' or self.tools.cancelled or write_args['mode'] != 'append'
+                    or any(item.get('operation') in {'launch', 'set_edit_text'} or item.get('dispatch_uncertain')
+                           for item in self.tools.evidence)):
+                return written  # an effect may exist (a new document opens first): never replayed
+            # An append refused before writing anything (measured 01/11: several Notepad
+            # windows made the target ambiguous): the agent handles the request instead.
+            self.tools.pending_ui = False
         self.config.system.max_step = max_steps
         host = ProviderHostAgent(name="HostAgent", is_visual=False,
             main_prompt=self.config.system.hostagent_prompt, example_prompt=self.config.system.hostagent_example_prompt,
@@ -1854,11 +2084,20 @@ class UFORuntime:
             context.set(ContextNames.SESSION_STEP, 1)
             read_completed = bool(not self.allow_actions and dispatcher.read_only(initial_command)
                                   and any(item.get("read_only") and item.get("verified") for item in self.tools.evidence))
+            # A blank new document only exists to be written into, so it never ends the request.
+            fresh_document = (initial_command.tool_name == "launch_application"
+                              and initial_command.parameters.get("fresh_document") is True)
             bootstrap_finished = bool(initial_operation and initial_operation.get("finish") is True
+                and not fresh_document
                 and first.status == ResultStatus.SUCCESS and (data.get("verified") is True or read_completed)
                 and self.tools.evidence and not self.tools.pending_ui)
             if bootstrap_finished:
                 context.set(ContextNames.ROUND_RESULT, self.bootstrap_message(initial_command.tool_name, payload))
+            else:
+                from app.settings import _env_flag
+                if (_env_flag('COMPUTER_DIRECT_APP', True)
+                        and self.direct_app_eligible(instruction, initial_operation)):
+                    await self._enter_app_directly(host, context, data, instruction)
         if not bootstrap_finished:
             await self.round.run()
         status = "CANCELLED" if self.tools.cancelled else "NOT_VERIFIED"
@@ -1904,6 +2143,15 @@ class UFORuntime:
         if not summary and host.processor:
             response = host.processor.processing_context.get_local("parsed_response")
             summary = response.comment if response else None
+            if status == "SUCCESS" and getattr(response, "status", "") != "FINISH":
+                # The round ended inside the AppAgent: the Host's last word was its hand-off
+                # ("Assigning AppAgent to input 12 × 7"), not the outcome (measured 01/11).
+                for agent in reversed(list(host.appagent_dict.values())):
+                    done = agent.processor.processing_context.get_local("parsed_response") if agent.processor else None
+                    outcome = getattr(done, "result", None) or getattr(done, "comment", None)
+                    if isinstance(outcome, str) and outcome.strip():
+                        summary = outcome
+                        break
         if uncertain and not self.tools.cancelled:
             summary = "Uma operação ficou com resultado incerto. Nenhuma nova alteração foi iniciada sem esclarecer o efeito; não há sucesso confirmado."
         if status in {"FAILED", "NOT_VERIFIED"} and not self.actions and not self.tools.cancelled \

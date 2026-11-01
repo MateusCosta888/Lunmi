@@ -99,6 +99,58 @@ def _call(step: Any) -> dict[str, Any] | None:
     return call
 
 
+def _listed(payload: str) -> str:
+    """Field shapes the pinned schema rejects, rewritten without adding or rewording anything.
+
+    Measured on Kilo (2026-10-30), each ending its task at the first step:
+    - ``message``/``plan`` as one string, where the schema holds a list of strings;
+    - ``plan`` entries as ``{"step": 1, "action": "Abrir…"}`` objects: the same words,
+      as the step text (an entry shaped like a call stays for the parser to judge);
+    - the whole reply as a bare call ``{"name": "uia_observe", "args": {…}}``: that one
+      call becomes the reply's only action, with empty narrative fields and CONTINUE.
+    """
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return payload
+    if not isinstance(data, dict):
+        return payload
+    changed = False
+    name = data.get("function", data.get("name"))
+    arguments = data.get("arguments", data.get("args", {}))
+    if (isinstance(name, str) and name.strip() and isinstance(arguments, dict)
+            and not set(data) & {"observation", "thought", "action", "status", "plan"}
+            and set(data) <= {"function", "name", "arguments", "args"}):
+        data = {"observation": "", "thought": "",
+                "action": [{"function": name, "arguments": arguments, "status": "CONTINUE"}], "plan": []}
+        changed = True
+    for key in ("message", "plan"):
+        if isinstance(data.get(key), str):
+            data[key] = [data[key]] if data[key].strip() else []
+            changed = True
+    for key in ("observation", "thought", "comment"):
+        # Measured on Codex (01/11): the observation came back as the observed object
+        # itself and the whole step was rejected. Narrative only: kept as its JSON text.
+        if isinstance(data.get(key), (dict, list)):
+            data[key] = json.dumps(data[key], ensure_ascii=False)
+            changed = True
+    if isinstance(data.get("plan"), list):
+        # With the decision already in `action`, the plan only describes later steps and
+        # nothing dispatches it; without one, call-shaped steps are `_in_protocol_shape`'s.
+        decided = bool(data.get("action"))
+        steps = []
+        for step in data["plan"]:
+            if isinstance(step, dict) and (decided or not {"function", "arguments"} & set(step)):
+                words = [str(value) for key, value in step.items() if isinstance(value, str) and value.strip()]
+                if words:
+                    number = step.get("step")
+                    step = (f"({number}) " if isinstance(number, int) and not isinstance(number, bool) else "")                         + " ".join(words)
+                    changed = True
+            steps.append(step)
+        data["plan"] = steps
+    return json.dumps(data, ensure_ascii=False) if changed else payload
+
+
 def _in_protocol_shape(payload: str) -> str:
     """The answer in the shape the pinned protocol defines, or the answer untouched.
 
@@ -165,7 +217,7 @@ def normalize_reply(raw: str) -> str:
     for candidate in [*[match.group(1) for match in _FENCE.finditer(text)], text]:
         found = _first_json_object(candidate)
         if found is not None:
-            return _in_protocol_shape(found)
+            return _in_protocol_shape(_listed(found))
     raise MalformedReply("A resposta do cérebro não contém nenhum objeto JSON válido: "
                          + repr(text[:400]))
 

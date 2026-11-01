@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
 
 
@@ -61,10 +62,10 @@ def covers_dispatch(action: dict[str, Any], proof: dict[str, Any], *,
         return False
     operation = proof.get("operation")
     if operation == "verify_window":
-        # A window read is not the postcondition of a control that was acted on.
-        if not associated:
-            return False
-        return bool(proof.get("closed") or proof.get("path") or proof.get("expected_text"))
+        if associated:
+            return bool(proof.get("closed") or proof.get("path") or proof.get("expected_text"))
+        # A title identifies a document; it does not prove that its contents were saved.
+        return False
     if operation != "uia_verify" or proof.get("property") in {"enabled", "focused"}:
         return False
     prop = proof.get("property")
@@ -73,20 +74,23 @@ def covers_dispatch(action: dict[str, Any], proof: dict[str, Any], *,
         # its text changed, is never the result; only a tool-issued foreign association is.
         if _same_control(action, proof):
             return False
-        if proof.get("results_verified") is not True or proof.get("workflow") != "spotify_search":
-            return False
-        typed = _typed_length(action, history)
-        digest = _typed_digest(action, history)
-        if typed is None or digest is None or proof.get("query_length") != typed \
-                or proof.get("query_sha256") != digest:
-            return False
-        return proof.get("association") == issue_association(proof, digest)
-    if _same_control(action, proof):
+        if proof.get("workflow") == "spotify_search":
+            if proof.get("results_verified") is not True:
+                return False
+            typed = _typed_length(action, history)
+            digest = _typed_digest(action, history)
+            if typed is None or digest is None or proof.get("query_length") != typed \
+                    or proof.get("query_sha256") != digest:
+                return False
+            return proof.get("association") == issue_association(proof, digest)
+    elif _same_control(action, proof):
         before = action.get("before") or {}
         if prop in before:
             return proof.get("observed") != before[prop]
         # Only an observed state transition proves a control with no prior state.
         return False
+    # Cross-control proof requires an executor-established workflow association.
+    # Sharing an HWND or changing the requested substring establishes no causal link.
     return False
 
 
@@ -143,6 +147,48 @@ def recovered_dispatch_indices(evidence: list[dict[str, Any]]) -> set[int]:
     return {index for pair in _recovery_pairs(evidence).values() for index in pair}
 
 
+NEGATION = re.compile(r"(?:^|\W)(?:não|nao|not|no|sem|without)\W*$", re.IGNORECASE)
+
+
+def _answers_failed_read(failed: dict[str, Any], proof: dict[str, Any]) -> bool:
+    """A later verified full read of the same control that has the failed expectation as
+    whole lines answers it.
+
+    uia_verify compares the whole text, so asking for one line of a document fails even
+    when that line is there (measured: "comprar pão" and a poem's title stalled finished
+    tasks). The failed read changed nothing; the full read that followed proves those lines
+    are present. Whole lines, or whole words of one line: "84" is answered by "Display is 84"
+    but not by "184", and never right after a negation.
+    """
+    # A label's words may be shown by another control of the same window (measured 01/11:
+    # "Wikipedia" asked of Edge's address bar, then verified on the page heading). Editor
+    # content is only ever answered by the editor itself.
+    content = failed.get("content_field")
+    label = (not content if isinstance(content, bool)
+             else failed.get("control_type") not in {"Edit", "Document", "ComboBox"})
+    if (failed.get("operation") != "uia_verify" or proof.get("operation") != "uia_verify"
+            or proof.get("verified") is not True or not (label or _same_control(failed, proof))
+            or str(proof.get("handle")) != str(failed.get("handle"))
+            or not {failed.get("property"), proof.get("property")} <= {"text", "name"}):
+        return False
+    wanted, read = failed.get("expected_text"), proof.get("expected_text")
+    if not isinstance(wanted, str) or not wanted.strip() or not isinstance(read, str):
+        return False
+    if not _same_control(failed, proof):
+        # Another control only answers with a text that starts with the asked words.
+        return re.match(re.escape(wanted.strip()) + r"(?!\w)", read.strip()) is not None
+    lines =[line.strip() for line in re.split(r"\r\n|\r|\n", read)]
+    want = [line.strip() for line in re.split(r"\r\n|\r|\n", wanted.strip())]
+    if any(lines[start:start + len(want)] == want for start in range(len(lines) - len(want) + 1)):
+        return True
+    # One line asked of a labelled value ("84" of "Display is 84"): whole words, never after
+    # a negation ("guardado" is not answered by "não guardado").
+    return len(want) == 1 and any(
+        match is not None and not NEGATION.search(line[:match.start()])
+        for line in lines
+        for match in [re.search(r"(?<!\w)" + re.escape(want[0]) + r"(?!\w)", line)])
+
+
 def unresolved_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Retain failures unless a later live read proves their postcondition."""
     def key(item: dict[str, Any]) -> tuple[str, str]:
@@ -166,10 +212,16 @@ def unresolved_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
             resolved = any(proof.get("verified") is True and key(proof) == key(item)
                            and (item.get("operation") != "uia_verify" or not _identity(item)
                                 or not _identity(proof) or _same_control(item, proof))
-                           and all(proof.get(field) == item[field] for field in purpose if field in item)
+                           and all(proof.get(field) == item[field]
+                                   # The same expected words read as Name instead of text
+                                   # are the same check, answered (measured on Edge's tab).
+                                   or (field == "property" and {proof.get(field), item[field]} <= {"text", "name"})
+                                   for field in purpose if field in item)
                            for proof in later)
             if not resolved and index in recoveries:
                 resolved = True
+            if not resolved:
+                resolved = any(_answers_failed_read(item, proof) for proof in later)
         if not resolved:
             unresolved.append(item)
     return unresolved

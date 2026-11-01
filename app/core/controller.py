@@ -39,7 +39,7 @@ from app.computer.uia import PATTERNS as UIA_PATTERNS, VIEWS as UIA_VIEWS
 from app.computer.verification import unresolved_evidence
 from app.computer.appindex import (LAUNCH_KINDS, TRUSTED_SOURCES, USER_SOURCE,
                                    default_index_path)
-from app.computer.prompt_budget import APP_PROMPT_BUDGET, check_prompt
+from app.computer.prompt_budget import APP_PROMPT_BUDGET, ARGV_PROMPT_BUDGET, check_prompt
 from app.computer.ufo_engine import (WORKER_STARTUP_SECONDS, ComputerError, UFOEngine,
                                      WorkerTransportError, verify_open)
 from app.llm import Completion, Plan
@@ -47,7 +47,7 @@ from app.core import query_rewrite
 from app.core.public_text import (WebCitationStream, public_prefix, unverified_action_claim,
                                   web_answer_admits_insufficiency, web_public_text,
                                   web_synthesis_text)
-from app.core.automatic import (AUTO_PROMPT, EMAIL_PROMPT, SPOTIFY_MUSIC_OPERATIONS, WEB_CONVERSATION_PROMPT,
+from app.core.automatic import (AUTO_PROMPT, WRITE_DOCUMENT_PROMPT, EMAIL_PROMPT, SPOTIFY_MUSIC_OPERATIONS, WEB_CONVERSATION_PROMPT,
                                 _URL_IN_TEXT,
                                 WEB_PROMPT, WEB_SYNTHESIS_PROMPT, READING_EVIDENCE_GUIDANCE, allows_actions,
                                 allows_email_reply, allows_email_send, allows_local_activation,
@@ -561,7 +561,10 @@ def _prompt_budget_gate(messages: list[dict[str, Any]], brain: Brain) -> dict[st
 
     cli_limit = None
     if isinstance(brain, HeadlessCliBrain):
-        cli_limit = getattr(brain.capabilities, "max_safe_prompt_chars", None) or APP_PROMPT_BUDGET
+        # The command-line ceiling is about argv; a prompt on stdin is gated on text like an
+        # API, or every AppAgent step near 32k of text failed on its rendered labels alone.
+        cli_limit = getattr(brain.capabilities, "max_safe_prompt_chars", None) or (
+            None if brain.spec.prompt_on_stdin else ARGV_PROMPT_BUDGET)
     check = check_prompt(messages, budget=APP_PROMPT_BUDGET, cli_limit=cli_limit)
     if not check["ok"]:
         raise BrainError(ErrorKind.REQUEST_TOO_LARGE, check["message"])
@@ -2873,6 +2876,8 @@ class TaskController:
                             system_prompt = _NATIVE_WEB_PROMPT + '\n' + _backend_clock_line()
                         elif automatic:
                             system_prompt = AUTO_PROMPT + (WEB_PROMPT if lunmi_ready else '')
+                            if self.settings.computer_write_macro:
+                                system_prompt += WRITE_DOCUMENT_PROMPT
                             system_prompt += _PROPORTIONAL_ANSWER_GUIDANCE
                         else:
                             system_prompt = (WEB_CONVERSATION_PROMPT if lunmi_ready
@@ -2967,12 +2972,21 @@ class TaskController:
                         with timed(result, 'llm_time_ms'), self._provider_metrics(result, self.brain, 'host'):
                             response = (await self.brain.complete(chat_messages) if source_decision else
                                         await self._public_completion(chat_messages, result, automatic=automatic))
+                            if automatic and not source_decision and not str(response.text or '').strip():
+                                # Um roteador gratuito (Kilo) às vezes devolve só raciocínio, sem texto.
+                                # Nada foi mostrado nem executado, por isso pedir de novo é seguro.
+                                chat_call['attempts'] = 2
+                                result.llm_calls += 1
+                                response = await self._public_completion(chat_messages, result, automatic=automatic)
                     finally:
                         chat_call['ms'] = (time.perf_counter() - call_started) * 1000
                     ensure_deadline()
                     chat_call.update(ok=True, input_tokens=response.input_tokens, output_tokens=response.output_tokens)
                     if automatic:
                         answer, candidates, initial_operation = parse_decision(response.text)
+                        if (initial_operation and initial_operation['name'] == 'write_document'
+                                and not self.settings.computer_write_macro):
+                            raise BrainError(ErrorKind.MALFORMED_RESPONSE, 'A escrita direta não está ativada.')
                         spotify_allowed = bool(initial_operation
                             and (initial_operation['name'] == 'spotify'
                                  or initial_operation['name'].startswith('spotify.'))

@@ -50,7 +50,7 @@ def _messages(rows: int = 30, *, system_chars: int = 15_000) -> list[dict[str, A
 
 
 def test_fit_selects_context_and_preserves_target_parent_and_literal() -> None:
-    messages = _messages(system_chars=28_000)
+    messages = _messages(system_chars=APP_PROMPT_BUDGET - 4_000)
     before = text_chars(messages)
     assert before > APP_PROMPT_BUDGET
     result = fit_app_prompt(messages, APP_PROMPT_BUDGET)
@@ -139,7 +139,7 @@ def test_record_minimizes_fast_path_declined_without_mutating_result(tmp_path: P
 
 
 def test_mandatory_exceeds_is_reported_without_truncation() -> None:
-    messages = _messages(system_chars=40_000)
+    messages = _messages(system_chars=APP_PROMPT_BUDGET + 8_000)
     result = fit_app_prompt(messages, APP_PROMPT_BUDGET)
     assert result["fits"] is False
     assert result["reason"] == "mandatory_exceeds_budget"
@@ -148,13 +148,13 @@ def test_mandatory_exceeds_is_reported_without_truncation() -> None:
 
 
 def test_final_gate_rejects_mandatory_over_32k_before_inference() -> None:
-    messages = _messages(system_chars=40_000)
+    messages = _messages(system_chars=APP_PROMPT_BUDGET + 8_000)
     from app.core.controller import _prompt_budget_gate
 
     with pytest.raises(BrainError) as error:
         _prompt_budget_gate(messages, object())  # type: ignore[arg-type]
     assert error.value.kind == ErrorKind.REQUEST_TOO_LARGE
-    assert "32000" in str(error.value)
+    assert str(APP_PROMPT_BUDGET) in str(error.value)
 
 
 def test_check_prompt_respects_text_and_cli_ceiling() -> None:
@@ -274,7 +274,7 @@ def test_runtime_applies_budget_after_policy_pending_and_recent_actions(monkeypa
     runtime.loop = loop
     runtime.exchange = exchange
     try:
-        runtime.response(_messages(system_chars=24_000), "AgentType.APP")
+        runtime.response(_messages(system_chars=APP_PROMPT_BUDGET - 8_000), "AgentType.APP")
     finally:
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=5)
@@ -287,3 +287,47 @@ def test_runtime_applies_budget_after_policy_pending_and_recent_actions(monkeypa
     assert "Recent successful deterministic actions" in system
     assert runtime.last_prompt_budget["fits"] is True
     assert runtime.last_prompt_budget["targets"] == ["1"]
+
+
+def test_a_stdin_cli_is_gated_on_text_not_on_its_rendered_prompt() -> None:
+    """Measured: Kilo's AppAgent step fit 32k of text but rendered 32946 and was refused."""
+    from app.brain.cli.catalog import find_spec
+    from app.brain.cli.headless import HeadlessCliBrain, render_prompt
+    from app.core.controller import _prompt_budget_gate
+    from app.settings import Settings
+
+    size = APP_PROMPT_BUDGET - 200
+    messages = [{"role": "system", "content": "a" * size}, {"role": "user", "content": "b" * 150}]
+    while len(render_prompt(messages)) <= APP_PROMPT_BUDGET:
+        messages[1]["content"] += "b"
+    assert text_chars(messages) <= APP_PROMPT_BUDGET
+    kilo = HeadlessCliBrain(Settings(provider="kilo", model="fixture"), find_spec("kilo"),
+                            executable="fixture")
+    assert _prompt_budget_gate(messages, kilo)["ok"] is True
+    agy = HeadlessCliBrain(Settings(provider="agy", model="fixture"), find_spec("agy"),
+                           executable="fixture")
+    with pytest.raises(BrainError):
+        _prompt_budget_gate(messages, agy)  # argv transport keeps its own ceiling
+
+
+def test_reads_inside_one_model_round_count_once_as_stalled() -> None:
+    """Measured: UFO's own three control reads before the AppAgent's first answer tripped
+    the stall guard and aborted its first real action (set_edit_text on Notepad)."""
+    guard = NoProgressGuard(stalled_limit=3)
+    guard.after_batch(None, failed=False, evidence_count=1, read_only=False,
+                      pending=True, evidence_signature="selected", round_marker=1)
+    for _ in range(3):
+        guard.after_batch(None, failed=False, evidence_count=1, read_only=True,
+                          pending=True, evidence_signature="selected", round_marker=1)
+    assert guard.stalled is False
+    for round_marker in (2, 3, 4):  # the agent itself keeps re-reading: still a dead end
+        guard.after_batch(None, failed=False, evidence_count=1, read_only=True,
+                          pending=True, evidence_signature="selected", round_marker=round_marker)
+    assert guard.stalled is True
+
+
+def test_the_app_prompt_template_formats_with_only_its_own_fields() -> None:
+    """Measured: an unescaped '{F4}' in the prose made every AppAgent step fail to build."""
+    from app.computer.prompts import CONCISE_APP_SYSTEM
+    rendered = CONCISE_APP_SYSTEM.format(apis="APIS", examples="EXAMPLES")
+    assert "%{F4}" in rendered and "{VK_CONTROL}s" in rendered

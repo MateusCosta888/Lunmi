@@ -13,7 +13,11 @@ from typing import Any
 
 from app.computer.controls import TYPE_WEIGHT, tokens
 
-APP_PROMPT_BUDGET = 32_000
+# The AppAgent's fixed prompt alone is ~29.7k chars, so 32k left no room for the controls
+# and the step history (a Calculator step measured 34.6k); 48k is ~12k tokens.
+APP_PROMPT_BUDGET = 48_000
+# Windows caps a command line at 32,767 chars: a CLI that takes the prompt as an argument.
+ARGV_PROMPT_BUDGET = 32_000
 CONTROL_PREFIX = "<Available Control Item:> "
 # Fields kept in the compact rows. ``context`` used to duplicate the parent and was
 # dropped from every row; the parent itself is still available through ``contexts``

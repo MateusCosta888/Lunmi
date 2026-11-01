@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from app.computer.controls import fold
-from app.computer.approval import submit_keys
+from app.computer.approval import normalize_keys, submit_keys
 from app.computer.verification import covers_dispatch, recovered_dispatch_indices
 
 PATTERNS = ("Invoke", "Value", "Text", "Selection", "SelectionItem", "Toggle",
@@ -78,6 +78,54 @@ def normalized(text: str) -> str:
 
 
 VIEWS = ("control", "raw")
+BROWSER_PROCESSES = frozenset({"msedge.exe", "chrome.exe", "brave.exe", "vivaldi.exe", "opera.exe"})
+# A page load: measured 1-3 s for wikipedia.org; slow sites stay unproven, never failed.
+NAVIGATION_TIMEOUT_MS = 8000
+# Calculator redraws its display within ~100 ms; a key that changes nothing (C on 0) stays unproven.
+KEYPAD_TIMEOUT_MS = 1500
+# A dialog (Save As, Open) appears within ~300 ms of its shortcut or button.
+WINDOW_CHANGE_TIMEOUT_MS = 1200
+# A clicked link or suggestion starts its navigation quickly; buttons that do not navigate wait this long.
+CLICK_NAVIGATION_TIMEOUT_MS = 3000
+# An arithmetic expression for Calculator, in type_keys syntax: + and % are escaped as {+} {%}.
+CALCULATOR_KEYS = re.compile(r"(?=.*[0-9])(?:[0-9.,*/=()\-]|\{\+\}|\{%\}|\{ENTER\})+")
+# Keys that only move the caret or extend a selection: in a text field they change no content.
+CARET_KEYS = re.compile(r"(?:[\^+]*\{(?:END|HOME|LEFT|RIGHT|UP|DOWN|PGUP|PGDN)(?: \d{1,2})?\})+", re.IGNORECASE)
+
+
+def navigated_to(typed: str, url: str) -> bool:
+    """Whether the page now shown is where the address-bar text leads.
+
+    An address must land on its host (or a subdomain: wikipedia.org -> www.wikipedia.org)
+    and under its path. Text that is not an address is a search: any new page is its result.
+    """
+    from urllib.parse import urlsplit
+    if not is_address(typed):
+        return True
+    text = typed.strip()
+    wanted = urlsplit(text if "://" in text else "http://" + text)
+    reached = urlsplit(url)
+    host, landed = (wanted.hostname or "").removeprefix("www."), (reached.hostname or "").removeprefix("www.")
+    path = wanted.path.rstrip("/").casefold()
+    return (bool(host) and (landed == host or landed.endswith("." + host))
+            and reached.path.casefold().startswith(path))
+
+
+def same_address(left: str, right: str) -> bool:
+    """One address written two ways: scheme, a leading www. and a final slash are optional."""
+    from urllib.parse import urlsplit
+
+    def key(text: str) -> tuple[str, str, str]:
+        text = text.strip()
+        parts = urlsplit(text if "://" in text else "http://" + text)
+        return ((parts.hostname or "").removeprefix("www."), parts.path.rstrip("/"), parts.query)
+    return bool(key(left)[0]) and key(left) == key(right)
+
+
+def is_address(typed: str) -> bool:
+    text = typed.strip()
+    return bool(text) and not any(char.isspace() for char in text) and (
+        "." in text or text.startswith("localhost"))
 
 
 class NativeBackend:
@@ -278,18 +326,23 @@ class NativeBackend:
             time.sleep(self.FOCUS_RETRY_SECONDS)
 
     def focus(self, element: Any, window: Any, meta: dict[str, Any]) -> None:
+        # Every refusal here comes before any key or click: no effect to verify, so it must
+        # not leave an uncertain dispatch that blocks the rest of the task.
         from app.computer.windows_tools import foreground_handle
         if not meta["focusable"] or meta["offscreen"]:
-            raise UIAError("not_focusable", "Controle não pode receber teclado neste estado.")
+            raise UIAPreconditionError("not_focusable", "Controle não pode receber teclado neste estado.")
         self.activate(window)
         wrapper = self.wrap(element, meta)
-        self.atomic(wrapper, window, "set_focus", {})
+        try:
+            self.atomic(wrapper, window, "set_focus", {})
+        except UIAError as exc:
+            raise UIAPreconditionError("focus_lost", "Não foi possível focar o controle; nada foi escrito.") from exc
         deadline = time.perf_counter() + self.FOCUS_ATTEMPTS * self.FOCUS_RETRY_SECONDS
         while True:
             if foreground_handle() == int(window.handle) and wrapper.has_keyboard_focus():
                 return
             if time.perf_counter() >= deadline:
-                raise UIAError("focus_lost", "Foco de teclado não corresponde ao controle.")
+                raise UIAPreconditionError("focus_lost", "Foco de teclado não corresponde ao controle.")
             time.sleep(self.FOCUS_RETRY_SECONDS)
 
     def keys(self, element: Any, window: Any, meta: dict[str, Any], keys: str) -> None:
@@ -320,23 +373,34 @@ class NativeBackend:
             from app.computer.windows_tools import foreground_handle
             self.activate(window)
             if foreground_handle() != int(window.handle):
-                raise UIAError("focus_lost", "Atalho de menu recusado fora da janela selecionada.")
+                raise UIAPreconditionError("focus_lost", "Atalho de menu recusado fora da janela selecionada.")
         elif meta["type"] == "Window":
-            if submit_keys(keys) or not re.fullmatch(
+            # Windows Calculator reads typed expressions from its window; only arithmetic
+            # keys, and only where its display exists to prove what they did.
+            calculator = bool(CALCULATOR_KEYS.fullmatch(keys)) and self.has_automation_id(element, "CalculatorResults")
+            if not calculator and submit_keys(keys) or not calculator and not re.fullmatch(
                     r"[\^%+]+(?:[a-zA-Z0-9]|\{[A-Za-z0-9_]+\})|\{(?:ESC|TAB|UP|DOWN|LEFT|RIGHT|HOME|END|PGUP|PGDN|F\d{1,2})\}",
                     keys, flags=re.IGNORECASE):
-                raise UIAError("unsafe_context", "Texto/Enter exige o controle de destino, não a janela.")
+                raise UIAPreconditionError("unsafe_context", "Texto/Enter exige o controle de destino, não a janela; use control_focus=true num botão ou campo da aplicação.")
             from app.computer.windows_tools import foreground_handle
             self.activate(window)
             focused = self.client.GetFocusedElement()
             if not focused or not self.belongs(focused, window) or foreground_handle() != int(window.handle):
-                raise UIAError("focus_lost", "Atalho recusado: foco fora da janela selecionada.")
+                raise UIAPreconditionError("focus_lost", "Atalho recusado: foco fora da janela selecionada.")
         else:
             self.focus(element, window, meta)
             target = self.wrap(element, meta)
         self.atomic(target, window, "type_keys",
                     {"keys": keys, "pause": 0.02, "with_spaces": True, "vk_packet": meta["type"] != "MenuItem",
                      "set_foreground": False})
+
+    def has_automation_id(self, element: Any, automation_id: str) -> bool:
+        try:
+            self.calls += 1
+            return bool(element.FindFirst(self.uia.tree_scope["descendants"], self.client.CreatePropertyCondition(
+                self.dll.UIA_AutomationIdPropertyId, automation_id)))
+        except Exception:  # noqa: BLE001 - unreadable: not proven to be Calculator
+            return False
 
     def state(self, element: Any, pattern: str, property_name: str) -> Any:
         return getattr(self.pattern(element, pattern), property_name)
@@ -362,6 +426,9 @@ class UIAEngine:
         self.references: dict[str, Reference] = {}
         self.elements: list[dict[str, Any]] = []
         self.generation = 0
+        # IDs of earlier observations -> (window, identity). Every action regenerates the IDs,
+        # and a model that reused one lost a round per key (measured: Calculator 01/11).
+        self.retired: dict[str, tuple[Any, tuple[Any, ...], Reference, Any]] = {}
         self.window_key: Any = None
         self.last_observation: dict[str, Any] = {}
         self.complete_regions: set[str] = set()
@@ -397,6 +464,7 @@ class UIAEngine:
 
     def reset(self) -> None:
         self.references.clear()
+        self.retired.clear()
         self.elements.clear()
         self.state.control_dict = {}
         self.window_key = None
@@ -566,6 +634,7 @@ class UIAEngine:
             if self.window_key != key:
                 self.reset()
                 self.window_key = key
+            self._retire()
             self.references.clear()
             self.elements.clear()
             self.complete_regions.clear()
@@ -678,6 +747,37 @@ class UIAEngine:
             raise UIAError("observation_failed", "Nenhum elemento pôde ser lido; não prova ausência.")
         return observed
 
+    @staticmethod
+    def _identity(meta: dict[str, Any]) -> tuple[Any, ...]:
+        return (tuple(meta["runtime_id"]), meta["automation_id"], meta["name"], meta["type"], meta["pid"])
+
+    def _retire(self) -> None:
+        for identifier, ref in self.references.items():
+            if ref.meta.get("runtime_id"):
+                self.retired[identifier] = (ref.window_key, self._identity(ref.meta), ref,
+                                            self.state.control_dict.get(identifier))
+        while len(self.retired) > MAX_REFERENCES * 4:
+            self.retired.pop(next(iter(self.retired)))
+
+    def _revive(self, identifier: str) -> Reference | None:
+        """An old ID still names its control when the current observation has that very
+        control: same window and the same identity ``reference`` already demands."""
+        retired = self.retired.get(identifier)
+        if retired is None:
+            return None
+        for current_id, ref in self.references.items():
+            if ref.window_key == retired[0] and self._identity(ref.meta) == retired[1]:
+                self.references[identifier] = ref
+                self.state.control_dict[identifier] = self.state.control_dict.get(current_id)
+                return ref
+        # Not in this (possibly partial) observation: the old element itself, which
+        # ``reference`` re-reads live and must still match identity and window (measured
+        # 01/11: Edge's address bar was missing from the next step's top controls).
+        ref = retired[2]
+        self.references[identifier] = ref
+        self.state.control_dict[identifier] = retired[3]
+        return ref
+
     def _referenced(self, identifier: str, name: str | None = None, *,
                     enabled: bool = False) -> tuple[Any, dict[str, Any], Any]:
         """One reference, with the backend it must be used with.
@@ -693,31 +793,33 @@ class UIAEngine:
         return element, meta, self._backend(self.references[identifier].view)
 
     def reference(self, identifier: str, name: str | None = None, *, enabled: bool = False) -> tuple[Any, dict[str, Any]]:
-        ref = self.references.get(identifier)
+        # Every refusal here happens before any input: a precondition, never an uncertain
+        # dispatch (measured: a stale ID on Enter blocked an Edge task until its timeout).
+        ref = self.references.get(identifier) or self._revive(identifier)
         if ref is None:
-            raise UIAError("stale_reference", "ID não pertence à observação atual; reinspecione.")
+            raise UIAPreconditionError("stale_reference", "ID não pertence à observação atual; reinspecione.")
         backend = self._backend(ref.view)
         window = self._window()
         if backend.window_key(window) != ref.window_key:
-            raise UIAError("window_changed", "A janela selecionada mudou desde a observação.")
+            raise UIAPreconditionError("window_changed", "A janela selecionada mudou desde a observação.")
         try:
             element = backend.refresh(ref.element)
             current = backend.metadata(element)
             identity = ("runtime_id", "automation_id", "name", "type", "pid")
             if any(current[key] != ref.meta[key] for key in identity):
-                raise UIAError("stale_reference", "A identidade do controle mudou; reinspecione.")
+                raise UIAPreconditionError("stale_reference", "A identidade do controle mudou; reinspecione.")
             if not backend.belongs(element, window):
-                raise UIAError("stale_reference", "O controle não pertence mais à janela selecionada.")
+                raise UIAPreconditionError("stale_reference", "O controle não pertence mais à janela selecionada.")
         except UIAError:
             raise
         except Exception as exc:
-            raise UIAError("stale_reference", "Provider não confirmou referência viva; reinspecione.") from exc
+            raise UIAPreconditionError("stale_reference", "Provider não confirmou referência viva; reinspecione.") from exc
         if name is not None and name != current["name"]:
-            raise UIAError("name_mismatch", "ID e nome não correspondem; nenhuma ação executada.")
+            raise UIAPreconditionError("name_mismatch", "ID e nome não correspondem; nenhuma ação executada.")
         if current["protected"]:
-            raise UIAError("protected", "Interação com campo protegido bloqueada.")
+            raise UIAPreconditionError("protected", "Interação com campo protegido bloqueada.")
         if enabled and not current["enabled"]:
-            raise UIAError("disabled", "O controle está desativado.")
+            raise UIAPreconditionError("disabled", "O controle está desativado.")
         return element, current
 
     def resolve(self, *, query: str = "", automation_id: str = "", control_type: str = "",
@@ -796,12 +898,31 @@ class UIAEngine:
                 raise UIAError("invalid_arguments", "Nome esperado precisa ser explícito.")
             observed = meta["name"]
             verified = observed == expected_text
+        elif property_name == "text" and meta.get("automation_id") == "RootWebArea":
+            # A Chromium page's Value is its URL, never its content (measured 01/11: "Wikipedia"
+            # asked of the page read the URL, failed, and stalled a navigated task). Its text is
+            # what the page shows: the title in Name, then the rendered page.
+            wanted = normalized(expected_text).strip()
+            observed = {"name": meta["name"]}
+            verified = bool(wanted) and re.search(
+                r"(?<!\w)" + re.escape(wanted) + r"(?!\w)", normalized(meta["name"])) is not None
+            source = "page_title"
+            if not verified and wanted:
+                rendered = self._rendered_text(backend, element, meta, {"readable": False, "text": "",
+                                                                          "truncated": False})
+                verified, source = wanted in rendered["text"], "rendered_subtree"
         elif property_name == "text":
             content = backend.content(element, meta)
             verified = bool(content["readable"] and not content["truncated"]
                             and content["text"] == normalized(expected_text))
             observed = {"readable": content["readable"], "length": len(content["text"])}
             source = content["source"]
+            if (not verified and content["readable"] and meta["type"] == "Edit"
+                    and is_address(content["text"]) and is_address(expected_text)
+                    and same_address(content["text"], expected_text)):
+                # The same address written two ways (measured 01/11: Edge shows
+                # "https://www.wikipedia.org" for "https://www.wikipedia.org/").
+                verified, source = True, "same_address"
             # A rendered label is not always content. When the control's own reading cannot
             # answer, the text it renders through its subtree is what the user sees, so it
             # is collected before this verification is reported as unproven.
@@ -815,6 +936,19 @@ class UIAEngine:
                 verified = normalized(expected_text) in rendered["text"]
                 if verified:
                     source = "rendered_subtree"
+                elif (not content["text"] and not rendered["text"] and meta["type"] in {"Text", "Hyperlink"}
+                        and re.search(r"(?<!\w)" + re.escape(normalized(expected_text).strip()) + r"(?!\w)",
+                                      normalized(meta["name"]))):
+                    # A static Text/Hyperlink shows exactly its Name (UIA defines it so); the same
+                    # live read property_name='name' would give. Measured 01/11: a page heading's
+                    # text verify failed on wording and stalled a navigated Edge task.
+                    verified, source = True, "text_control_name"
+                elif not content["text"] and not rendered["text"] and meta["name"]:
+                    # A label such as Calculator's display publishes its value only as Name.
+                    # Not proof by itself (Name is the identity just asserted): it tells the
+                    # agent which live read can prove it.
+                    observed = {**observed, "name": meta["name"],
+                                "hint": "No readable text; verify property_name='name' with the full live Name."}
         elif property_name in {"enabled", "focused"}:
             if expected_state not in {0, 1}:
                 raise UIAError("invalid_arguments", "Estado booleano exige 0 ou 1.")
@@ -836,8 +970,13 @@ class UIAEngine:
             pending = self.unverified_writes.get(write_key)
             if pending and normalized(expected_text) == pending[2]:
                 self.unverified_writes.pop(write_key)
+        # Whether this control holds user content (an editor), not a label or a page container.
+        content_field = meta["type"] in {"Edit", "ComboBox"} or (
+            meta["type"] == "Document" and meta.get("automation_id") != "RootWebArea"
+            and bool({"Value", "Text"} & set(meta["patterns"])))
         return {"operation": "uia_verify", "id": identifier, "handle": int(self._window().handle),
                 "runtime_id": list(meta["runtime_id"]), "control_type": meta["type"],
+                "content_field": content_field,
                 "property": property_name, "observed": observed, "verified": verified,
                 "expected_text": expected_text, "expected_state": expected_state,
                 "source": source, "verified_by": "independent_live_read"}
@@ -903,15 +1042,31 @@ class UIAEngine:
     def keyboard(self, identifier: str, name: str, keys: str, *, control_focus: bool = True) -> dict[str, Any]:
         if not isinstance(keys, str) or not 1 <= len(keys) <= 512:
             raise UIAError("invalid_arguments", "Sequência de teclado inválida.")
+        keys = normalize_keys(keys)
         element, meta, backend = self._referenced(identifier, name, enabled=True)
         recovery = keys.casefold() in {"{esc}", "{escape}"}
         if not recovery:
             self._check_pending_dispatch(meta, "keyboard_input")
         if not control_focus:
             root = backend.root(self._window())
-            if meta["type"] != "Window" or tuple(meta["runtime_id"]) != tuple(backend.metadata(root)["runtime_id"]):
-                raise UIAError("unsafe_context", "Atalho de janela exige o ID da janela selecionada.")
+            # A UWP app (Calculator) shows its content in an inner Window under the frame;
+            # an arithmetic expression may go to that one too (measured 01/11).
+            inner_ok = bool(CALCULATOR_KEYS.fullmatch(keys))
+            if meta["type"] != "Window" or (not inner_ok and tuple(meta["runtime_id"])
+                                            != tuple(backend.metadata(root)["runtime_id"])):
+                raise UIAPreconditionError("unsafe_context", "Atalho de janela exige o ID da janela selecionada (na Calculadora, a expressão inteira, ex. 12*7=, vai para esse ID); para escrever texto use control_focus=true no campo.")
         before = self._activation_state(backend, element, meta) if meta["type"] == "MenuItem" else {}
+        navigation = submit_keys(keys) and meta["type"] in {"Edit", "ComboBox"} and self._browser()
+        display_before = self._calculator_display(backend) if CALCULATOR_KEYS.fullmatch(keys) else None
+        windows_before = (None if submit_keys(keys) or recovery or display_before is not None
+                          else self._process_windows())
+        typed, page_before = "", ""
+        if navigation:
+            try:
+                typed = backend.content(element, meta)["text"].strip()
+                page_before = self._page_url(backend)
+            except Exception:  # noqa: BLE001 - no baseline, no navigation proof; the key still goes
+                navigation = False
         try:
             backend.keys(element, self._window(), meta, keys)
         except UIAPreconditionError:
@@ -921,8 +1076,169 @@ class UIAEngine:
                          dispatch_uncertain=True, needs_postcondition=True,
                          submitted=submit_keys(keys), recovery=recovery, before=before)
             raise UIAError("mutation_unverified", "Falha durante entrada; verifique o estado antes de repetir.") from exc
+        if meta["type"] in {"Edit", "Document"} and CARET_KEYS.fullmatch(keys):
+            # Measured 01/11: Ctrl+End before appending stayed "unproven" forever and blocked
+            # every later write; moving the caret has no effect to prove.
+            return self._record("keyboard_input", identifier, verified=True, recovery=recovery,
+                                before=before, verified_by="caret_only", submitted=False)
+        if navigation and typed:
+            arrived: list[str] = []
+
+            def loaded() -> bool:
+                url = self._page_url(backend)
+                # The same page again (Enter on the address already shown) proves nothing.
+                if url and url != page_before and navigated_to(typed, url):
+                    arrived.append(url)
+                    return True
+                return False
+
+            already = False
+            try:
+                if not self._wait(loaded, NAVIGATION_TIMEOUT_MS) and is_address(typed):
+                    # Measured: Edge already on Wikipedia. Reloading the address it shows
+                    # leaves it there; after the whole wait, that page is the requested one.
+                    current = self._page_url(backend)
+                    if current and current == page_before and navigated_to(typed, current):
+                        arrived.append(current)
+                        already = True
+            except Exception:  # noqa: BLE001 - an unreadable page leaves the Enter unproven
+                arrived.clear()
+            if arrived:
+                # The executor read the page itself: the Enter's own effect, not another label.
+                return self._record("keyboard_input", identifier, verified=True, submitted=True,
+                                    recovery=recovery, before=before, workflow="browser_navigate",
+                                    url=arrived[0], verified_by="page_document_url",
+                                    already_shown=already)
+        if display_before is not None:
+            shown: list[tuple[str, str]] = []
+
+            def displayed() -> bool:
+                now = self._calculator_display(backend)
+                if now is not None and now != display_before:
+                    shown.append(now)
+                    return True
+                return False
+
+            # Typed keys arrive one by one; wait for the display to settle on the last of them.
+            if self._wait(displayed, KEYPAD_TIMEOUT_MS):
+                time.sleep(0.3)
+                final = self._calculator_display(backend) or shown[0]
+                return self._record("keyboard_input", identifier, verified=True, submitted=False,
+                                    recovery=recovery, before=before, workflow="calculator_display",
+                                    display=final[0], expression=final[1], verified_by="calculator_display")
+        changed = self._window_change(windows_before)
+        if changed:
+            return self._record("keyboard_input", identifier, verified=True, submitted=False,
+                                recovery=recovery, before=before, **changed)
         return self._record("keyboard_input", identifier, verified=False, needs_postcondition=True,
                             submitted=submit_keys(keys), recovery=recovery, before=before)
+
+    def _page_before(self, backend: Any) -> str | None:
+        """The page URL before a click in a browser; None outside one or when unreadable."""
+        if not self._browser():
+            return None
+        try:
+            return self._page_url(backend)
+        except Exception:  # noqa: BLE001 - no baseline, no navigation proof
+            return None
+
+    def _navigation(self, backend: Any, before: str | None) -> dict[str, Any]:
+        """A new page right after a click: the click navigated (measured 01/11: Edge's
+        address suggestion was clicked and the task stayed uncertain at Wikipedia)."""
+        if before is None:
+            return {}
+        seen: list[str] = []
+
+        def moved() -> bool:
+            url = self._page_url(backend)
+            if url and url != before:
+                seen.append(url)
+                return True
+            return False
+
+        try:
+            self._wait(moved, CLICK_NAVIGATION_TIMEOUT_MS)
+        except Exception:  # noqa: BLE001 - an unreadable page leaves the click unproven
+            return {}
+        return ({"workflow": "browser_navigate", "url": seen[0], "verified_by": "page_document_url"}
+                if seen else {})
+
+    def _process_windows(self) -> dict[int, str] | None:
+        """The visible windows of the selected window's process, by handle."""
+        from app.computer.windows_tools import user32, window_pid, windows
+        try:
+            handle = int(self._window().handle)
+            pid = window_pid(handle) if user32.IsWindow(handle) else 0
+            return {item["handle"]: item["title"] for item in windows() if item["pid"] == pid} if pid else None
+        except Exception:  # noqa: BLE001 - no snapshot, no window-change proof
+            return None
+
+    def _window_change(self, before: dict[int, str] | None) -> dict[str, Any]:
+        """A window of the same process that appeared or closed right after the input.
+
+        The executor saw it itself, so it is the dispatch's own effect (measured 01/11: Save
+        As opened its dialog, the shortcut stayed "uncertain" and blocked typing the name).
+        """
+        if before is None:
+            return {}
+        seen: list[dict[str, Any]] = []
+
+        def changed() -> bool:
+            now = self._process_windows()
+            if now is None:
+                return False
+            opened = [{"handle": h, "title": t} for h, t in now.items() if h not in before]
+            closed = [{"handle": h, "title": t} for h, t in before.items() if h not in now]
+            if opened or closed:
+                seen.append({"workflow": "window_change", "verified_by": "process_windows",
+                             "opened": opened[:3], "closed": closed[:3]})
+                return True
+            return False
+
+        self._wait(changed, WINDOW_CHANGE_TIMEOUT_MS)
+        return seen[0] if seen else {}
+
+    def _browser(self) -> bool:
+        import psutil
+        from app.computer.windows_tools import window_pid
+        try:
+            return psutil.Process(window_pid(int(self._window().handle))).name().casefold() in BROWSER_PROCESSES
+        except Exception:  # noqa: BLE001 - unknown process: no browser proof
+            return False
+
+    def _calculator_display(self, backend: Any) -> tuple[str, str] | None:
+        """Windows Calculator's display and expression, or None in any other window."""
+        try:
+            root = backend.root(self._window())
+            texts: list[str] = []
+            for automation_id in ("CalculatorResults", "CalculatorExpression"):
+                found = root.FindFirst(backend.uia.tree_scope["descendants"],
+                                       backend.client.CreatePropertyCondition(
+                                           backend.dll.UIA_AutomationIdPropertyId, automation_id))
+                backend.calls += 1
+                if not found and not texts:
+                    return None  # not Calculator: one search, no expression lookup
+                texts.append(str(found.CurrentName or "") if found else "")
+        except Exception:  # noqa: BLE001 - no display read, no keypad proof
+            return None
+        return texts[0], texts[1]
+
+    def _page_url(self, backend: Any) -> str:
+        """The URL of the visible page: Chromium exposes it as the RootWebArea's Value."""
+        # shortcut: Chromium only (Edge, Chrome, Brave...); Firefox keeps the Enter unproven.
+        root = backend.root(self._window())
+        condition = backend.client.CreatePropertyCondition(
+            backend.dll.UIA_AutomationIdPropertyId, "RootWebArea")
+        found = root.FindAll(backend.uia.tree_scope["descendants"], condition)
+        backend.calls += 1
+        for index in range(min(found.Length, 8)):
+            page = found.GetElement(index)
+            if page.CurrentIsOffscreen:
+                continue
+            value = str(backend.pattern(page, "Value").CurrentValue or "")
+            if value:
+                return value
+        return ""
 
     def _check_pending_dispatch(self, meta: dict[str, Any], operation: str,
                                 recovery_of: int = -1) -> None:
@@ -1177,6 +1493,12 @@ class UIAEngine:
                 raise UIAError("unsafe_toggle", "Estado exige várias alternâncias; não executar sequência cega.")
         unchanged = bool(prop and backend.state(element, pattern, prop) == expected)
         before_state = self._activation_state(backend, element, meta) if operation in {"invoke", "default_action"} else {}
+        display_before = (self._calculator_display(backend)
+                          if operation in {"invoke", "default_action"} and meta["type"] == "Button" else None)
+        page_before = (self._page_before(backend)
+                       if operation in {"invoke", "default_action"} and display_before is None else None)
+        windows_before = (self._process_windows()
+                          if operation in {"invoke", "default_action"} and display_before is None else None)
         if not unchanged:
             try:
                 backend.call(element, window, pattern, method)
@@ -1190,6 +1512,28 @@ class UIAEngine:
             verified = self._wait(lambda: backend.state(self.reference(identifier, name)[0], pattern, prop) == expected)
         elif operation in {"scroll_into_view", "realize"}:
             verified = not self._referenced(identifier, name)[1]["offscreen"]
+        if display_before is not None:
+            shown: list[tuple[str, str]] = []
+
+            def changed() -> bool:
+                now = self._calculator_display(backend)
+                if now is not None and now != display_before:
+                    shown.append(now)
+                    return True
+                return False
+
+            if self._wait(changed, KEYPAD_TIMEOUT_MS):
+                # The executor read Calculator's own display: this key's effect, not a label
+                # elsewhere. Without it every keypad press stayed unproven (measured 01/11).
+                return self._record(operation, identifier, verified=True, pattern=pattern,
+                                    before=before_state, workflow="calculator_display",
+                                    display=shown[0][0], expression=shown[0][1],
+                                    verified_by="calculator_display")
+        window_effect = (self._navigation(backend, page_before) or self._window_change(windows_before)
+                         if not unchanged else {})
+        if window_effect:
+            return self._record(operation, identifier, verified=True, pattern=pattern,
+                                before=before_state, **window_effect)
         # Invoking is dispatch, not evidence of the semantic task's completion.
         return self._record(operation, identifier, verified=verified, pattern=pattern,
                             before=before_state,
@@ -1217,6 +1561,8 @@ class UIAEngine:
         else:
             backend.focus(element, self._window(), meta)
         before_state = self._activation_state(backend, element, meta)
+        windows_before = None if recovery else self._process_windows()
+        page_before = None if recovery else self._page_before(backend)
         try:
             backend.atomic(backend.wrap(element, meta), self._window(), "click_input",
                            {"button": button, "double": double})
@@ -1225,5 +1571,9 @@ class UIAEngine:
                          dispatch_uncertain=True, needs_postcondition=True, pattern="input_fallback",
                          before=before_state, **recovery)
             raise UIAError("mutation_unverified", "Clique falhou durante execução; verifique antes de repetir.") from exc
+        changed = self._navigation(backend, page_before) or self._window_change(windows_before)
+        if changed:
+            return self._record("click_input", identifier, verified=True, pattern="input_fallback",
+                                before=before_state, **changed)
         return self._record("click_input", identifier, verified=False, needs_postcondition=True,
                             pattern="input_fallback", before=before_state, **recovery)

@@ -310,6 +310,19 @@ def test_a_controls_own_label_is_never_its_content() -> None:
     assert instance.verify(ref, "Michael Jackson", expected_text="")["verified"]
 
 
+def test_a_label_that_only_publishes_a_name_points_the_agent_to_that_read() -> None:
+    """Measured on Calculator: the display is a Text whose value lives only in its Name, and the
+    agent kept asking for its text until the stall guard ended the task."""
+    instance, _ = engine(node("Display is 84", "Text"))
+    ref = identifier(instance, "Display is 84")
+    # 01/11: a static Text shows its Name, so the words it shows answer a text read.
+    assert instance.verify(ref, "Display is 84", expected_text="84")["source"] == "text_control_name"
+    outcome = instance.verify(ref, "Display is 84", expected_text="4")  # not a whole word
+    assert not outcome["verified"]
+    assert outcome["observed"]["name"] == "Display is 84" and "property_name='name'" in outcome["observed"]["hint"]
+    assert instance.verify(ref, "Display is 84", expected_text="Display is 84", property_name="name")["verified"]
+
+
 def test_verification_never_reads_a_protected_control_underneath() -> None:
     row = node("Conta", "DataItem", children=(node("Senha secreta", "Edit", protected=True),))
     instance, _ = engine(row)
@@ -711,3 +724,221 @@ def test_ambiguous_menu_key_is_a_preflight_refusal_not_an_uncertain_dispatch() -
     result = instance.action(identifier(instance, "Help"), "Help", "click_input")
     assert result["executed"] and not result["verified"]
     assert len(backend.atomics) == 1
+
+
+def test_a_stale_id_is_refused_before_any_input_as_a_precondition() -> None:
+    """Measured on Edge: Enter on an ID from an older observation left an uncertain dispatch
+    that blocked every later action until the task timed out."""
+    from app.computer.uia import UIAPreconditionError
+    instance, backend = engine(node("Barra de endereços", "Edit", patterns=("Value",)))
+    with pytest.raises(UIAPreconditionError, match="stale_reference"):
+        instance.keyboard("uia-old-1", "Barra de endereços", "{ENTER}")
+    assert backend.mutation_count == 0
+
+
+@pytest.mark.parametrize(("typed", "url", "expected"), [
+    ("wikipedia.org", "https://www.wikipedia.org/", True),
+    ("https://pt.wikipedia.org/wiki/Mar", "https://pt.wikipedia.org/wiki/Mar", True),
+    ("wikipedia.org", "https://www.bing.com/search?q=wikipedia.org", False),
+    ("wikipedia.org", "https://notwikipedia.org/", False),
+    ("pt.wikipedia.org/wiki/Mar", "https://pt.wikipedia.org/wiki/Terra", False),
+    ("previsão do tempo", "https://www.bing.com/search?q=previs%C3%A3o", True),
+])
+def test_navigated_to_requires_the_typed_host(typed: str, url: str, expected: bool) -> None:
+    from app.computer.uia import navigated_to
+    assert navigated_to(typed, url) is expected
+
+
+def edge_engine(monkeypatch, pages: list[str]) -> tuple[UIAEngine, str]:
+    bar = node("Barra de endereços", "Edit", patterns=("Value",), text="wikipedia.org")
+    instance, backend = engine(node("Window", "Window", children=(bar,)))
+    backend.keys = lambda element, window, meta, keys: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(instance, "_browser", lambda: True)
+    monkeypatch.setattr(instance, "_page_url", lambda backend: pages.pop(0) if len(pages) > 1 else pages[0])
+    monkeypatch.setattr("app.computer.uia.NAVIGATION_TIMEOUT_MS", 50)
+    return instance, identifier(instance, "Barra de endereços")
+
+
+def test_enter_in_a_browser_address_bar_is_proven_by_the_page_it_loads(monkeypatch) -> None:
+    """Measured 01/11: Edge reached Wikipedia but the Enter stayed uncertain for 20 steps."""
+    instance, bar = edge_engine(monkeypatch, ["edge://newtab/", "https://www.wikipedia.org/"])
+    result = instance.keyboard(bar, "Barra de endereços", "{ENTER}")
+    assert result["verified"] is True and result["workflow"] == "browser_navigate"
+    assert result["url"] == "https://www.wikipedia.org/" and not result.get("needs_postcondition")
+
+
+def test_enter_on_the_page_already_shown_is_proven_by_that_page(monkeypatch) -> None:
+    instance, bar = edge_engine(monkeypatch, ["https://www.wikipedia.org/"])
+    result = instance.keyboard(bar, "Barra de endereços", "{ENTER}")
+    assert result["verified"] is True and result["already_shown"] is True
+
+
+def test_enter_that_leaves_another_page_shown_stays_unproven(monkeypatch) -> None:
+    instance, bar = edge_engine(monkeypatch, ["https://www.bing.com/"])
+    result = instance.keyboard(bar, "Barra de endereços", "{ENTER}")
+    assert result["verified"] is False and result["needs_postcondition"] is True
+
+
+def calculator_engine(monkeypatch, displays: list[tuple[str, str]]) -> tuple[UIAEngine, str]:
+    key = node("Two", "Button", aid="num2Button", patterns=("Invoke",))
+    instance, _ = engine(node("Calculadora", "Window", children=(key,)))
+    monkeypatch.setattr(instance, "_calculator_display",
+                        lambda backend: displays.pop(0) if len(displays) > 1 else displays[0])
+    monkeypatch.setattr("app.computer.uia.KEYPAD_TIMEOUT_MS", 50)
+    return instance, identifier(instance, "Two")
+
+
+def test_a_calculator_key_is_proven_by_the_display_it_changes(monkeypatch) -> None:
+    """Measured 01/11: each keypad press stayed pending, so 12×7 could never finish."""
+    instance, two = calculator_engine(monkeypatch, [("Display is 1", ""), ("Display is 12", "")])
+    result = instance.action(two, "Two", "invoke")
+    assert result["verified"] is True and result["workflow"] == "calculator_display"
+    assert result["display"] == "Display is 12" and not result.get("needs_postcondition")
+    instance.action(two, "Two", "invoke")  # proven, so pressing it again is allowed
+
+
+def test_a_calculator_key_that_changes_nothing_stays_unproven(monkeypatch) -> None:
+    instance, two = calculator_engine(monkeypatch, [("Display is 0", "")])
+    result = instance.action(two, "Two", "invoke")
+    assert result["verified"] is False and result["needs_postcondition"] is True
+    with pytest.raises(UIAError):
+        instance.action(two, "Two", "invoke")
+
+
+def test_an_earlier_id_still_names_the_same_control_after_a_new_observation() -> None:
+    """Measured 01/11: each keypad press regenerated the IDs and the model lost a round
+    per key on a stale ID; the control itself had not changed."""
+    two = node("Two", "Button", aid="num2Button", patterns=("Invoke",))
+    instance, _ = engine(node("Calculadora", "Window", children=(two,)))
+    old = identifier(instance, "Two")
+    instance.observe()
+    assert identifier(instance, "Two") != old
+    assert instance.action(old, "Two", "invoke")["executed"] is True
+    two["meta"]["name"] = "Dois"  # a different identity is never revived
+    instance.observe()
+    stale = identifier(instance, "Dois")
+    two["meta"]["name"] = "Two"
+    instance.observe()
+    with pytest.raises(UIAError, match="stale_reference"):
+        instance.reference(stale, "Dois")
+
+
+@pytest.mark.parametrize(("keys", "kind", "proven"), [
+    ("^{END}", "Document", True), ("{VK_CONTROL}{END}", "Edit", True), ("+{HOME}{DOWN 3}", "Edit", True),
+    ("{END}{ENTER}", "Document", False), ("^{END}x", "Edit", False), ("{DOWN}", "ComboBox", False),
+])
+def test_caret_keys_in_a_text_field_have_nothing_to_prove(keys: str, kind: str, proven: bool) -> None:
+    field = node("Text editor", kind, patterns=("Value",), text="lista")
+    instance, backend = engine(node("Window", "Window", children=(field,)))
+    backend.keys = lambda element, window, meta, keys: None  # type: ignore[attr-defined]
+    result = instance.keyboard(identifier(instance, "Text editor"), "Text editor", keys)
+    assert result["verified"] is proven and bool(result.get("needs_postcondition")) is not proven
+
+
+def windows_engine(monkeypatch, snapshots: list[dict[int, str]]) -> tuple[UIAEngine, str, str]:
+    editor = node("Text editor", "Document", patterns=("Value",), text="teste")
+    save = node("Guardar", "Button", patterns=("Invoke",))
+    instance, backend = engine(node("Window", "Window", children=(editor, save)))
+    backend.keys = lambda element, window, meta, keys: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(instance, "_process_windows",
+                        lambda: snapshots.pop(0) if len(snapshots) > 1 else snapshots[0])
+    monkeypatch.setattr("app.computer.uia.WINDOW_CHANGE_TIMEOUT_MS", 50)
+    return instance, identifier(instance, "Text editor"), identifier(instance, "Guardar")
+
+
+def test_a_shortcut_that_opens_a_dialog_is_proven_by_the_new_window(monkeypatch) -> None:
+    """Measured 01/11: Ctrl+Shift+S opened Save As, stayed "uncertain" and blocked the name."""
+    instance, editor, _ = windows_engine(monkeypatch, [{1: "*sem título - Notepad"},
+                                                       {1: "*sem título - Notepad", 2: "Guardar como"}])
+    result = instance.keyboard(editor, "Text editor", "^+s")
+    assert result["verified"] is True and result["workflow"] == "window_change"
+    assert result["opened"] == [{"handle": 2, "title": "Guardar como"}]
+
+
+def test_a_button_that_closes_its_dialog_is_proven_and_a_silent_one_is_not(monkeypatch) -> None:
+    instance, _, save = windows_engine(monkeypatch, [{1: "Notepad", 2: "Guardar como"}, {1: "Notepad"}])
+    assert instance.action(save, "Guardar", "invoke")["closed"] == [{"handle": 2, "title": "Guardar como"}]
+    instance, _, save = windows_engine(monkeypatch, [{1: "Notepad"}])
+    assert instance.action(save, "Guardar", "invoke")["verified"] is False
+
+
+def test_enter_is_never_proven_by_some_window_appearing(monkeypatch) -> None:
+    instance, editor, _ = windows_engine(monkeypatch, [{1: "Chat"}, {1: "Chat", 2: "Notificação"}])
+    result = instance.keyboard(editor, "Text editor", "{ENTER}")
+    assert result["verified"] is False and result["needs_postcondition"] is True
+
+
+def test_a_click_that_opens_a_new_page_is_proven_by_that_page(monkeypatch) -> None:
+    """Measured 01/11: clicking Edge's address suggestion reached Wikipedia but stayed uncertain."""
+    link = node("https://www.wikipedia.org", "ListItem", patterns=("Invoke",))
+    instance, _ = engine(node("Edge", "Window", children=(link,)))
+    pages = ["edge://newtab/", "https://www.wikipedia.org/"]
+    monkeypatch.setattr(instance, "_browser", lambda: True)
+    monkeypatch.setattr(instance, "_page_url", lambda backend: pages.pop(0) if len(pages) > 1 else pages[0])
+    monkeypatch.setattr("app.computer.uia.CLICK_NAVIGATION_TIMEOUT_MS", 50)
+    result = instance.action(identifier(instance, "https://www.wikipedia.org"), "https://www.wikipedia.org", "invoke")
+    assert result["verified"] is True and result["url"] == "https://www.wikipedia.org/"
+
+
+def test_calculator_takes_a_typed_expression_proven_by_its_display(monkeypatch) -> None:
+    """Measured 01/11: 12×7 pressed key by key cost ~15 model calls and once ran out of steps."""
+    from app.computer.uia import CALCULATOR_KEYS
+    assert CALCULATOR_KEYS.fullmatch("12*7=") and CALCULATOR_KEYS.fullmatch("3{+}4=")
+    assert not CALCULATOR_KEYS.fullmatch("12+7=") and not CALCULATOR_KEYS.fullmatch("hello")
+    root = node("Calculadora", "Window")
+    instance, backend = engine(root)
+    backend.keys = lambda element, window, meta, keys: None  # type: ignore[attr-defined]
+    displays = [("Display is 0", ""), ("Display is 84", "Expression is 12 × 7=")]
+    monkeypatch.setattr(instance, "_calculator_display", lambda b: displays.pop(0) if len(displays) > 1 else displays[0])
+    result = instance.keyboard(identifier(instance, "Calculadora"), "Calculadora", "12*7=", control_focus=False)
+    assert result["verified"] is True and result["display"] == "Display is 84"
+
+
+def test_a_static_text_is_verified_by_the_name_it_shows() -> None:
+    """Measured 01/11: verifying a web heading's text failed (its text lives in Name)."""
+    heading = node("Wikipedia A Enciclopédia Livre", "Text")
+    editor = node("Text editor", "Document", patterns=("Value",), text="")
+    instance, _ = engine(node("Window", "Window", children=(heading, editor)))
+    proof = instance.verify(identifier(instance, "Wikipedia A Enciclopédia Livre"),
+                            "Wikipedia A Enciclopédia Livre", expected_text="Wikipedia")
+    assert proof["verified"] is True and proof["source"] == "text_control_name"
+    # An editor's label is never its content.
+    assert instance.verify(identifier(instance, "Text editor"), "Text editor",
+                           expected_text="Text editor")["verified"] is False
+
+
+def test_an_earlier_id_missing_from_a_partial_observation_is_read_live() -> None:
+    """Measured 01/11: Edge's address bar was absent from the next step's top controls and
+    the Enter on its ID was refused as stale."""
+    bar = node("Barra de endereços", "Edit", patterns=("Value",), text="wikipedia.org")
+    window = node("Edge", "Window", children=(bar,))
+    instance, _ = engine(window)
+    old = identifier(instance, "Barra de endereços")
+    window["children"] = []
+    instance.observe()
+    element, meta = instance.reference(old, "Barra de endereços")
+    assert meta["name"] == "Barra de endereços"
+    bar["alive"] = False  # gone for real: still refused
+    with pytest.raises(UIAError, match="stale_reference"):
+        instance.reference(old, "Barra de endereços")
+
+
+def test_a_web_page_is_verified_by_what_it_shows_not_by_its_url() -> None:
+    """Measured 01/11: "Wikipedia" asked of Edge's page read its URL and stalled the task."""
+    page = node("Wikipedia", "Document", aid="RootWebArea", patterns=("Value",),
+                text="https://www.wikipedia.org/", children=(node("A Enciclopédia Livre", "Text"),))
+    instance, _ = engine(node("Edge", "Window", children=(page,)))
+    ref = identifier(instance, "Wikipedia")
+    assert instance.verify(ref, "Wikipedia", expected_text="Wikipedia")["source"] == "page_title"
+    assert instance.verify(ref, "Wikipedia", expected_text="Enciclopédia Livre")["verified"] is True
+    assert instance.verify(ref, "Wikipedia", expected_text="wikipedia.org")["verified"] is False
+
+
+def test_an_address_bar_matches_the_same_address_written_another_way() -> None:
+    """Measured 01/11: "https://www.wikipedia.org/" asked of a bar showing it without the slash."""
+    bar = node("Barra de endereços", "Edit", patterns=("Value",), text="https://www.wikipedia.org")
+    instance, _ = engine(node("Edge", "Window", children=(bar,)))
+    ref = identifier(instance, "Barra de endereços")
+    assert instance.verify(ref, "Barra de endereços", expected_text="https://www.wikipedia.org/")["source"] == "same_address"
+    assert instance.verify(ref, "Barra de endereços", expected_text="wikipedia.org")["verified"] is True
+    assert instance.verify(ref, "Barra de endereços", expected_text="pt.wikipedia.org")["verified"] is False

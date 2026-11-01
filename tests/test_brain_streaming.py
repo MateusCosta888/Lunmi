@@ -570,3 +570,44 @@ def test_stream_waits_once_for_a_short_rate_limit_before_any_text(monkeypatch: p
         await brain.close()
 
     asyncio.run(scenario())
+
+
+def test_codex_turn_with_a_commentary_then_an_answer_completes_with_the_answer() -> None:
+    """Measured 01/11 (gpt-5.6-luna): two agent messages in one turn failed the Edge task."""
+    class Input:
+        data = b""
+
+        def write(self, data: bytes) -> None:
+            self.data += data
+
+        async def drain(self) -> None:
+            pass
+
+    class Process:
+        returncode = None
+        stdin = Input()
+
+    async def scenario() -> None:
+        server = CodexAppServer()
+        server.process = Process()  # type: ignore[assignment]
+        messages = iter([
+            {"id": 1, "result": {"thread": {"id": "thread"}}},
+            {"id": 2, "result": {"turn": {"id": "turn"}}},
+            {"method": "item/agentMessage/delta", "params": {
+                "threadId": "thread", "turnId": "turn", "itemId": "note", "delta": "A verificar."}},
+            {"method": "item/agentMessage/delta", "params": {
+                "threadId": "thread", "turnId": "turn", "itemId": "answer", "delta": "{\"ok\": 1}"}},
+            {"method": "turn/completed", "params": {"threadId": "thread", "turn": {
+                "id": "turn", "status": "completed", "items": [{"type": "agentMessage", "text": "A verificar."},
+                                                             {"type": "agentMessage", "text": "{\"ok\": 1}"}]}}},
+            {"id": 3, "result": {}},
+        ])
+
+        async def read(timeout: float) -> dict[str, Any]:
+            return next(messages)
+
+        server._read = read  # type: ignore[method-assign]
+        values = [value async for value in server.stream("fixture", [{"role": "user", "content": "x"}])]
+        assert values == ["A verificar.", Completion("{\"ok\": 1}")]
+
+    asyncio.run(scenario())

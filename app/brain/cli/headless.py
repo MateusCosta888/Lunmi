@@ -51,6 +51,22 @@ _MODEL_HINTS = ("model not found", "unknown model", "no such model", "invalid mo
                 "model is not available", "unsupported model")
 _VERSION_PATTERN = re.compile(r"\d+\.\d+(?:\.\d+)?")
 
+# Kilo's built-in agents bring a coding-agent prompt and tools of their own; the free
+# model then tried `start notepad` or answered "I'm in plan mode" instead of our JSON.
+# This agent has no permissions and a prompt that only says how to answer.
+KILO_AGENT = (
+    "---\n"
+    "description: Lunmi text-only brain\n"
+    "mode: primary\n"
+    "permission:\n"
+    '  "*": deny\n'
+    "---\n"
+    "You are the text-completion brain of Lunmi, a desktop app. You have no tools: never call "
+    "tools, run commands or read or write files yourself. The app executes whatever its own "
+    "instructions in the conversation describe. Reply with exactly the output the conversation "
+    "asks for, such as the JSON object it specifies, and nothing else.\n"
+)
+
 
 def render_prompt(messages: list[dict[str, Any]]) -> str:
     """Flatten chat messages into the single prompt a CLI expects.
@@ -233,6 +249,19 @@ class HeadlessCliBrain:
             return await self._complete_session(prompt, started)
         return await self._complete_once(prompt, started)
 
+    def _kilo_agent_dir(self) -> Path:
+        """Folder whose `.kilo/agents/lunmi.md` is the agent `--agent lunmi` loads."""
+        folder = self.settings.state_root / ".local" / "kilo-agent"
+        path = folder / ".kilo" / "agents" / "lunmi.md"
+        try:
+            if not path.is_file() or path.read_text(encoding="utf-8") != KILO_AGENT:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(KILO_AGENT, encoding="utf-8", newline="\n")
+        except OSError as exc:
+            raise BrainError(ErrorKind.CONFIGURATION, "Não foi possível preparar o agente da Lunmi no Kilo.",
+                             detail=str(exc)) from exc
+        return folder
+
     async def _complete_once(self, prompt: str, started: float, *,
                              on_text: Callable[[str], Awaitable[None]] | None = None,
                              argv: list[str] | None = None,
@@ -269,6 +298,10 @@ class HeadlessCliBrain:
                     "Tente uma tarefa mais curta ou escolha um cérebro que leia o prompt por stdin.",
                     detail=f"argv={length} UTF-16 units, prompt={len(prompt)} chars")
             spawn_started = time.perf_counter()
+            if cwd is None and self.spec.id == "kilo":
+                cwd = self._kilo_agent_dir()
+                # Kilo reads its project from $PWD, which a parent shell can leave stale.
+                argv.extend(["--dir", str(cwd)])
             handle = await spawn(
                 argv,
                 cwd=cwd if cwd is not None else self.settings.ufo_path.parent,

@@ -36,6 +36,13 @@ from app.settings import Settings
     ('Cria uma pasta.', True),
     ('Create a folder named Testes.', True),
     ('Create a directory named Testes.', True),
+    # A place before the request: measured, the open-Notepad write ran read-only.
+    ('No bloco de notas que está aberto escreve uma segunda linha: comprar pão', True),
+    ('Na calculadora, calcula 12 vezes 7.', True), ('No Edge vai para wikipedia.org', True),
+    ('No anexo que diz apaga a pasta, o que significa?', False),
+    ('Na conversa de ontem ele disse apaga tudo.', False),
+    ('Calcula 17 vezes 23.', False), ('Quanto é 12 vezes 7?', False),
+    ('Clica no botão Guardar.', True),
 ])
 def test_action_authorization_comes_only_from_direct_user_request(instruction, expected):
     assert allows_actions(instruction) is expected
@@ -193,3 +200,42 @@ def test_real_worker_bootstrap_writes_attachment_exactly_without_second_inferenc
             await c.close()
         assert c.engine.process is None
     asyncio.run(scenario())
+
+
+def test_an_empty_decision_is_asked_once_more_before_failing(tmp_path):
+    """Measured: Kilo's free router sometimes answers with reasoning only and no text."""
+    tool = {'kind': 'tool', 'operation': {'name': 'launch_application',
+            'args': {'target': 'notepad.exe', 'fresh_document': True}}, 'finish': False}
+
+    async def scenario():
+        c = controller(tmp_path, tool)
+        replies = [Completion('', 10, 0), Completion(json.dumps(tool), 10, 3)]
+
+        async def complete(messages):
+            c.brain.calls.append(messages)
+            return replies.pop(0)
+
+        c.brain.complete = complete
+        try:
+            r = await c.run('Abre o bloco de notas e escreve teste.', automatic=True)
+            assert len(c.brain.calls) == 2
+            assert c.engine.requests and c.engine.requests[0][1]['initial_operation']['name'] == 'launch_application'
+            assert r.status == 'SUCCESS'
+        finally:
+            await c.close()
+    asyncio.run(scenario())
+
+
+def test_a_tool_decision_followed_by_prose_keeps_only_the_decision():
+    """Measured on Kiro: a decision in a fence with prose around it (the poem it meant to write)."""
+    decision = '{"kind":"tool","operation":{"name":"launch_application","args":{"target":"notepad.exe","fresh_document":true}},"finish":false}'
+    for raw in (f'```json\n{decision}\n```\n\n> A abrir...\n\n```\nO mar murmura\n```',
+                f'{decision}\n\nA abrir o Bloco de Notas.',
+                f'Vou observar o Bloco de Notas aberto.\n\n```json\n{decision}\n```'):
+        _answer, _changes, operation = parse_decision(raw)
+        assert operation is not None and operation['name'] == 'launch_application'
+    # Another decision in the tail is ambiguous, and an answer never loses its text.
+    for raw in (f'```json\n{decision}\n```\n{decision}',
+                '{"kind":"answer","message":"olá"}\n\nmais texto'):
+        with pytest.raises(BrainError):
+            parse_decision(raw)

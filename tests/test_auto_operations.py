@@ -253,6 +253,9 @@ def test_task_data_is_host_only_and_not_spliced_into_instruction(module: Any, mo
     (True, "get_desktop_app_info", {}, False, False, 0),
     (False, "find_application", {"query": "editor"}, False, False, 1),
     (False, "get_desktop_app_info", {}, False, False, 1),
+    # An empty new document only exists to be written into: finish=true cannot end the task there.
+    (True, "launch_application", {"target": "notepad.exe", "fresh_document": True}, True, True, 1),
+    (True, "launch_application", {"target": "notepad.exe"}, True, True, 0),
 ])
 def test_bootstrap_runs_real_dispatcher_then_seeds_official_host(
     module: Any, monkeypatch: Any, finish: bool, name: str, operation_args: dict[str, Any],
@@ -295,8 +298,8 @@ def test_bootstrap_runs_real_dispatcher_then_seeds_official_host(
                 if name == "get_desktop_app_info":
                     data = [{"id": "1", "name": "PRIVATE WINDOW", "kind": "window"}]
                 if verified:
-                    data = {"operation": operation_args["operation"], "verified": True, "path": "fixture.txt"}
-                    if operation_args["operation"] == "read":
+                    data = {"operation": operation_args.get("operation", name), "verified": True, "path": "fixture.txt"}
+                    if operation_args.get("operation") == "read":
                         data["text"] = "PRIVATE FILE CONTENT"
                     runtime.tools.evidence.append({key: value for key, value in data.items() if key != "text"})
                 return [SimpleNamespace(is_error=False, data=data)]
@@ -398,3 +401,183 @@ def test_engine_transports_operations_without_arguments_or_text() -> None:
     assert sent[0]["allow_actions"] is False
     assert sent[1:] == [{}, {}]
     assert "PRIVATE" not in json.dumps(captured)
+
+
+def test_tools_the_runtime_always_refuses_are_not_advertised_to_the_agents(module: Any) -> None:
+    """Measured: coordinate/summary tools cost 3198 chars of a prompt they could never use."""
+    from app.computer.prompts import REFUSED_TOOLS, CompactPrompts
+
+    def tool(name: str) -> Any:
+        return SimpleNamespace(tool_name=name, description="d", input_schema={}, output_schema={})
+
+    prompts = CompactPrompts()
+    prompts.create_api_prompt_template([tool("click_input"), *(tool(name) for name in REFUSED_TOOLS)])
+    assert "click_input" in prompts.api_prompt_template
+    assert not any(f'"{name}"' in prompts.api_prompt_template for name in REFUSED_TOOLS)
+    with pytest.raises(ValueError):
+        asyncio.run(module.UFORuntime.check_risk(SimpleNamespace(), SimpleNamespace(
+            tool_name="click_on_coordinates", parameters={})))
+
+
+def test_an_uncertain_launch_still_lets_the_agent_select_the_window_it_opened(module: Any, monkeypatch: Any) -> None:
+    """Measured: calc.exe handed off to a running Calculator, the launch timed out uncertain,
+    and every select_application_window was refused until the task timed out."""
+    def handler(c: Any, tools: Any) -> Any:
+        if c.tool_name == "launch_application":
+            raise TimeoutError("window not ready")
+        return SimpleNamespace(is_error=False, data={"verified": True})
+    runtime, calls, _ = runtime_for_dispatch(module, handler)
+    dispatcher = module.RuntimeDispatcher(runtime)
+
+    async def run() -> None:
+        launch = command(module, name="launch_application", target="calc.exe")
+        assert (await dispatcher.execute_commands([launch]))[0].status == module.ResultStatus.FAILURE
+        select = command(module, name="select_application_window", call_id="two", id="1", name_="Calculator")
+        assert (await dispatcher.execute_commands([select]))[0].status == module.ResultStatus.SUCCESS
+        other = command(module, call_id="three", operation="create_file", path="fixture.txt", text="x")
+        assert (await dispatcher.execute_commands([other]))[0].status == module.ResultStatus.FAILURE
+        # Another application's window proves nothing about this launch (measured: selecting
+        # Calculator was taken as proof that File Explorer had opened).
+        runtime.state.selected_app_window = object()
+        process["name"] = "notepad.exe"
+        other_app = command(module, name="select_application_window", call_id="four", id="2", name_="Notepad")
+        assert (await dispatcher.execute_commands([other_app]))[0].status == module.ResultStatus.SUCCESS
+        blocked = command(module, call_id="five", operation="create_file", path="fixture.txt", text="y")
+        assert (await dispatcher.execute_commands([blocked]))[0].status == module.ResultStatus.FAILURE
+        # Once the window it opened is really selected, the launch is proven and work goes on.
+        process["name"] = "calculatorapp.exe"
+        again = command(module, name="select_application_window", call_id="six", id="1", name_="Calculator")
+        assert (await dispatcher.execute_commands([again]))[0].status == module.ResultStatus.SUCCESS
+        after = command(module, call_id="seven", operation="create_file", path="fixture.txt", text="z")
+        assert (await dispatcher.execute_commands([after]))[0].status == module.ResultStatus.SUCCESS
+    process = {"name": ""}
+    monkeypatch.setattr(module, "psutil_name", lambda window: process["name"])
+    runtime.tools._launch_identity = lambda expected, processes, aumid, frame: (
+        [expected, "calculatorapp.exe"] if expected == "calc.exe" else [expected], aumid, "")
+    asyncio.run(run())
+    assert [c.command.tool_name for c in calls][:2] == ["launch_application", "select_application_window"]
+    assert len(calls) == 5
+
+
+def test_input_refused_by_a_local_guard_does_not_block_the_next_action(module: Any) -> None:
+    """Measured: keyboard_input refused before any key left every later click blocked."""
+    from app.computer.uia import UIAPreconditionError
+
+    def handler(c: Any, tools: Any) -> Any:
+        if c.call_id == "one":
+            raise UIAPreconditionError("unsafe_context", "refused before input")
+        return SimpleNamespace(is_error=False, data={"verified": True})
+    runtime, calls, _ = runtime_for_dispatch(module, handler)
+    dispatcher = module.RuntimeDispatcher(runtime)
+
+    async def run() -> None:
+        refused = command(module, call_id="one", operation="create_file", path="a.txt", text="x")
+        assert (await dispatcher.execute_commands([refused]))[0].status == module.ResultStatus.FAILURE
+        after = command(module, call_id="two", operation="create_file", path="b.txt", text="y")
+        assert (await dispatcher.execute_commands([after]))[0].status == module.ResultStatus.SUCCESS
+    asyncio.run(run())
+    states = [item["state"] for item in dispatcher.operations.values()]
+    assert states == ["failed_no_effect", "completed_verified"]
+
+
+@pytest.mark.parametrize("data,pending", [
+    ({"operation": "set_edit_text", "verified": True, "comparison": "exact_content"}, False),
+    ({"operation": "set_edit_text", "verified": False}, True),
+])
+def test_a_write_that_read_back_every_character_needs_no_second_proof(module: Any, data: Any, pending: bool) -> None:
+    """Measured: a verified 282-character poem still demanded uia_verify, the model retyped
+    part of it as expected_text, failed, and the stall guard ended a task that had worked."""
+    runtime, _calls, _ = runtime_for_dispatch(module, lambda c, t: SimpleNamespace(is_error=False, data=data))
+    dispatcher = module.RuntimeDispatcher(runtime)
+    write = command(module, name="set_edit_text", id="uia-1-7", name_="Text editor", text="O Mar\n...")
+    asyncio.run(dispatcher.execute_commands([write]))
+    assert runtime.tools.pending_ui is pending
+
+
+def test_waiting_is_never_blocked_by_an_uncertain_operation(module: Any) -> None:
+    """Measured on Edge: 'wait' after Enter was refused as a mutation, so the page had no time to load."""
+    def handler(c: Any, tools: Any) -> Any:
+        if c.call_id == "one":
+            raise TimeoutError("dispatched, result unknown")
+        return SimpleNamespace(is_error=False, data={"waited": True})
+    runtime, _calls, _ = runtime_for_dispatch(module, handler)
+    dispatcher = module.RuntimeDispatcher(runtime)
+
+    async def run() -> None:
+        uncertain = command(module, call_id="one", operation="create_file", path="a.txt", text="x")
+        assert (await dispatcher.execute_commands([uncertain]))[0].status == module.ResultStatus.FAILURE
+        wait = command(module, name="wait", call_id="two", seconds=2)
+        assert (await dispatcher.execute_commands([wait]))[0].status == module.ResultStatus.SUCCESS
+    asyncio.run(run())
+
+
+def test_the_app_agent_is_not_offered_the_host_agents_tools(module: Any) -> None:
+    """Measured: a 37k-char AppAgent prompt went over Groq's free per-request limit."""
+    from app.computer.prompts import HOST_ONLY_TOOLS, CompactAppPrompter, CompactHostPrompter
+
+    def tool(name: str) -> Any:
+        schema = {"properties": {"id": {"type": "string", "description": "The precise annotated ID ..." * 3},
+                                 "text": {"type": "string", "description": "what to write"}}}
+        return SimpleNamespace(tool_name=name, description="d", input_schema=schema, output_schema={})
+
+    tools = [tool("set_edit_text"), *(tool(name) for name in HOST_ONLY_TOOLS)]
+    app = CompactAppPrompter.__new__(CompactAppPrompter)
+    app.create_api_prompt_template(tools)
+    host = CompactHostPrompter.__new__(CompactHostPrompter)
+    host.create_api_prompt_template(tools)
+    assert not any(f'"{name}"' in app.api_prompt_template for name in HOST_ONLY_TOOLS)
+    assert all(f'"{name}"' in host.api_prompt_template for name in HOST_ONLY_TOOLS)
+    assert "precise annotated ID" not in app.api_prompt_template and "what to write" in app.api_prompt_template
+
+
+@pytest.mark.parametrize("refused", [True, False])
+def test_a_tool_refused_before_input_is_not_an_uncertain_dispatch(module: Any, refused: bool) -> None:
+    """Measured 01/11: a stale Calculator ID was refused before input, but the MCP error
+    text left the press "uncertain" and every later key was blocked."""
+    def handler(c: Any, tools: Any) -> Any:
+        tools.refused_before_input = refused
+        return SimpleNamespace(is_error=True, content="stale_reference: ID não pertence", data=None)
+    runtime, calls, _ = runtime_for_dispatch(module, handler)
+    dispatcher = module.RuntimeDispatcher(runtime)
+
+    async def run() -> None:
+        press = command(module, name="uia_action", id="uia-5-46", name_="Two", operation="invoke")
+        assert (await dispatcher.execute_commands([press]))[0].status == module.ResultStatus.FAILURE
+        assert dispatcher.operation_states()[0]["state"] == ("failed_no_effect" if refused else "uncertain")
+    asyncio.run(run())
+
+
+def test_a_proven_mutation_clears_pending_ui_but_a_read_does_not(module: Any) -> None:
+    """Measured 01/11: Save As was proven by its dialog closing, yet the model's FINISH stayed
+    refused because only text writes cleared the pending interaction."""
+    runtime, _, _ = runtime_for_dispatch(module, lambda c, t: SimpleNamespace(
+        is_error=False, data={"verified": True, "workflow": "window_change"}))
+    dispatcher = module.RuntimeDispatcher(runtime)
+
+    async def run() -> None:
+        runtime.tools.pending_ui = True
+        await dispatcher.execute_commands([command(module, name="uia_action", id="uia-1-2", operation="invoke")])
+        assert runtime.tools.pending_ui is False
+        runtime.tools.pending_ui = True
+        await dispatcher.execute_commands([command(module, name="texts", call_id="two", id="uia-1-3")])
+        assert runtime.tools.pending_ui is True
+    asyncio.run(run())
+
+
+def test_the_dispatcher_runs_without_a_round_when_a_macro_names_the_executor(module: Any) -> None:
+    """Measured 01/11: the write macro has no UFO round; round.agent failed every macro."""
+    runtime, calls, _ = runtime_for_dispatch(module, lambda c, t: SimpleNamespace(is_error=False, data={"verified": True}))
+    runtime.round = None
+    kinds: list[str] = []
+    original = runtime.computer
+
+    async def computer(kind: str) -> Any:
+        kinds.append(kind)
+        return await original(kind)
+    runtime.computer = computer
+    runtime.macro_computer = "AppAgent"
+    dispatcher = module.RuntimeDispatcher(runtime)
+    asyncio.run(dispatcher.execute_commands([command(module, name="set_edit_text", id="uia-1-7", text="x")]))
+    runtime.macro_computer = ""
+    asyncio.run(dispatcher.execute_commands([command(module, name="get_desktop_app_info", call_id="two")]))
+    assert kinds == ["AppAgent", "HostAgent"] and len(calls) == 2

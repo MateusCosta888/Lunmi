@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from app.computer.uia import NativeBackend, UIAError
+from app.computer.uia import NativeBackend, UIAError, UIAPreconditionError
 
 from test_uia import engine, identifier, node
 
@@ -725,3 +725,21 @@ def test_a_completed_popup_recovery_cannot_mask_a_later_attempt_in_the_same_ledg
     instance.observe()
     with pytest.raises(UIAError, match="mutation_unverified"):
         instance.action(identifier(instance, "Help"), "Help", "click_input")
+
+
+def test_focus_refused_before_any_key_is_a_precondition_not_an_uncertain_input() -> None:
+    """Measured on Calculator: keys refused at focus left an uncertain dispatch that blocked
+    every later click, although the display proved nothing had been typed."""
+    from types import SimpleNamespace
+    backend = NativeBackend.__new__(NativeBackend)
+    window = SimpleNamespace(handle=10)
+    with pytest.raises(UIAPreconditionError, match="not_focusable"):
+        backend.focus(object(), window, {"focusable": False, "offscreen": False})
+
+    def refuse(*args: object) -> None:
+        raise UIAError("execution_failed", "set_focus refused")
+    backend.activate = lambda window: None
+    backend.wrap = lambda element, meta: element
+    backend.atomic = refuse
+    with pytest.raises(UIAPreconditionError, match="focus_lost"):
+        backend.focus(object(), window, {"focusable": True, "offscreen": False})

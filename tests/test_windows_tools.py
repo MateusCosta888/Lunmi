@@ -200,7 +200,8 @@ def test_a_transition_is_never_decided_by_a_settled_unsatisfied_state() -> None:
     assert budget_ms == VERIFY_BUDGET_CEILING * 1000
 
 
-def test_a_window_of_an_instance_that_was_already_running_proves_the_launch(monkeypatch) -> None:
+@pytest.mark.parametrize("expected", ["", "Steam"])  # a display name is not an image name
+def test_a_window_of_an_instance_that_was_already_running_proves_the_launch(monkeypatch, expected: str) -> None:
     """Measured (2026-10-09): `steam.exe` started while Steam sat in the background handed
     the request to the instance already running (exit 0, 205 ms), and the window that then
     appeared belonged to the pre-existing `steamwebhelper.exe` — not to a descendant of the
@@ -264,7 +265,7 @@ def test_a_window_of_an_instance_that_was_already_running_proves_the_launch(monk
 
     tools = WindowsTools(object(), confirm)
     monkeypatch.setattr(WindowsTools, "installed_apps", lambda self: AppIndex(entries=()))
-    evidence = asyncio.run(tools.launch("steam.exe"))
+    evidence = asyncio.run(tools.launch("steam.exe", expected=expected))
     assert evidence["verified"] and evidence["pid"] == 200
     assert evidence["process"].casefold() == "steamwebhelper.exe"
 
@@ -625,3 +626,34 @@ def test_read_refuses_a_link_to_another_file(tmp_path: Path) -> None:
     with pytest.raises(FileReadError) as failure:
         read_text_file(str(link))
     assert "link" in str(failure.value)
+
+
+def test_a_target_refused_before_launching_is_reported_as_no_effect(monkeypatch) -> None:
+    """Measured: "calculadora" was refused before any process started, yet the dispatcher
+    marked it uncertain and every later calc.exe launch was blocked until the timeout."""
+    monkeypatch.setattr(windows_tools, "executable_path", lambda target: None)
+
+    async def confirm(_: str) -> bool:
+        return True
+
+    async def scenario() -> dict:
+        tools = WindowsTools(SimpleNamespace(), confirm)
+        async with Client(tools.server()) as client:
+            return (await client.call_tool("launch_application", {"target": "calculadora-inexistente"})).data
+
+    result = asyncio.run(scenario())
+    assert result["executed"] is False and result["verified"] is False
+    assert ".exe" in result["error"]
+
+
+def test_a_well_known_executable_keeps_its_window_identity_before_the_index_exists(
+        tmp_path: Path, monkeypatch) -> None:
+    """Measured: with no index yet, calc.exe waited for a calc.exe window that never comes."""
+    monkeypatch.setattr(windows_tools, "default_index_path", lambda _root: tmp_path / "missing.json")
+
+    async def confirm(_: str) -> bool:
+        return True
+
+    images, _aumid, frame = WindowsTools(object(), confirm)._launch_identity("calc.exe", (), "", "")
+    assert "calculatorapp.exe" in images and "calc.exe" in images
+    assert frame == "CalculatorApp.exe"

@@ -422,12 +422,12 @@ CLI_SPECS: dict[str, CliSpec] = {
         executable="kilo",
         # npm's global bin, where this CLI installs itself on Windows.
         search_paths=("~/AppData/Roaming/npm",),
-        # `run` is the headless entry point; `--agent plan` is what keeps a coding
-        # agent from touching the machine: it is the only agent whose `edit`
-        # permission is `deny` (verified against 7.8.8 with `kilo agent list`),
-        # the same role qoder's `--tools ""` plays. Never add `--auto` here: that
+        # `run` is the headless entry point; `--agent lunmi` is our own agent, written by
+        # the adapter in a Lunmi folder, that denies every permission (the same role qoder's
+        # `--tools ""` plays). The built-in `plan` agent made the free model answer "I'm in
+        # plan mode" in prose instead of the requested JSON. Never add `--auto` here: that
         # flag is the CLI's auto-approval switch, not ours to give.
-        inference_args=("run", "--format", "json", "--agent", "plan"),
+        inference_args=("run", "--format", "json", "--agent", "lunmi"),
         model_args=("-m",),
         # Measured on 7.8.8: `--variant` is "model variant (provider-specific reasoning
         # effort, e.g., high, max, minimal)", so the set of values is the provider's, not

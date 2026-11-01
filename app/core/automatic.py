@@ -36,6 +36,11 @@ AUTO_PROMPT = (
     'the user explicitly asks to use this computer; the backend asks the existing manual confirmation. '
     'list/search report complete/truncated/visited/limit_reason; a partial or empty result never proves absence. '
     'For vague app names start with find_application; unknown targets need clarification. '
+    'To work inside an application (type text, click, fill a field), choose the tool that opens '
+    'or focuses it with finish=false; the Windows desktop agent then performs the remaining steps '
+    'of the same request in that window. To type into an editor such as Notepad use '
+    'launch_application with fresh_document=true. Typing into an app is not a file request: never '
+    'ask for a path or use filesystem for it. '
     'Questions about HOW to do something are explanations, not authorization to do it. '
     'Sensitive operations still require existing safety checks and consent. '
     'Before observing, never invent window/control IDs or UI operations. '
@@ -152,7 +157,13 @@ WEB_SYNTHESIS_PROMPT = (
 )
 
 WEB_TOOL_NAMES = frozenset({'web.search', 'web.open', 'web.research'})
+WRITE_DOCUMENT_PROMPT = (
+    '\nwrite_document(app="notepad", text, mode="new"|"append") writes literal text in Notepad, '
+    'without saving or closing. Generate requested content in text. Use new for a new document, '
+    'append only when asked to add to the existing document; never use it for a multi-step request. '
+)
 DESKTOP_TOOL_ARGS: dict[str, set[str]] = {
+    'write_document': {'app', 'text', 'mode'},
     'email.search': {'query', 'limit'},
     'email.read': {'message_id'},
     'email.prepare': {'to', 'subject', 'body'},
@@ -569,6 +580,22 @@ def spotify_tool_mutates(operation: str) -> bool:
     return operation in SPOTIFY_EFFECT_OPERATIONS
 
 
+_ACTION_VERBS = (
+    r'(?:abr[aei]|abrir|open|fech[ae]|fechar|close|cria|crie|criar|create|apaga|apague|apagar|delete|'
+    r'elimina|elimine|remov[ae]|remove|mova|move|mover|copi[ae]|copiar|copy|renomei[ae]|rename|'
+    r'organiz[ae]|organizar|faz|faca|make|escrev[ae]|escrever|write|digit[ae]|digitar|type|'
+    r'salv[ae]|salvar|guard[ae]|guardar|save|envia|envie|enviar|send|instal[ae]|instalar|install|'
+    r'minimiz[ae]|maximiz[ae]|restaur[ae]|alter[ae]|mud[ae]|set|change|pesquis[ae]|procura|procure|busc[ae]|'
+    r'calcul[ae]|calcular|calculate|clica|clique|clicar|click|seleciona|selecione|selecionar|select|'
+    r'cola|cole|colar|paste|preench[ae]|preencher|fill|navega|navegue|navegar|navigate|'
+    r'vai para|va para|go to|acede a|acesse)')
+# Only for "no bloco de notas (que está aberto), escreve …": a place, then the request. A
+# phrase reporting someone else's words ("no anexo que diz apaga …") never becomes one.
+_LEADING_PLACE = re.compile(r'(?:n[oa]s?|em|dentro d[oa]s?|in|on|inside)\s+(?P<place>[^"\x27:;?!]{1,80}?)\s*,?\s+'
+                            r'(?=' + _ACTION_VERBS + r'\b)')
+_REPORTED = re.compile(r'\b(?:diz|dizem|disse|diga|dizia|say|says|said|escrito|written|mencion\w*|pede|pedem|asks?)\b')
+
+
 def allows_actions(instruction: str) -> bool:
     """Conservative authorization gate, not an extra model/router call."""
     text = ''.join(c for c in unicodedata.normalize('NFD', instruction.casefold())
@@ -578,8 +605,13 @@ def allows_actions(instruction: str) -> bool:
     text = re.sub(r'^(?:por favor[, ]+|please[, ]+)', '', text)
     text = re.sub(r'^(?:(?:eu )?(?:quero|queria|gostaria de)|(?:podes|pode|consegues|voce pode|can you|could you))\s+', '', text)
     text = re.sub(r'^(?:que\s+)', '', text)
+    place = _LEADING_PLACE.match(text)
+    if place and len(place['place'].split()) <= 8 and not _REPORTED.search(place['place']):
+        # The place moves after the request, where the destination checks below read it.
+        text = text[place.end():] + ' ' + place.group(0).strip(' ,')
     # Asking for prose/code in chat is not permission to create a Windows file.
-    text_request = re.match(r'(?:write|escrev[ae]|escrever|faz|faca|make|cria|crie|criar|create)\b', text)
+    text_request = re.match(r'(?:write|escrev[ae]|escrever|faz|faca|make|cria|crie|criar|create|'
+                            r'calcul[ae]|calcular|calculate)\b', text)
     file_object = re.match(r'^(?:write|escrev[ae]|escrever|faz|faca|make|cria|crie|criar|create)\s+'
                            r'(?:(?:um|uma|o|a|an|the)\s+)?'
                            r'(?:ficheiro|arquivo|file|documento|pasta|folder|directory)\b', text)
@@ -587,16 +619,19 @@ def allows_actions(instruction: str) -> bool:
     if text_request and explanatory and not file_object:
         return False
     destination = re.search(r'\b(?:ficheiro|arquivo|file|documento|pasta|folder|directory|notepad|'
-                            r'bloco de notas|editor|documentos|downloads)\b'
+                            r'bloco de notas|editor|documentos|downloads|calculadora|calculator)\b'
                             r'|\.[a-z0-9]{1,8}(?:["\x27 ]|$)', text)
     if text_request and not destination:
         return False
-    return bool(re.match(
-        r'(?:abr[aei]|abrir|open|fech[ae]|fechar|close|cria|crie|criar|create|apaga|apague|apagar|delete|'
-        r'elimina|elimine|remov[ae]|remove|mova|move|mover|copi[ae]|copiar|copy|renomei[ae]|rename|'
-        r'organiz[ae]|organizar|faz|faca|make|escrev[ae]|escrever|write|digit[ae]|digitar|type|'
-        r'salv[ae]|salvar|guard[ae]|guardar|save|envia|envie|enviar|send|instal[ae]|instalar|install|'
-        r'minimiz[ae]|maximiz[ae]|restaur[ae]|alter[ae]|mud[ae]|set|change|pesquis[ae]|procura|procure|busc[ae])\b', text))
+    return bool(re.match(_ACTION_VERBS + r'\b', text))
+
+
+def validate_write_document(args: dict[str, Any]) -> None:
+    if (set(args) != {'app', 'text', 'mode'} or args.get('app') != 'notepad'
+            or args.get('mode') not in {'new', 'append'}
+            or not isinstance(args.get('text'), str) or not 1 <= len(args['text']) <= 4000
+            or any(ord(c) < 32 and c not in '\n\r\t' for c in args['text'])):
+        raise ValueError('Invalid Notepad write request')
 
 
 def operation_mutates(operation: dict[str, Any]) -> bool:
@@ -638,6 +673,31 @@ def parse_web_decision(raw: str) -> tuple[str | None, list[dict[str, Any]], dict
 def _parse_decision(raw: str, allowed: dict[str, set[str]]) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
     try:
         text = raw.strip()
+        # Measured on Kiro: a valid tool decision wrapped in prose ("Vou observar o Bloco de
+        # Notas…" before it, the poem it meant to write after it). Only one lone tool
+        # decision may drop that prose, which is never run or shown; an answer, or prose
+        # carrying another decision, stays fail-closed.
+        decoder = json.JSONDecoder(object_pairs_hook=_unique)
+        spans: list[tuple[int, int, str]] = [
+            (block.start(), block.end(), block[1].strip())
+            for block in re.finditer(r'```(?:json)?[ \t]*\n(.*?)\n[ \t]*```', text, re.S)]
+        if not spans and text.startswith('{'):
+            try:
+                spans = [(0, decoder.raw_decode(text)[1], text[:decoder.raw_decode(text)[1]])]
+            except (ValueError, TypeError, RecursionError):
+                spans = []
+        tools = []
+        for start, end, body in spans:
+            try:
+                value = json.loads(body, object_pairs_hook=_unique)
+            except (ValueError, TypeError, RecursionError):
+                continue
+            if isinstance(value, dict) and value.get('kind') == 'tool':
+                tools.append((start, end, value))
+        if len(tools) == 1 and (tools[0][0], tools[0][1]) != (0, len(text)):
+            start, end, value = tools[0]
+            if '"kind"' not in text[:start] + text[end:]:
+                text = json.dumps(value, ensure_ascii=False)
         if text.startswith('```') and text.endswith('```'):
             body = text.partition('\n')[2][:-3].strip()
             if len(body) > 16000:
@@ -696,6 +756,8 @@ def _parse_decision(raw: str, allowed: dict[str, set[str]]) -> tuple[str | None,
                 validate_arguments(name, args)
             except IntegrationError:
                 raise ValueError('email arguments') from None
+        if name == 'write_document':
+            validate_write_document(args)
         required = {'find_application': ('query',), 'filesystem': ('operation', 'path'),
                     'launch_application': ('target',), 'open_settings_page': ('page',)}
         if any(not str(args.get(key, '')).strip() for key in required.get(name, ())):

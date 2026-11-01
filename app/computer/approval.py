@@ -28,6 +28,7 @@ answers the question the runtime would have asked because it could not *tell*.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 MANUAL = "manual"
@@ -69,7 +70,7 @@ _NAVIGATION_KEYS = ("{tab}", "{esc}", "{escape}", "{up}", "{down}", "{left}", "{
 _DESTRUCTIVE_WORDS = ("excluir", "delete", "remove", "remover", "apagar", "instalar",
                       "uninstall", "enviar", "send", "salvar", "save", "fechar", "close",
                       "publish", "publicar", "comprar", "buy", "formatar", "reset",
-                      "restaurar", "confirmar", "confirm")
+                      "restaurar", "confirmar", "confirm", "guardar", "eliminar")
 
 # Control types whose click changes a persisted state rather than navigating.
 _SETTING_TYPES = ("CheckBox", "RadioButton", "Slider", "Spinner")
@@ -114,6 +115,34 @@ def unknown(reason: str) -> Verdict:
     return Verdict(UNKNOWN, reason)
 
 
+_VK_MODIFIER = re.compile(r"\{VK_(?:L|R)?(CONTROL|MENU|SHIFT)\}([A-Za-z0-9]|\{[^}]+\})", re.IGNORECASE)
+_NAMED_COMBO = re.compile(r"\s*((?:(?:ctrl|control|alt|shift)\s*\+\s*)+)"
+                          r"([a-z0-9]|f\d{1,2}|enter|tab|esc|escape|delete|del|home|end)\s*", re.IGNORECASE)
+
+
+def normalize_keys(keys: str) -> str:
+    """The shortcut the model meant, in the syntax the input layer and the rules below read.
+
+    UFO's own tool text teaches ``{VK_CONTROL}c`` for Ctrl+C; pywinauto types that as a lone
+    Ctrl tap and a literal ``c`` (measured: "Ctrl+S" wrote an "s" into a Notepad document).
+    A bare modifier right before a key, or a spelled "Ctrl+S", becomes ``^s``.
+    """
+    text = str(keys or "")
+    marks = {"control": "^", "ctrl": "^", "menu": "%", "alt": "%", "shift": "+"}
+    while True:
+        changed = _VK_MODIFIER.sub(lambda m: marks[m[1].casefold()] + (m[2].casefold() if len(m[2]) == 1 else m[2]), text)
+        if changed == text:
+            break
+        text = changed
+    combo = _NAMED_COMBO.fullmatch(text)
+    if combo:
+        key = combo[2]
+        named = {"esc": "ESC", "escape": "ESC", "del": "DELETE", "delete": "DELETE"}
+        text = ("".join(marks[m.casefold()] for m in re.findall(r"ctrl|control|alt|shift", combo[1], re.IGNORECASE))
+                + (key.casefold() if len(key) == 1 else "{" + named.get(key.casefold(), key.upper()) + "}"))
+    return text
+
+
 def submit_keys(keys: str) -> bool:
     """True when the keys commit the focused field's content (Enter, in any spelling)."""
     lowered = keys.casefold()
@@ -144,7 +173,7 @@ def keyboard_verdict(*, keys: str, control_type: str = "", control_label: str = 
     exactly this field a moment ago — the write-then-confirm pattern, which is what makes
     Enter a search confirmation rather than an anonymous keypress.
     """
-    text = str(keys or "")
+    text = normalize_keys(keys)
     if not text.strip():
         return low("nenhuma tecla foi enviada")
     lowered = text.casefold()
@@ -157,7 +186,8 @@ def keyboard_verdict(*, keys: str, control_type: str = "", control_label: str = 
                        "como mensagem")
     if any(token in lowered for token in _DESTRUCTIVE_KEYS):
         return high("tecla de salvar/fechar/excluir: o efeito sobrevive à rodada")
-    if any(key in lowered for key in _NAVIGATION_KEYS):
+    if lowered in _NAVIGATION_KEYS or re.fullmatch(
+            r"(?:" + "|".join(re.escape(key) for key in _NAVIGATION_KEYS) + r")+", lowered):
         return low("tecla de navegação")
     if any(marker in text for marker in ("^", "%", "+")):
         if lowered in _LOW_SHORTCUTS:
@@ -183,7 +213,10 @@ def click_verdict(*, control_label: str, control_type: str = "",
         return high("alteração de configuração do sistema")
     if str(process).casefold() in _TERMINAL_PROCESSES:
         return high("interação em ferramenta de comandos/configuração")
-    return low("clique de navegação: o controle não foi rotulado como destrutivo")
+    if (str(control_type) in {"TabItem", "TreeItem", "ListItem", "Hyperlink"}
+            or label.strip() in {"pesquisar", "search", "procurar", "find", "página inicial", "home"}):
+        return low("controle identificado como navegação")
+    return unknown("o rótulo e o tipo do controle não comprovam um clique de navegação")
 
 
 def uia_action_verdict(*, operation: str, control_type: str = "") -> Verdict:

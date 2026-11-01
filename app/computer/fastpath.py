@@ -153,7 +153,7 @@ _DESTINATIONS: tuple[tuple[str, str], ...] = (
 _KNOWN_FOLDERS: tuple[tuple[str, str], ...] = (
     ("area de trabalho", "Desktop"), ("ambiente de trabalho", "Desktop"), ("desktop", "Desktop"),
     ("documentos", "Documents"), ("documents", "Documents"), ("meus documentos", "Documents"),
-    ("downloads", "Downloads"),
+    ("downloads", "Downloads"), ("transferencias", "Downloads"),
 )
 # The Settings home, for a request that names no page at all.
 SETTINGS_HOME = "ms-settings:"
@@ -443,7 +443,8 @@ def _app_shape(tokens: list[Token], instruction: str, apps: AppIndex | None = No
 def _explorer_folder_shape(tokens: list[Token], instruction: str,
                            apps: AppIndex | None = None) -> FastPlan | None:
     """Open the file manager *at* a known folder — the one compound shape that is exact."""
-    if not _starts_with(tokens, OPEN_VERBS) or not any(token.folded == "explorer" for token in tokens):
+    if not _starts_with(tokens, OPEN_VERBS) or not any(
+            token.folded in {"explorer", "explorador", "gerenciador"} for token in tokens):
         return None
     for phrase, alias in sorted(_KNOWN_FOLDERS, key=lambda pair: -len(pair[0].split())):
         words = phrase.split()
@@ -451,8 +452,8 @@ def _explorer_folder_shape(tokens: list[Token], instruction: str,
             continue
         head = tokens[:-len(words)]
         allowed = (set(_CONNECTORS) | _MOVE_WORDS
-                   | {"explorer", "explorador", "arquivos", "area", "ambiente", "de", "trabalho",
-                      "meus", "do", "da"})
+                   | {"explorer", "explorador", "gerenciador", "arquivos", "ficheiros", "pasta",
+                      "area", "ambiente", "de", "trabalho", "meus", "do", "da", "windows"})
         if any(token.folded not in allowed for token in head):
             continue
         return FastPlan("folder", f"pasta {alias}", paths=(alias,))
@@ -478,6 +479,11 @@ def _folder_shape(tokens: list[Token], instruction: str,
     if index >= len(tokens) or tokens[index].folded not in _FOLDER_WORDS:
         return None
     index = _skip(tokens, index + 1, _CONNECTORS)
+    rest = " ".join(token.folded for token in tokens[index:])
+    known = dict(_KNOWN_FOLDERS).get(rest)
+    if known:
+        # "a pasta Downloads" is the folder itself, not a subfolder named Downloads.
+        return FastPlan("folder", f"pasta {known}", paths=(known,))
     name = _name(tokens, index)
     if not name:
         return None

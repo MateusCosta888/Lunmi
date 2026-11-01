@@ -48,6 +48,41 @@ class _RateLimited(Exception):
         self.wait = wait
 
 
+class _TooLarge(Exception):
+    """HTTP 413 whose body states the per-request token limit (Groq's free tier: 8000 TPM)."""
+    def __init__(self, limit: int, requested: int) -> None:
+        super().__init__("request too large")
+        self.limit, self.requested = limit, requested
+
+
+_LIMIT_REQUESTED = re.compile(r"Limit\s+(\d+),\s*Requested\s+(\d+)")
+
+
+async def _too_large(response: httpx.Response) -> _TooLarge | None:
+    # Only the two numbers are read: the body itself is never surfaced (it may echo the prompt).
+    raw = bytearray()
+    async for chunk in response.aiter_bytes():
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            break
+    match = _LIMIT_REQUESTED.search(raw.decode("utf-8", "replace"))
+    return _TooLarge(int(match[1]), int(match[2])) if match else None
+
+
+def _fitted(body: dict[str, Any], too: _TooLarge) -> dict[str, Any] | None:
+    """The same request with a reply reserve that fits, or None when too little would remain.
+
+    Groq counts the prompt *plus* the reserved reply against its limit: a 7k-token AppAgent
+    prompt with 2048 reserved was refused outright although a ~900-token reply fits.
+    """
+    key = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
+    reserve = body.get(key)
+    if not isinstance(reserve, int) or isinstance(reserve, bool):
+        return None
+    room = too.limit - (too.requested - reserve) - 32
+    return {**body, key: room} if 512 <= room < reserve else None
+
+
 class ProviderError(RuntimeError):
     pass
 
@@ -169,6 +204,11 @@ class LLMProvider(ABC):
                 if attempt or limited.wait is None:
                     raise ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.") from None
                 await asyncio.sleep(limited.wait)
+            except _TooLarge as too:
+                fitted = None if attempt else _fitted(body, too)
+                if fitted is None:
+                    raise ProviderError("API retornou HTTP 413. Confira chave, modelo, saldo e endpoint.") from None
+                body = fitted
         raise AssertionError("unreachable")
 
     async def _post_once(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
@@ -179,6 +219,8 @@ class LLMProvider(ABC):
             async with self.client.stream("POST", url, headers=headers, json=body) as response:
                 if response.status_code == 429:
                     raise _RateLimited(rate_limit_wait(response.headers))
+                if response.status_code == 413 and (too := await _too_large(response)):
+                    raise too
                 if response.status_code != 200:
                     # Do not expose response bodies: these may echo credentials/prompts.
                     raise ProviderError(f"API retornou HTTP {response.status_code}. Confira chave, modelo, saldo e endpoint.")
@@ -223,6 +265,12 @@ class LLMProvider(ABC):
                 if attempt or limited.wait is None:
                     raise ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.") from None
                 await asyncio.sleep(limited.wait)
+            except _TooLarge as too:
+                # Refused before any event, so the retry never repeats text already emitted.
+                fitted = None if attempt else _fitted(body, too)
+                if fitted is None:
+                    raise ProviderError("API retornou HTTP 413. Confira chave, modelo, saldo e endpoint.") from None
+                body = fitted
 
     async def _sse_once(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> AsyncGenerator[str, None]:
         """Bounded SSE framing; EOF never manufactures a provider completion."""
@@ -236,6 +284,8 @@ class LLMProvider(ABC):
                                           json=body) as response:
                 if response.status_code == 429:
                     raise _RateLimited(rate_limit_wait(response.headers))
+                if response.status_code == 413 and (too := await _too_large(response)):
+                    raise too
                 if response.status_code != 200:
                     raise ProviderError(f"API retornou HTTP {response.status_code}. Confira chave, modelo, saldo e endpoint.")
                 if response.headers.get("content-type", "").split(";", 1)[0].strip() != "text/event-stream":

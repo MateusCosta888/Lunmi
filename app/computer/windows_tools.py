@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 import psutil
 from fastmcp import FastMCP
 
-from app.computer.appindex import USER_SOURCE, AppIndex, Match, default_index_path
+from app.computer.appindex import USER_SOURCE, WELL_KNOWN, AppIndex, Match, default_index_path
 from app.computer.verification import unresolved_evidence
 from app.computer.settings_pages import fold, resolve_page
 
@@ -760,6 +760,7 @@ class WindowsTools:
         from app.computer.uia import UIAEngine
         self.uia = UIAEngine(state, evidence=self.evidence)
         self.pending_ui = False
+        self.refused_before_input = False
         self.cancelled = False
         # Only documents created by this task can be corrected without an overwrite
         # prompt, and only while their contents still match our last observation.
@@ -943,6 +944,12 @@ class WindowsTools:
                 aumid = aumid or entry.aumid
                 frame_child = frame_child or entry.frame_child
                 images.extend(str(name) for name in entry.processes)
+            else:
+                # No index yet (first start, or app_index off): the measured data still applies.
+                for known in WELL_KNOWN:
+                    if known.exe_stem and known.exe_stem == expected.casefold():
+                        frame_child = frame_child or known.frame_child
+                        images.extend(known.processes)
             images.append(expected)
         wanted: list[str] = []
         for name in images:
@@ -1078,7 +1085,13 @@ class WindowsTools:
             path = resolve_path(target)
             if path.is_dir():
                 folder = path
-                os.startfile(str(path), "open")
+                try:
+                    os.startfile(str(path), "open")
+                except OSError:
+                    # Measured: ShellExecute from this worker failed with RPC error 1726. The
+                    # shell's own process opens the folder; its exit code is a hand-off, so
+                    # the window, not the process, is what the wait below proves.
+                    subprocess.Popen(["explorer.exe", str(path)])
                 expected = "explorer.exe"
                 kind, key = "folder", str(path).casefold()
             else:
@@ -1087,7 +1100,9 @@ class WindowsTools:
                     raise PreconditionMissing(f"O executável {target} não existe mais.")
                 if not executable or Path(executable).suffix.lower() != ".exe":
                     raise ValueError("Use nome/caminho de executável .exe, pasta existente ou ms-settings:.")
-                expected = expected or Path(executable).name.casefold()
+                # Models often pass the display name ("Calculadora") here; only an image name
+                # identifies the window, so anything else falls back to the executable's.
+                expected = expected if expected.endswith(".exe") else Path(executable).name.casefold()
                 if expected in {"cmd.exe", "powershell.exe", "pwsh.exe", "python.exe", "wscript.exe", "cscript.exe", "msiexec.exe", "regedit.exe"}:
                     await self.approval(f"Abrir ferramenta capaz de executar comandos/alterar o sistema?\n{executable}")
                 try:
@@ -1645,7 +1660,16 @@ class WindowsTools:
                              direction: str = "down", text: str = "") -> dict[str, Any]:
             """UIA: invoke, default_action (LegacyIAccessible with published CurrentDefaultAction), click_input (explicit left click at the live visible control; no model coordinates), select, toggle (desired 0/1/2), expand, collapse, scroll, scroll_into_view, realize, focus, find_item (exact ItemContainer text), select_text (unique TextPattern text). Prefer native patterns. MenuItem with unusable patterns or ambiguous AccessKey can choose click_input before an uncertain dispatch. IDs/names/window/state and risk are validated live. No automatic mutation retries. invoke/default_action/click_input only dispatch: independently verify the result. A fresh observation alone never authorizes repeating a dispatch. Only normal popup invoke/default_action followed by a real failed expanded=1 read observing 0 on the same MenuBar item can allow one explicit click_input; then verify new submenu content. Uncertain dispatches remain blocked."""
             self.pending_ui = True
-            return self.uia.action(id, name, operation, value=value, direction=direction, text=text)
+            try:
+                return self.uia.action(id, name, operation, value=value, direction=direction, text=text)
+            except Exception as exc:
+                from app.computer.uia import UIAPreconditionError
+                if not isinstance(exc, UIAPreconditionError):
+                    raise
+                # MCP turns the exception into error text; this flag tells the dispatcher
+                # that nothing was sent (measured: a stale ID left Calculator "uncertain").
+                self.refused_before_input = True
+                raise
 
         @server.tool()
         async def uia_verify(id: str, name: str, expected_text: str = "", property_name: str = "text",
@@ -1662,7 +1686,12 @@ class WindowsTools:
         async def launch_application(target: str, expected: str = "", aumid: str = "",
                                      fresh_document: bool = False) -> dict[str, Any]:
             """Open an application, existing folder in Explorer, or ms-settings: navigation URI. `target` may be a name/path (notepad.exe), a folder, an `exe:`/`lnk:`/`appid:` prefixed target from find_application, or ms-settings:. When the target comes from find_application, pass that result's `exe` as `expected` and its `aumid` as `aumid`: they are how the open window of an application that is already running is recognised, and how a packaged application is verified. Never a shell command. An application already open is focused instead of started twice. Polls real window/UIA/packaged-identity readiness. Paths may use Desktop/, Downloads/, Documents/. For writing use fresh_document=True to create and verify a new blank editor without changing restored documents. Afterwards use select_application_window to delegate to AppAgent. For opening alone use FINISH after verified launch; for Settings pages verify_window with page text."""
-            launched = await self.launch(target, expected=expected, aumid=aumid)
+            try:
+                launched = await self.launch(target, expected=expected, aumid=aumid)
+            except (ValueError, PreconditionMissing) as error:
+                # Raised before any process starts: a refused target is no effect, not an
+                # uncertain dispatch that would block every corrected launch after it.
+                return {"operation": "launch", "executed": False, "verified": False, "error": str(error)}
             if not fresh_document:
                 return launched
             # A Store editor may restore saved session tabs. Ctrl+N is a document
@@ -1800,6 +1829,12 @@ class WindowsTools:
                 # until it settles instead of being reported once and treated as failure.
                 found, polls, verify_ms, budget_ms = await self._await_condition(
                     "window", read_window, settle_samples=1, floor_ms=0.0, measured=False)
+                if not found and not control_type and expected_text in window.window_text():
+                    # Only once the content settled without it: the title is text the window
+                    # shows (measured 01/11: "lunmi-teste.txt - Notepad" equal to the title
+                    # read False and stalled a saved task). covers_dispatch still refuses it
+                    # as proof of any action.
+                    found, matches = True, [window.window_text()]
                 evidence.update(expected_text=expected_text, control_type=control_type,
                                 text_matches=matches[:10], polls=polls,
                                 verification_ms=verify_ms, budget_ms=budget_ms,

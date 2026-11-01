@@ -78,6 +78,7 @@ class NoProgressGuard:
         self._idle = 0
         self._evidence_seen = 0
         self._stalled = 0
+        self._stall_round: object = None
         self._last_evidence_signature: object = None
         self._failures: dict[tuple[str, str], int] = {}
 
@@ -98,23 +99,28 @@ class NoProgressGuard:
             or self.stalled
 
     def _note_stall(self, *, read_only: bool, pending: bool,
-                    evidence_signature: object) -> None:
+                    evidence_signature: object, round_marker: object = None) -> None:
         if read_only and pending and evidence_signature == self._last_evidence_signature:
-            self._stalled += 1
+            # A model round counts once: UFO's own control reads before the agent answers
+            # are not the agent re-reading (they aborted its first action on Notepad).
+            if round_marker is None or round_marker != self._stall_round:
+                self._stalled += 1
         else:
             self._stalled = 0
+        self._stall_round = round_marker
         self._last_evidence_signature = evidence_signature
 
     def after_batch(self, signature: tuple[str, str] | None, *, failed: bool,
                     evidence_count: int, idle: bool = False, read_only: bool = False,
-                    pending: bool = False, evidence_signature: object = None) -> None:
+                    pending: bool = False, evidence_signature: object = None,
+                    round_marker: object = None) -> None:
         """Record one batch. Only identical failures, empty or stalled reads count as waste."""
         if idle:
             grew = evidence_count != self._evidence_seen
             self._idle = 0 if grew else self._idle + 1
             self._signature, self._streak, self._evidence_seen = None, 0, evidence_count
             self._note_stall(read_only=read_only, pending=pending,
-                             evidence_signature=evidence_signature)
+                             evidence_signature=evidence_signature, round_marker=round_marker)
             return
         self._idle = 0
         if signature is None or not failed:
@@ -122,11 +128,11 @@ class NoProgressGuard:
                 self._failures.pop(signature, None)
             self._signature, self._streak, self._evidence_seen = None, 0, evidence_count
             self._note_stall(read_only=read_only, pending=pending,
-                             evidence_signature=evidence_signature)
+                             evidence_signature=evidence_signature, round_marker=round_marker)
             return
         self._streak = self._failures.get(signature, 0) + 1
         self._failures[signature] = self._streak
         self._signature = signature
         self._evidence_seen = evidence_count
         self._note_stall(read_only=read_only, pending=pending,
-                         evidence_signature=evidence_signature)
+                         evidence_signature=evidence_signature, round_marker=round_marker)

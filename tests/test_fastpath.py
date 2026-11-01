@@ -682,3 +682,17 @@ def test_the_run_reports_the_index_metrics_the_record_needs(tmp_path: Path) -> N
     assert result.app_intent_ms >= 0
     assert result.app_candidates == 0
     assert result.app_index_cold is False
+
+
+@pytest.mark.parametrize("instruction,paths", [
+    ("abre a pasta downloads", ("Downloads",)),
+    ("abre a pasta transferências", ("Downloads",)),
+    ("abre o explorador de ficheiros na pasta Transferências", ("Downloads",)),
+    ("abre o explorador de arquivos em documentos", ("Documents",)),
+    ("abre a pasta Projetos", ("Desktop/Projetos", "Documents/Projetos", "Downloads/Projetos")),
+])
+def test_a_known_folder_named_by_the_user_is_that_folder_not_a_subfolder(instruction: str, paths: tuple[str, ...]) -> None:
+    """Measured: 'abre a pasta downloads' looked for Desktop/downloads and Documents/downloads, and
+    'Transferências' (the Portuguese Downloads) went to the model, which asked for a path."""
+    plan = fastpath.resolve(instruction)
+    assert plan is not None and plan.kind == "folder" and plan.paths == paths

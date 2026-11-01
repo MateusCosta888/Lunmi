@@ -112,6 +112,9 @@ class Settings:
     # model to plan them, and boot the UFO worker while the user is still typing. Both
     # are latency levers, not capabilities: turning them off restores the agent path.
     fast_path: bool = True
+    # On since the 01/11 real matrix (Kiro/Codex): set COMPUTER_WRITE_MACRO=0 / COMPUTER_DIRECT_APP=0 to turn off.
+    computer_write_macro: bool = True
+    computer_direct_app: bool = True
     prewarm: bool = True
     # "Autoaprovação de ações": manual by default, the user's choice from then on. It
     # travels with every task, so toggling it in the chat changes the next action without
@@ -235,6 +238,8 @@ class Settings:
                     key_name, values.get("api_key", "") if values.get("provider") == provider else ""),
                 base_url="" if provider in CLI_PROVIDERS else os.getenv(
                     "LLM_BASE_URL", values.get("base_url", "") if values.get("provider") == provider else ""),
+                computer_write_macro=_env_flag("COMPUTER_WRITE_MACRO", True),
+                computer_direct_app=_env_flag("COMPUTER_DIRECT_APP", True),
                 max_steps=int(os.getenv("MAX_STEPS", "20")),
                 timeout_seconds=float(os.getenv("TASK_TIMEOUT_SECONDS", "300")),
                 verify_results=os.getenv("VERIFY_RESULTS", "true").lower() == "true",
