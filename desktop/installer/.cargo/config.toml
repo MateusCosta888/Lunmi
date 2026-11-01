@@ -1,0 +1,4 @@
+# O instalador corre num Windows limpo, antes de qualquer Visual C++ Redistributable:
+# CRT estático para não importar VCRUNTIME140.dll. build.rs recusa builds sem isto.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

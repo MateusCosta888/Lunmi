@@ -283,6 +283,8 @@ window.lunmi = {
       finished(msg.code > 0 ? msg.code : 1);
       $('#errText').textContent = msg.code === -1
         ? `Não foi possível preparar o instalador${msg.detail ? ' (' + msg.detail + ')' : ''}. Confirma o espaço livre no disco do sistema e volta a tentar.`
+        : msg.code === -2
+          ? 'Não foi possível acompanhar a instalação até ao fim. Ela pode ainda estar a decorrer: espera alguns minutos antes de abrir a Lunmi ou de tentar de novo.'
         : msg.code === 2
           ? (UPDATE ? 'A atualização parou antes de mexer na versão instalada, que continua a funcionar. Confirma o espaço em disco e o antivírus e tenta mais tarde.'
                     : 'A instalação parou antes de alterar o computador. Confirma o espaço em disco e o antivírus e tenta de novo.')

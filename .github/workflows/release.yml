@@ -66,6 +66,10 @@ jobs:
       - run: python desktop/scripts/components.py pack
       - run: npm run dist
         working-directory: desktop
+      - name: Verify setup starts without external VC++ runtime
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python desktop/scripts/verify_installer_runtime.py "desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe"
       - run: python desktop/scripts/verify_installer_defaults.py
       - run: python desktop/scripts/verify_package.py
       - run: python desktop/scripts/audit_payload.py

@@ -11,7 +11,7 @@
 [![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-242938?style=flat-square&logo=electron&logoColor=white)](desktop/)
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
 
-[**Baixar Lunmi Alpha 7 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.7/Lunmi-0.1.0-alpha.7-Setup.exe)
+[**Baixar Lunmi Alpha 8 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.8/Lunmi-0.1.0-alpha.8-Setup.exe)
 
 [O que é](#o-que-é-a-lunmi) · [Instalar](#instalar) · [Funcionalidades](#funcionalidades) · [Privacidade](#memória-e-privacidade) · [Código-fonte](#rodar-pelo-código-fonte) · [Arquitetura](docs/ARCHITECTURE.md) · [Contribuir](CONTRIBUTING.md)
 
@@ -40,11 +40,11 @@ A Lunmi não vem com uma IA própria. Ela usa o cérebro que você escolher: o G
 
 Por baixo, é um app Electron com backend em Python. O controle do Windows usa o [Microsoft UFO²](https://github.com/microsoft/UFO).
 
-> **Alpha 7 em teste.** O projeto ainda está em fase alpha. O instalador não tem certificado de editor do Windows, então o Windows pode avisar na primeira execução. Veja [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.7) e [os limites de segurança](SECURITY.md).
+> **Alpha 8 em teste.** O projeto ainda está em fase alpha. O instalador não tem certificado de editor do Windows, então o Windows pode avisar na primeira execução. Veja [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.8) e [os limites de segurança](SECURITY.md).
 
 ## Instalar
 
-1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.7/Lunmi-0.1.0-alpha.7-Setup.exe) (cerca de 2,09 GB, com os modelos de voz). A instalação leva alguns minutos.
+1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.8/Lunmi-0.1.0-alpha.8-Setup.exe) (cerca de 2,09 GB, com os modelos de voz). A instalação leva alguns minutos.
 2. Execute o instalador e abra a Lunmi. O Python vem junto; você não precisa instalar Python, Node.js nem Git.
 3. Na primeira abertura, a introdução ajuda a ligar um cérebro em cerca de um minuto: o Groq ou o Kiro CLI. Depois, em **Brain**, você pode trocar para outra API, endpoint ou CLI com o seu próprio acesso. A Lunmi não inclui créditos nem chaves de IA.
 
@@ -56,7 +56,7 @@ Por baixo, é um app Electron com backend em Python. O controle do Windows usa o
 
 A Lunmi procura novas versões e baixa em segundo plano. Para instalar, vá em **Configurações → Atualizações** e escolha **Reiniciar e atualizar**. Uma tarefa ou a voz em andamento bloqueia a instalação. Histórico, memória e configurações ficam fora da pasta do programa e não se perdem.
 
-Quem tem o Alpha 4, 5 ou 6 recebe o Alpha 7 pelo atualizador. A partir do Alpha 7, a Lunmi avisa ao abrir quando há versão nova, mostra o que mudou e pergunta antes de instalar. Quem usa o Alpha 3 precisa instalar o Alpha 7 manualmente uma vez.
+Quem tem o Alpha 4, 5, 6 ou 7 recebe o Alpha 8 pelo atualizador. A partir do Alpha 7, a Lunmi avisa ao abrir quando há versão nova, mostra o que mudou e pergunta antes de instalar. Quem usa o Alpha 3 precisa instalar o Alpha 8 manualmente uma vez.
 
 Uma versão nova só chega quando publicamos uma Release; enviar código para `main` apenas roda os testes. O modo `run.bat` não se atualiza sozinho. [Como funcionam as atualizações](docs/UPDATES.md)
 

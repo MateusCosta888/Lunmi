@@ -8,6 +8,7 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import yaml from 'js-yaml';
 
 const { buildBlockMap } = createRequire(import.meta.url)('app-builder-lib/out/targets/blockmap/blockmap');
@@ -51,6 +52,8 @@ export async function wrap(release, version, ui = resolve(desktop, 'installer/ta
   const file = `Lunmi-${version}-Setup.exe`;
   const setup = resolve(release, file);
   if (hasTrailer(ui)) throw Error('lunmi-setup.exe inválido');
+  // A janela arranca antes de qualquer runtime: sem VCRUNTIME/MSVCP/WebView2Loader em DLL (falha aqui, não no PC limpo).
+  execFileSync(process.env.PYTHON ?? 'python', [resolve(desktop, 'scripts/verify_installer_runtime.py'), ui], { stdio: 'inherit' });
   if (hasTrailer(setup)) await unwrap(setup); // nova janela sobre o mesmo setup NSIS, sem refazer o build
   const manifest = Buffer.from(JSON.stringify({ version, app_bytes: dirSize(resolve(release, 'win-unpacked')), components: readComponents(components) }));
   const payloadLen = statSync(setup).size;

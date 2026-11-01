@@ -61,27 +61,105 @@ fn read_bundle() -> io::Result<Bundle> {
     Ok(Bundle { exe, payload_offset, payload_len, manifest })
 }
 
+/// Pasta temporária desta execução: o setup NSIS copiado e os dados do WebView2.
+fn work_dir() -> PathBuf { std::env::temp_dir().join(format!("lunmi-setup-{}", std::process::id())) }
+
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+/// Pasta própria e real (não junction/symlink), exatamente `work_dir()`; cria-a se faltar.
+fn ensure_work_dir() -> io::Result<PathBuf> {
+    use std::os::windows::fs::MetadataExt;
+    let dir = work_dir();
+    if !dir.is_absolute() { return Err(io::Error::other("pasta temporária relativa")); }
+    match fs::symlink_metadata(&dir) {
+        Ok(m) if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !m.is_dir() =>
+            return Err(io::Error::other("a pasta temporária do instalador não é uma pasta normal")),
+        Ok(_) => {}
+        Err(_) => fs::create_dir_all(&dir)?,
+    }
+    Ok(dir)
+}
+
+/// Apaga a pasta de trabalho só se for a pasta real desta execução; o WebView2 pode segurar
+/// ficheiros uns segundos depois de fechar. O que não sair fica registado como resíduo.
+fn clean_work_dir() {
+    use std::os::windows::fs::MetadataExt;
+    let dir = work_dir();
+    for _ in 0..20 {
+        match fs::symlink_metadata(&dir) {
+            Err(_) => return,
+            Ok(m) if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
+                log(&format!("cleanup skipped: {} is a reparse point", dir.display()));
+                return;
+            }
+            Ok(_) => if fs::remove_dir_all(&dir).is_ok() { return; },
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    log(&format!("cleanup residue: {}", dir.display()));
+}
+
+/// Diagnóstico local (%LOCALAPPDATA%\Lunmi\logs\setup.log): modo, códigos de saída e durações.
+/// Só argumentos de linha de comando e caminhos; nunca dados da conta ou chaves.
+fn log(line: &str) {
+    let Ok(root) = std::env::var("LOCALAPPDATA") else { return };
+    let dir = Path::new(&root).join("Lunmi").join("logs");
+    let path = dir.join("setup.log");
+    let _ = fs::create_dir_all(&dir);
+    if fs::metadata(&path).map(|m| m.len() > 512 * 1024).unwrap_or(false) { let _ = fs::rename(&path, dir.join("setup.log.1")); }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{secs} pid={} {line}", std::process::id());
+    }
+}
+
+/// Apaga a pasta de trabalho desta execução em qualquer saída (erro, fallback, fim normal).
+/// Declarar antes do WebView para ser libertada depois dele.
+struct WorkDirGuard;
+impl Drop for WorkDirGuard { fn drop(&mut self) { clean_work_dir(); } }
+
+/// Margem além do próprio payload no volume TEMP.
+const TEMP_MARGIN: u64 = 64 << 20;
+
 /// Copia o Setup NSIS para %TEMP%; `progress` recebe a fração copiada.
 fn extract_payload(bundle: &Bundle, progress: &dyn Fn(f64)) -> io::Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("lunmi-setup-{}", std::process::id()));
-    fs::create_dir_all(&dir)?;
-    let target = dir.join("Lunmi-Setup.exe");
-    let mut src = fs::File::open(&bundle.exe)?;
-    src.seek(SeekFrom::Start(bundle.payload_offset))?;
-    let mut src = src.take(bundle.payload_len);
-    let mut out = io::BufWriter::with_capacity(1 << 20, fs::File::create(&target)?);
-    let mut buf = vec![0u8; 8 << 20];
-    let mut copied = 0u64;
-    loop {
-        let n = src.read(&mut buf)?;
-        if n == 0 { break; }
-        out.write_all(&buf[..n])?;
-        copied += n as u64;
-        progress(copied as f64 / bundle.payload_len.max(1) as f64);
+    let dir = ensure_work_dir()?;
+    // O NSIS só confere o TEMP depois de arrancar; sem espaço para a cópia nem chegaria a correr.
+    if let Some(free) = free_bytes(&dir.to_string_lossy()) {
+        if free < bundle.payload_len + TEMP_MARGIN {
+            return Err(io::Error::new(io::ErrorKind::StorageFull, format!(
+                "espaço insuficiente na pasta temporária: são precisos {} MB e há {} MB",
+                (bundle.payload_len + TEMP_MARGIN) >> 20, free >> 20)));
+        }
     }
-    out.flush()?;
-    if copied != bundle.payload_len { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "instalador incompleto")); }
+    let target = dir.join("Lunmi-Setup.exe");
+    copy_range(&bundle.exe, bundle.payload_offset, bundle.payload_len, &target, progress)?;
+    log(&format!("payload extracted bytes={}", bundle.payload_len));
     Ok(target)
+}
+
+/// Copia `len` bytes de `src` a partir de `offset`; em qualquer falha apaga o ficheiro parcial.
+fn copy_range(src: &Path, offset: u64, len: u64, target: &Path, progress: &dyn Fn(f64)) -> io::Result<()> {
+    let result = (|| {
+        let mut input = fs::File::open(src)?;
+        input.seek(SeekFrom::Start(offset))?;
+        let mut input = input.take(len);
+        let mut out = io::BufWriter::with_capacity(1 << 20, fs::File::create(target)?);
+        let mut buf = vec![0u8; 8 << 20];
+        let mut copied = 0u64;
+        loop {
+            let n = input.read(&mut buf)?;
+            if n == 0 { break; }
+            out.write_all(&buf[..n])?;
+            copied += n as u64;
+            progress(copied as f64 / len.max(1) as f64);
+        }
+        out.flush()?;
+        if copied != len { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "instalador incompleto")); }
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(target); }
+    result
 }
 
 // ---------- Argumentos (os mesmos do NSIS; o electron-updater passa --updated /S --force-run [/D=]) ----------
@@ -253,7 +331,11 @@ fn install(bundle: &Bundle, args: &Args, dir: String, desktop: bool, start_menu:
     let share = copy_weight / (copy_weight + tracker.total() as f64);
     let setup = match extract_payload(bundle, &|f| progress(f * share, "prepare")) {
         Ok(p) => p,
-        Err(e) => return send(&proxy, json!({ "type": "error", "code": -1, "detail": e.to_string() })),
+        Err(e) => {
+            log(&format!("extract failed: {e}"));
+            recover_before_dispatch(args, &dir, "extract");
+            return send(&proxy, json!({ "type": "error", "code": -1, "detail": e.to_string() }));
+        }
     };
     let mut extra = args.rest.clone();
     extra.push("--lunmi-ui".into());
@@ -264,26 +346,71 @@ fn install(bundle: &Bundle, args: &Args, dir: String, desktop: bool, start_menu:
     send(&proxy, json!({ "type": "skipped", "steps": skipped }));
     // Numa atualização o NSIS encontra a pasta no registo; só se reenvia o /D= que a app passou.
     let target = if args.updated { args.dir.as_deref() } else { Some(dir.as_str()) };
-    let result = run_payload(&setup, true, &extra, target).and_then(|mut child| loop {
-        if let Some(status) = child.try_wait()? { break Ok(status); }
-        let (f, step) = tracker.sample();
-        progress(share + f * (0.99 - share), &step);
-        thread::sleep(Duration::from_millis(400));
-    });
-    let _ = fs::remove_dir_all(setup.parent().unwrap());
-    match result {
-        Ok(s) if s.success() => {
+    log(&format!("nsis start dir={dir} target={target:?} args={extra:?} missing={:?}", tracker.missing.iter().map(|c| &c.name).collect::<Vec<_>>()));
+    let started = std::time::Instant::now();
+    let outcome = dispatch(
+        || run_payload(&setup, true, &extra, target),
+        |child: &mut std::process::Child| child.try_wait().map(|s| s.map(|s| s.code())),
+        || {
+            let (f, step) = tracker.sample();
+            progress(share + f * (0.99 - share), &step);
+            thread::sleep(Duration::from_millis(400));
+        },
+    );
+    // Com o NSIS possivelmente ainda a correr (estado incerto) o setup fica; a guarda tenta no fim.
+    if !matches!(outcome, Dispatch::Uncertain(_)) { let _ = fs::remove_file(&setup); }
+    match outcome {
+        Dispatch::Finished(Some(0)) => {
+            log(&format!("nsis exit code=0 secs={}", started.elapsed().as_secs()));
             progress(1.0, "shortcuts");
             // Numa atualização com --force-run o próprio NSIS já reabriu a Lunmi.
             if args.updated && !args.force_run { launch(&dir); }
             send(&proxy, json!({ "type": "done", "dir": dir }));
         }
-        Ok(s) => send(&proxy, json!({ "type": "error", "code": s.code().unwrap_or(-1) })),
-        Err(e) => send(&proxy, json!({ "type": "error", "code": -1, "detail": e.to_string() })),
+        Dispatch::Finished(code) => {
+            log(&format!("nsis exit code={code:?} secs={}", started.elapsed().as_secs()));
+            send(&proxy, json!({ "type": "error", "code": code.unwrap_or(-1) }));
+        }
+        Dispatch::NotStarted(e) => {
+            log(&format!("nsis spawn failed: {e}"));
+            recover_before_dispatch(args, &dir, "spawn");
+            send(&proxy, json!({ "type": "error", "code": -1, "detail": e.to_string() }));
+        }
+        Dispatch::Uncertain(e) => {
+            // O NSIS arrancou: pode ainda estar a instalar ou já ter reaberto a Lunmi. Não se reabre nada.
+            log(&format!("nsis wait failed, state uncertain, no recovery: {e}"));
+            send(&proxy, json!({ "type": "error", "code": -2, "detail": e.to_string() }));
+        }
+    }
+}
+
+/// Resultado do despacho do NSIS. Só `NotStarted` autoriza reabrir a versão anterior.
+#[derive(Debug)]
+enum Dispatch { NotStarted(io::Error), Finished(Option<i32>), Uncertain(io::Error) }
+
+/// Arranca o processo e acompanha-o: `poll` devolve `Some(código)` quando terminou e `None`
+/// enquanto corre (chamando `tick`). Um erro depois do arranque é estado incerto, nunca "não arrancou".
+fn dispatch<C>(spawn: impl FnOnce() -> io::Result<C>, mut poll: impl FnMut(&mut C) -> io::Result<Option<Option<i32>>>, mut tick: impl FnMut()) -> Dispatch {
+    let mut child = match spawn() { Ok(c) => c, Err(e) => return Dispatch::NotStarted(e) };
+    loop {
+        match poll(&mut child) {
+            Ok(Some(code)) => return Dispatch::Finished(code),
+            Ok(None) => tick(),
+            Err(e) => return Dispatch::Uncertain(e),
+        }
     }
 }
 
 fn launch(dir: &str) { let _ = Command::new(Path::new(dir).join(APP_EXE)).current_dir(dir).spawn(); }
+
+/// A Lunmi fechou para atualizar mas o NSIS não chegou a arrancar (cópia ou spawn falhados):
+/// nada foi alterado, por isso reabre-se a versão instalada, sem `--updated` (nada é repetido).
+/// Depois de o NSIS arrancar é o `lunmiAbort` dele que reabre.
+fn recover_before_dispatch(args: &Args, dir: &str, reason: &str) {
+    if !args.updated { return; }
+    log(&format!("update not dispatched ({reason}); reopening installed version at {dir}"));
+    launch(dir);
+}
 
 fn needed_bytes(bundle: &Bundle, dir: &str) -> u64 {
     let t = Tracker::new(dir, &bundle.manifest);
@@ -309,14 +436,12 @@ fn main() -> ExitCode {
         Err(_) => { message("Este instalador está incompleto ou danificado. Volta a descarregá-lo."); return ExitCode::from(1); }
     };
 
+    let _work = WorkDirGuard; // limpa %TEMP%\lunmi-setup-<pid> em todos os retornos (se for a pasta real)
+    log(&format!("start version={} updated={} silent={} force_run={} dir={:?} rest={:?}",
+        bundle.manifest.version, args.updated, args.silent, args.force_run, args.dir, args.rest));
+
     // /S sem --updated: instalação automática (testes, scripts), sem janela.
-    if args.silent && !args.updated {
-        return match extract_payload(&bundle, &|_| ()).and_then(|s| {
-            let code = run_payload(&s, true, &args.rest, args.dir.as_deref())?.wait()?.code().unwrap_or(1);
-            let _ = fs::remove_dir_all(s.parent().unwrap());
-            Ok(code)
-        }) { Ok(c) => ExitCode::from(c as u8), Err(_) => ExitCode::from(1) };
-    }
+    if args.silent && !args.updated { return headless(&bundle, &args, true, "headless"); }
 
     let dir = args.dir.clone().unwrap_or_else(default_dir);
     let update = args.updated;
@@ -346,7 +471,13 @@ fn main() -> ExitCode {
         "need": needed_bytes(&bundle, &dir),
     });
     let ipc_proxy = proxy.clone();
-    let webview = WebViewBuilder::new()
+    // Dados do WebView2 na pasta temporária desta execução, nunca ao lado do Setup (Downloads, cache do updater).
+    let work = match ensure_work_dir() {
+        Ok(d) => d,
+        Err(e) => { log(&format!("work dir unusable: {e}")); drop(window); return headless(&bundle, &args, args.silent, "fallback"); }
+    };
+    let mut web_context = wry::WebContext::new(Some(work.join("webview")));
+    let webview = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_custom_protocol("lunmi".into(), |_, req| asset(req.uri().path()))
         .with_url("lunmi://app/index.html")
         .with_background_color((3, 5, 8, 255))
@@ -356,14 +487,12 @@ fn main() -> ExitCode {
         .build(&window);
     let webview = match webview {
         Ok(v) => v,
-        Err(_) => {
+        Err(e) => {
             // Sem WebView2: o instalador NSIS normal faz tudo, com a sua própria janela.
+            log(&format!("webview unavailable: {e}"));
             drop(window);
-            return match extract_payload(&bundle, &|_| ()).and_then(|s| {
-                let code = run_payload(&s, args.silent, &args.rest, args.dir.as_deref())?.wait()?.code().unwrap_or(1);
-                let _ = fs::remove_dir_all(s.parent().unwrap());
-                Ok(code)
-            }) { Ok(c) => ExitCode::from(c as u8), Err(_) => ExitCode::from(1) };
+            drop(web_context);
+            return headless(&bundle, &args, args.silent, "fallback");
         }
     };
 
@@ -419,10 +548,126 @@ fn main() -> ExitCode {
             _ => {}
         }
     });
+    drop(webview);
+    drop(web_context);
+    log(&format!("exit code={exit_code}"));
     ExitCode::from(exit_code)
+}
+
+/// Sem janela própria: corre o NSIS (silencioso ou com a janela dele) e devolve o seu código.
+fn headless(bundle: &Bundle, args: &Args, silent: bool, mode: &str) -> ExitCode {
+    let started = std::time::Instant::now();
+    let dir = || args.dir.clone().unwrap_or_else(default_dir);
+    let setup = match extract_payload(bundle, &|_| ()) {
+        Ok(s) => s,
+        Err(e) => {
+            log(&format!("{mode} extract failed: {e}"));
+            recover_before_dispatch(args, &dir(), mode);
+            return ExitCode::from(1);
+        }
+    };
+    let outcome = dispatch(|| run_payload(&setup, silent, &args.rest, args.dir.as_deref()),
+        |child: &mut std::process::Child| child.wait().map(|s| Some(s.code())), || {});
+    if !matches!(outcome, Dispatch::Uncertain(_)) { let _ = fs::remove_file(&setup); }
+    match outcome {
+        Dispatch::Finished(code) => {
+            log(&format!("{mode} nsis exit code={code:?} secs={}", started.elapsed().as_secs()));
+            ExitCode::from(code.unwrap_or(1).clamp(0, 255) as u8)
+        }
+        Dispatch::NotStarted(e) => {
+            log(&format!("{mode} spawn failed: {e}"));
+            recover_before_dispatch(args, &dir(), mode);
+            ExitCode::from(1)
+        }
+        Dispatch::Uncertain(e) => {
+            log(&format!("{mode} wait failed, state uncertain, no recovery: {e}"));
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn message(text: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
     unsafe { MessageBoxW(std::ptr::null_mut(), wide(text).as_ptr(), wide("Instalador da Lunmi").as_ptr(), MB_OK | MB_ICONERROR) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("lunmi-setup-test-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn copy_range_copies_the_exact_slice() {
+        let d = scratch("ok");
+        fs::write(d.join("src"), b"abcdefghij").unwrap();
+        copy_range(&d.join("src"), 2, 5, &d.join("out"), &|_| ()).unwrap();
+        assert_eq!(fs::read(d.join("out")).unwrap(), b"cdefg");
+        fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn interrupted_copy_removes_the_partial_file() {
+        let d = scratch("short");
+        fs::write(d.join("src"), vec![7u8; 100]).unwrap();
+        let err = copy_range(&d.join("src"), 0, 200, &d.join("out"), &|_| ()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(!d.join("out").exists(), "o parcial tem de ser apagado");
+        fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn unwritable_target_fails_without_touching_it() {
+        let d = scratch("dir");
+        fs::write(d.join("src"), b"abc").unwrap();
+        fs::create_dir(d.join("out")).unwrap(); // um diretório no lugar do ficheiro: create falha
+        assert!(copy_range(&d.join("src"), 0, 3, &d.join("out"), &|_| ()).is_err());
+        assert!(d.join("out").is_dir());
+        fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn junction_work_dir_is_refused_and_left_alone() {
+        let d = scratch("junction");
+        let target = d.join("target"); fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"x").unwrap();
+        let link = work_dir();
+        let _ = fs::remove_dir_all(&link);
+        let ok = Command::new("cmd").args(["/c", "mklink", "/J"]).arg(&link).arg(&target).status().unwrap().success();
+        assert!(ok);
+        assert!(ensure_work_dir().is_err(), "uma junction no lugar da pasta tem de ser recusada");
+        clean_work_dir();
+        assert!(target.join("keep.txt").exists(), "a limpeza não pode seguir a junction");
+        fs::remove_dir(&link).unwrap(); // remove só a junction
+        fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn dispatch_separates_not_started_finished_and_uncertain() {
+        // Não arrancou: o único caso que autoriza reabrir a versão anterior.
+        let o = dispatch(|| Err::<u32, _>(io::Error::other("spawn")), |_| Ok(Some(Some(0))), || {});
+        assert!(matches!(o, Dispatch::NotStarted(_)));
+        // Arrancou e terminou: código preservado, ticks enquanto corre.
+        let mut ticks = 0;
+        let mut polls = 0;
+        let o = dispatch(|| Ok(7u32), |_| { polls += 1; Ok(if polls < 3 { None } else { Some(Some(2)) }) }, || ticks += 1);
+        assert!(matches!(o, Dispatch::Finished(Some(2))));
+        assert_eq!(ticks, 2);
+        // Arrancou e o acompanhamento falhou: incerto, nunca NotStarted.
+        let mut polls = 0;
+        let o = dispatch(|| Ok(7u32), |_| { polls += 1; if polls < 2 { Ok(None) } else { Err(io::Error::other("wait")) } }, || {});
+        assert!(matches!(o, Dispatch::Uncertain(_)));
+    }
+
+    #[test]
+    fn missing_setup_fails_to_spawn() {
+        let d = scratch("spawn");
+        assert!(run_payload(&d.join("nao-existe.exe"), true, &[], Some(r"C:\Lunmi Teste")).is_err());
+        fs::remove_dir_all(d).unwrap();
+    }
 }

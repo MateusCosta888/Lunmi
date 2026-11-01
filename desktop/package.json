@@ -1,7 +1,7 @@
 {
   "name": "lunmi-desktop",
   "productName": "Lunmi",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "private": true,
   "description": "Lunmi Desktop Shell (Electron + React + TypeScript) communicating with Python backend over stdio JSONL v1",
   "main": "dist-electron/electron/main.js",
@@ -10,7 +10,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron && node dist-electron/electron/brand-runtime.js",
     "dist": "npm run build && electron-builder --win nsis --x64 --publish never && npm run dist:installer",
-    "dist:installer": "cargo build --release --manifest-path installer/Cargo.toml && node scripts/wrap_installer.mjs",
+    "dist:installer": "cd installer && cargo build --release && node ../scripts/wrap_installer.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run",
     "test:release": "node --test scripts/update-release.test.mjs",

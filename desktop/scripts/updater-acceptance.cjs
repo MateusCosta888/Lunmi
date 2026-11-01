@@ -69,9 +69,16 @@ app.whenReady().then(async () => {
     const controller = new LunmiUpdates({ version: previous, updater, publicKey: keys.publicKey.export({ format: 'pem', type: 'spki' }),
       publish: () => {}, blocked: () => false, confirmRestart: async () => false, finish: async () => { throw Error('Unexpected install'); },
       fetch: async value => value.endsWith('.sig') ? signature : raw });
-    const state = await controller.check();
+    const available = await controller.check();
+    assert.equal(available.phase, 'available', JSON.stringify(available));
+    assert.equal(bytes, 0, 'checking must not download before consent');
+    assert.equal(full, 0);
+    assert.equal(ranges, 0);
+    // Exercise download after consent; native restart is explicitly refused below.
+    const state = await controller.install();
     await fsp.writeFile(path.join(base, 'transport.log'), logs.join('\n'));
     assert.equal(state.phase, 'ready', JSON.stringify(state));
+    assert.equal(state.error, 'cancelled', 'restart confirmation must prevent native installation');
     assert.equal(updater.autoInstallOnAppQuit, false);
     if (cached) { assert(ranges > 0); assert.equal(full, 0); assert(bytes < descriptor.size / 2); }
     else { assert.equal(full, 1); assert(bytes >= descriptor.size); }

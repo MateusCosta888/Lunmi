@@ -1,4 +1,11 @@
 fn main() {
+    // Sem CRT estático o Setup não arranca num Windows sem o VC++ Redistributable (VCRUNTIME140.dll).
+    // RUSTFLAGS no ambiente substitui .cargo/config.toml; aqui falha cedo em vez de gerar um exe partido.
+    let features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") && !features.split(',').any(|f| f == "crt-static") {
+        panic!("lunmi-setup tem de ser compilado com -C target-feature=+crt-static (corre o cargo dentro de desktop/installer, sem RUSTFLAGS a substituir a config)");
+    }
+    println!("cargo:rerun-if-env-changed=RUSTFLAGS");
     let mut res = winresource::WindowsResource::new();
     res.set_icon("../src/assets/branding/lunmi.ico")
         .set("FileDescription", "Instalador da Lunmi")
