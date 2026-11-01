@@ -59,6 +59,12 @@
       "bytes": 291808
     },
     {
+      "path": "models/supertonic-3/voice_styles/F5.json",
+      "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F5.json",
+      "sha256": "45966e73316415626cf41a7d1c6f3b4c70dbc1ba2bee5c1978ef0ce33244fc8d",
+      "bytes": 291479
+    },
+    {
       "path": "models/silero/silero_vad.onnx",
       "url": "https://raw.githubusercontent.com/snakers4/silero-vad/1e261b036686cd0017d500ee96acd1c4ba572a9d/src/silero_vad/data/silero_vad.onnx",
       "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",

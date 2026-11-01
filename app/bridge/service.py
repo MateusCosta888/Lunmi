@@ -68,7 +68,7 @@ from app.settings import (
 from app.ui import ui_preferences
 from app.integrations.web_search import WebSearchError, WebSearchManager
 from app.integrations.web_state import WebPreferencesError, identity_for_settings
-from app.voice.eligibility import speakable_reply
+from app.voice.eligibility import SpeechStream, speakable_reply
 from app.voice.input_manager import VoiceInputManager
 from app.voice.manager import VoiceError, VoiceManager
 from app.voice.warmup import VoiceWarmup
@@ -1265,6 +1265,11 @@ class BridgeService:
         err: Exception | None = None
         response = PublicResponse(self._emit, self.session_id, task_id)
         response.ids['conversation_id'] = self.history.active['id']
+        try:
+            # Plain answers are spoken while they are written (user request, 01/11).
+            response.speech = SpeechStream(self.voice, attachments=bool(attachments))
+        except Exception:  # noqa: BLE001 - no voice, the answer still streams
+            response.speech = None
         self._public_response = response
         self.controller.on_public = response.receive
         try:
@@ -1311,7 +1316,8 @@ class BridgeService:
             )
             self._finish_chat_history(fallback, response)
             # Uma falha interna limpa o último texto falável: nunca se lê uma resposta antiga.
-            self._observe_voice(fallback, attachments=bool(attachments), verified_prefix='')
+            self._observe_voice(fallback, attachments=bool(attachments), verified_prefix='',
+                                speech=response.speech)
             self._release_chat_task(fallback)
             return fallback
 
@@ -1363,7 +1369,8 @@ class BridgeService:
         if res.scope != "conversation":
             self._emit("memory.changed", {"reason": "task_finished"})
         # Fala depois da resposta final: uma única decisão backend serve auto e manual.
-        self._observe_voice(res, attachments=bool(attachments), verified_prefix=speech)
+        self._observe_voice(res, attachments=bool(attachments), verified_prefix=speech,
+                            speech=response.speech)
         self._release_chat_task(res)
         return res
 
@@ -2463,7 +2470,7 @@ class BridgeService:
         return self.voice_input.result(generation)
 
     def _observe_voice(self, result: TaskResult, *, attachments: bool,
-                       verified_prefix: str) -> None:
+                       verified_prefix: str, speech: Any = None) -> None:
         """Entrega a decisão de fala ao gestor; voz nunca altera o resultado da tarefa."""
         try:
             text = speakable_reply(
@@ -2477,6 +2484,10 @@ class BridgeService:
                 web_outcome=result.web_outcome,
                 web_sources=len(result.web_sources or []),
             )
+            # Passed in: the response reference is cleared before this runs (measured 01/11:
+            # the streamed answer was spoken twice, the second restart costing ~1.5 s).
+            if speech is not None and speech.finish(text):
+                return  # already spoken as it was written; `text` is what speak_last repeats
             self.voice.observe_reply(text)
         except Exception:
             return

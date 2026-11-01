@@ -1,8 +1,12 @@
 """A única decisão backend de texto falável (auto-fala e manual).
 
-`response.text.stable` **não** é permissão para falar: a fala acontece depois da resposta final.
 Tudo o que não é provadamente elegível falha fechado (devolve `""`), e a mesma função serve a
 auto-fala e `voice.speak_last` para não existirem duas políticas.
+
+Desde 01/11 (pedido do utilizador) uma conversa simples é falada enquanto é escrita
+(`SpeechStream`): só respostas sem operações, sem anexos, com a voz e a auto-fala ligadas; uma
+operação a meio, uma falha ou um cancelamento calam a voz. Uma resposta maior do que
+`MAX_SPEECH_CHARS` fala só o seu primeiro parágrafo, que o modelo escreve como resumo direto.
 
 Regras (contrato `.agents/VOICE-V1-OUTPUT-CONTRACT.md` §6):
 - só `SUCCESS`;
@@ -21,6 +25,56 @@ CONVERSATIONAL_SCOPES = frozenset({"conversation"})
 VERIFIED_OPERATION_STATE = "completed_verified"
 # Citações de fonte são metadados, não fala: nunca se lê `[src-…]` em voz alta.
 _WEB_CITATION = re.compile(r"\[src-[0-9a-f]{16}\]", re.IGNORECASE)
+_PARAGRAPH = re.compile(r"\n\s*\n")
+
+
+def lead_text(message: str) -> str:
+    """What a reply says aloud: all of it when short, else its first paragraph (the summary)."""
+    text = (message or "").strip()
+    return text if len(text) <= MAX_SPEECH_CHARS else _PARAGRAPH.split(text, 1)[0]
+
+
+class SpeechStream:
+    """Speaks a conversational answer sentence by sentence while it streams.
+
+    Same rule as `lead_text`: the first paragraph always (it is the summary), the rest only
+    while the whole answer is still short. `voice` is the `VoiceManager`.
+    """
+
+    def __init__(self, voice: Any, *, attachments: bool) -> None:
+        self.voice = voice
+        self.active = not attachments and bool(voice.stream_ready())
+        self.started = False
+        self.spoken = 0
+
+    def stable(self, text: str, start: int, answer: str) -> None:
+        if not self.active:
+            return
+        lead_open = not _PARAGRAPH.search(answer[:start])
+        for index, part in enumerate(_PARAGRAPH.split(text)):
+            in_lead = lead_open and index == 0
+            if not in_lead and len(answer) > MAX_SPEECH_CHARS:
+                return  # past the summary of a long answer: the rest stays on screen
+            piece = speakable_text(_WEB_CITATION.sub("", part), max_chars=MAX_SPEECH_CHARS)
+            if not piece or self.spoken + len(piece) > MAX_SPEECH_CHARS:
+                continue
+            if self.voice.stream_speak(piece):
+                self.started = True
+                self.spoken += len(piece)
+
+    def cancel(self) -> None:
+        """An operation began: this turn is no longer a plain answer, so stop speaking it."""
+        if self.active and self.started:
+            self.voice.stream_close("")
+        self.active = False
+
+    def finish(self, eligible: str) -> bool:
+        """Closes a started stream with the final decision; False when nothing was streamed."""
+        if not self.started:
+            return False
+        self.voice.stream_close(eligible)
+        self.started = self.active = False
+        return True
 
 
 def operations_block_speech(operations: Iterable[Mapping[str, Any]] | None) -> bool:
@@ -71,7 +125,7 @@ def speakable_reply(
         } for op in operation_list)
         if (web_outcome == "SUCCESS" and web_sources > 0 and scope in CONVERSATIONAL_SCOPES
                 and not attachments and web_only):
-            return speakable_text(_WEB_CITATION.sub("", message or ""), max_chars=MAX_SPEECH_CHARS)
+            return speakable_text(_WEB_CITATION.sub("", lead_text(message or "")), max_chars=MAX_SPEECH_CHARS)
         return ""
     if evidence_count:
         # Evidência sem template fixo não autoriza fala (leitura de dados, resumo do agente).
@@ -84,4 +138,4 @@ def speakable_reply(
         return ""
     if scope not in CONVERSATIONAL_SCOPES:
         return ""
-    return speakable_text(message or "", max_chars=MAX_SPEECH_CHARS)
+    return speakable_text(lead_text(message or ""), max_chars=MAX_SPEECH_CHARS)

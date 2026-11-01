@@ -73,6 +73,8 @@ class PublicResponse:
         self.final_state = 'interrupted'
         self.verified_result = False
         self.timer: asyncio.TimerHandle | None = None
+        # Optional `SpeechStream`: speaks a plain answer while it is written (01/11).
+        self.speech: Any = None
 
     def _emit(self, kind: str, data: dict[str, Any]) -> None:
         self.seq += 1
@@ -99,6 +101,8 @@ class PublicResponse:
         elif kind in {'operation.started', 'operation.finished'}:
             self.start()
             self.flush()
+            if self.speech is not None:
+                self.speech.cancel()  # a turn with operations is never spoken as it streams
             # Operation events carry status/identity plus the closed diagnostic vocabulary;
             # never arguments, control labels or raw exception text.
             self._emit(kind, {k: data[k] for k in ('operation_id', 'state', 'verified', 'tool',
@@ -129,6 +133,11 @@ class PublicResponse:
             self._emit('response.text.stable', {'start': start, 'end': end, 'text': text,
                        'source': 'verified_result' if self.verified_result else 'answer',
                        'verified': self.verified_result})
+            if self.speech is not None and not self.verified_result:
+                try:
+                    self.speech.stable(text, start, self.text)
+                except Exception:  # noqa: BLE001 - voice never breaks the visible answer
+                    self.speech = None
 
     def finish(self, text: str, status: str, *, verified_result: bool = False,
                verified_prefix: str = '') -> None:

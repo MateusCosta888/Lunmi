@@ -97,9 +97,101 @@ def bound_text(text: str, max_chars: int = MAX_SPEECH_CHARS) -> str:
     return (window[:space] if space > 0 else window).strip()
 
 
+# --- forma falada (pt-BR) ------------------------------------------------------------------
+# O Supertonic só tem "pt": o sotaque segue o texto, e a grafia/vocabulário de Portugal puxava a
+# pronúncia para lá (pedido do utilizador, 01/11: só sotaque do Brasil). Só o texto falado muda.
+_PT_BR_WORDS = {
+    "ficheiro": "arquivo", "ficheiros": "arquivos", "ecrã": "tela", "ecrãs": "telas",
+    "utilizador": "usuário", "utilizadores": "usuários", "utilizadora": "usuária",
+    "telemóvel": "celular", "telemóveis": "celulares", "definições": "configurações",
+    "partilhar": "compartilhar", "partilha": "compartilha", "partilhado": "compartilhado",
+    "registo": "registro", "registos": "registros", "contacto": "contato", "contactos": "contatos",
+    "facto": "fato", "factos": "fatos", "actual": "atual", "actualmente": "atualmente",
+    "óptimo": "ótimo", "óptima": "ótima", "directo": "direto", "directa": "direta",
+    "projecto": "projeto", "projectos": "projetos", "objecto": "objeto", "objectos": "objetos",
+    "equipa": "equipe", "equipas": "equipes", "rato": "mouse", "guardar": "salvar",
+    "guardado": "salvo", "guardada": "salva", "guardei": "salvei", "guarda": "salva",
+    "transferências": "downloads", "connosco": "conosco", "contigo": "com você",
+    "tu": "você", "teu": "seu", "tua": "sua", "teus": "seus", "tuas": "suas",
+    "queres": "quer", "podes": "pode", "tens": "tem", "sabes": "sabe", "fazes": "faz",
+    "precisas": "precisa", "estás": "está", "és": "é", "vais": "vai", "consegues": "consegue",
+    "quiseres": "quiser", "puderes": "puder", "preferires": "preferir", "preferes": "prefere",
+    "estiveres": "estiver", "fizeres": "fizer", "achas": "acha", "gostas": "gosta", "vês": "vê",
+    "deves": "deve", "usas": "usa", "costumas": "costuma", "escreves": "escreve", "abres": "abre",
+    "pensas": "pensa", "lembras": "lembra", "importas": "importa", "desejas": "deseja",
+    "diz-me": "me diga", "dá-me": "me dá", "mostra-me": "me mostra", "avisa-me": "me avisa",
+    "pequeno-almoço": "café da manhã", "autocarro": "ônibus", "comboio": "trem",
+}
+# Masculine pt-PT nouns whose Brazilian word is feminine take their article along.
+_FEMININE = {"ambiente de trabalho": "área de trabalho", "ecrã": "tela"}
+_ARTICLES = {"o": "a", "no": "na", "do": "da", "ao": "à", "um": "uma", "este": "esta", "esse": "essa",
+             "neste": "nesta", "nesse": "nessa", "deste": "desta", "desse": "dessa", "pelo": "pela"}
+_PT_BR_PHRASES = {f"{article} {noun}": f"{_ARTICLES[article]} {word}"
+                  for noun, word in _FEMININE.items() for article in _ARTICLES}
+_PT_BR_PHRASES.update(_FEMININE)
+_PT_BR_PHRASES["casa de banho"] = "banheiro"
+_PT_BR_PHRASES["já agora"] = "aliás"
+_PT_BR_WORD = re.compile(r"(?<![\w-])(" + "|".join(sorted(map(re.escape, _PT_BR_WORDS), key=len,
+                                                             reverse=True)) + r")(?![\w-])", re.IGNORECASE)
+_PT_BR_PHRASE = re.compile(r"(?<!\w)(" + "|".join(sorted(map(re.escape, _PT_BR_PHRASES), key=len,
+                                                          reverse=True)) + r")(?!\w)", re.IGNORECASE)
+# "estou a escrever" -> "estou escrevendo" (o gerúndio é a forma do Brasil).
+_PROGRESSIVE = re.compile(r"\b(est(?:ou|á|ás|amos|ão|ava|avam|ive|eja)|fic(?:o|a|ou|am)|continu(?:o|a|am)"
+                          r"|and(?:o|a|am))\s+a\s+(\w+)\b", re.IGNORECASE)
+_GERUND = {"ar": "ando", "er": "endo", "ir": "indo"}
+# Short verbs spelled out: a bare "-ar" rule would turn "estar a par" into "estar pando".
+_SHORT_GERUND = {"ver": "vendo", "ler": "lendo", "dar": "dando", "ter": "tendo", "ser": "sendo",
+                 "rir": "rindo", "pôr": "pondo", "vir": "vindo", "ir": "indo"}
+
+
+def _gerund(match: re.Match[str]) -> str:
+    verb = match.group(2)
+    folded = verb.casefold()
+    if folded in _SHORT_GERUND:
+        return f"{match.group(1)} {_SHORT_GERUND[folded]}"
+    if len(folded) >= 4 and folded[-2:] in _GERUND:
+        return f"{match.group(1)} {verb[:-2]}{_GERUND[folded[-2:]]}"
+    return match.group(0)
+# pt-PT "é/ó" antes de m/n + vogal é "ê/ô" no Brasil (económico, fenómeno, ténis, António).
+_OPEN_VOWEL = re.compile(r"([éó])(?=[mn][aeiouáéíóú])")
+_SYMBOLS = ((re.compile(r"(?<=\d)\s*[×x*]\s*(?=\d)"), " vezes "), (re.compile(r"(?<=\d)\s*÷\s*(?=\d)"), " dividido por "),
+            (re.compile(r"\s=\s|(?<=\d)=(?=\d)"), " igual a "), (re.compile(r"(?<=\d)\s*\+\s*(?=\d)"), " mais "),
+            (re.compile(r"(?<=\d)\s*%"), " por cento"), (re.compile(r"(?<=\d)\s*°C"), " graus"),
+            (re.compile(r"\s*(?:→|->)\s*"), ", "))
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((?:[^)]+)\)")
+_MD_MARK = re.compile(r"(\*\*|__|~~|(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w))")
+_MD_LINE = re.compile(r"^\s*(?:#{1,6}\s+|>\s*|[-*+•]\s+|\d{1,2}[.)]\s+)")
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
+
+
+def _keep_case(original: str, replacement: str) -> str:
+    return replacement[:1].upper() + replacement[1:] if original[:1].isupper() else replacement
+
+
+def spoken_form(text: str) -> str:
+    """Markdown em frases, símbolos por extenso e português do Brasil, só para a voz."""
+    if not isinstance(text, str):
+        return ""
+    lines = []
+    for line in text.splitlines():
+        line = _MD_LINE.sub("", _MD_LINK.sub(r"\1", line)).strip()
+        line = _EMOJI.sub("", _MD_MARK.sub("", line)).strip()
+        if line:
+            # A list item or heading is its own sentence: a pause, not a run-on (measured 01/11).
+            lines.append(line if line[-1] in ".!?:;…" or "```" in line else line + ".")
+    spoken = " ".join(lines) if len(lines) > 1 else (lines[0] if lines else "")
+    for pattern, words in _SYMBOLS:
+        spoken = pattern.sub(words, spoken)
+    spoken = _PT_BR_PHRASE.sub(lambda m: _keep_case(m.group(0), _PT_BR_PHRASES[m.group(0).casefold()]), spoken)
+    spoken = _PT_BR_WORD.sub(lambda m: _keep_case(m.group(0), _PT_BR_WORDS[m.group(0).casefold()]), spoken)
+    spoken = _PROGRESSIVE.sub(_gerund, spoken)
+    spoken = _OPEN_VOWEL.sub(lambda m: {"é": "ê", "ó": "ô"}[m.group(1)], spoken)
+    return " ".join(spoken.split())
+
+
 def speakable_text(text: str, *, max_chars: int = MAX_SPEECH_CHARS) -> str:
     """Texto filtrado e limitado, pronto para uma única utterance; `""` quando não há nada."""
-    bounded = bound_text(text, max_chars)
+    bounded = bound_text(spoken_form(text), max_chars)
     if not bounded:
         return ""
     return bound_text(filter_text(bounded).text, max_chars)

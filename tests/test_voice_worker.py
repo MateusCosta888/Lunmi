@@ -15,6 +15,7 @@ from app.voice.worker_main import (
     DEFAULT_SAMPLE_RATE,
     Cancelled,
     VoiceWorker,
+    _Feed,
     chunk_text,
     parse_args,
 )
@@ -60,7 +61,7 @@ class _FakeEngine:
 
 def render(worker: VoiceWorker, generation: int, text: str) -> None:
     worker._active_generation = generation
-    worker._render(generation, text)
+    worker._render(generation, _Feed(text, closed=True))
 
 
 class _NativeStream:
@@ -299,9 +300,9 @@ def test_parse_args_requires_a_model_dir_and_keeps_pinned_defaults(tmp_path) -> 
     args = parse_args(["--model-dir", str(tmp_path)])
     assert args.model_dir == str(tmp_path)
     assert args.sample_rate == DEFAULT_SAMPLE_RATE
-    assert args.voice == "F4"
+    assert args.voice == "F5"  # chosen by the user on 01/11, at 1.1x
     assert args.total_steps == 10
-    assert args.speed == pytest.approx(1.0)
+    assert args.speed == pytest.approx(1.1)
     assert args.lang == "pt"
     with pytest.raises(SystemExit):
         parse_args([])
@@ -312,7 +313,8 @@ def test_handle_command_validates_speak_and_recognizes_stop_and_shutdown(tmp_pat
     assert worker.handle_command({"type": "speak", "generation": 1, "text": "Olá."}) is True
     assert worker.handle_command({"type": "speak", "generation": "1", "text": "x"}) is True
     assert worker.handle_command({"type": "speak", "generation": 3, "text": "  "}) is True
-    assert worker._pending == (1, "Olá.")
+    assert worker._pending is not None and worker._pending[0] == 1
+    assert list(worker._pending[1].sentences) == ["Olá."] and worker._pending[1].closed
     assert worker.handle_command({"type": "stop"}) is True
     assert worker._cancelled(1) is True
     assert worker.handle_command({"type": "shutdown"}) is False
@@ -326,14 +328,16 @@ def test_render_speaks_chunks_and_emits_playing_then_done(tmp_path) -> None:
     second = "Segunda frase " + "longa " * 25 + "termina."
     render(worker, 4, first + " " + second)
 
-    assert engine.texts == [first, second]
+    # 01/11: a short first block (<=60) starts speech sooner; all the text is still spoken.
+    assert " ".join(engine.texts) == first + " " + second
+    assert len(engine.texts[0]) <= 60 and len(engine.texts) >= 3
     assert playback.begun == 1
     assert playback.drained == 1
-    assert len(playback.writes) == 2
+    assert len(playback.writes) == len(engine.texts)
+    # 01/11: the second block is synthesized while the first plays, so speech stays "playing".
     assert events == [
         {"type": "state", "generation": 4, "state": "synthesizing"},
         {"type": "state", "generation": 4, "state": "playing"},
-        {"type": "state", "generation": 4, "state": "synthesizing"},
         {"type": "done", "generation": 4},
         {"type": "ready", "generation": 4},
     ]
@@ -483,3 +487,85 @@ def test_warmup_failure_is_sanitized_and_does_not_touch_playback() -> None:
     worker.warm_up()
     assert events == [{"type": "warmup_failed", "code": "model_unavailable"}]
     assert worker.playback.writes == []
+
+
+def test_the_next_block_is_synthesized_while_the_current_one_plays(tmp_path) -> None:
+    """Measured 01/11: each sentence waited for the previous one to finish playing (~1 s gaps)."""
+    started = threading.Event()
+    engine = _FakeEngine(hook=lambda: started.set() if len(engine.texts) == 2 else None)
+    worker, _events, playback = make_worker(tmp_path, engine)
+    overlapped: list[bool] = []
+    playback.write = lambda samples: (overlapped.append(started.wait(1.0)), playback.writes.append(samples))
+    first = "Primeira frase " + "longa " * 25 + "termina."
+    render(worker, 5, first + " Segunda frase " + "longa " * 25 + "termina.")
+    assert overlapped[0] is True  # the second block was already rendering during the first write
+    pause = int(DEFAULT_SAMPLE_RATE * 0.12)
+    assert all(write.size == playback.writes[0].size for write in playback.writes)
+    assert playback.writes[0].size > pause  # each block is followed by a short pause
+
+
+def test_long_answers_are_no_longer_cut_after_six_blocks() -> None:
+    text = " ".join(f"Frase número {n} com algumas palavras para ocupar espaço." for n in range(20))
+    assert len(chunk_text(text)) > 6 and len(chunk_text(text)[0]) <= 100
+
+
+def test_a_missing_voice_style_falls_back_to_a_shipped_one(tmp_path) -> None:
+    """An install updated before F5 shipped has only F4: speak with it rather than fail."""
+    class Engine(_FakeEngine):
+        def get_voice_style(self, voice):
+            if voice != "F4":
+                raise FileNotFoundError(voice)
+            return "F4-style"
+    worker, _events, _playback = make_worker(tmp_path, Engine())
+    assert worker._style(Engine()) == "F4-style"
+
+
+def test_the_first_block_is_short_and_rendered_with_half_the_steps(tmp_path) -> None:
+    """Measured 01/11: 1.7 s from the speak request to the first sound; the first block now
+    uses half the diffusion steps (later blocks keep full quality)."""
+    steps: list[int] = []
+
+    class Engine(_FakeEngine):
+        def synthesize(self, text, style, **kwargs):
+            steps.append(kwargs["total_steps"])
+            return super().synthesize(text, style, **kwargs)
+    worker, _events, _playback = make_worker(tmp_path, Engine())
+    render(worker, 6, "Claro! Abri o Bloco de Notas e escrevi a sua lista de compras. "
+                      "Se quiser, também posso salvar o arquivo na área de trabalho agora mesmo.")
+    assert steps[0] == worker.total_steps // 2 and set(steps[1:]) == {worker.total_steps}
+
+
+def test_blocks_grow_so_each_is_ready_before_the_previous_ends() -> None:
+    text = " ".join(["Uma frase de tamanho médio para medir os blocos."] * 12)
+    sizes = [len(chunk) for chunk in chunk_text(text)]
+    assert sizes[0] <= 60 and sizes[1] <= 120 and max(sizes) <= 220
+
+
+def test_a_streamed_answer_is_spoken_as_its_sentences_arrive(tmp_path) -> None:
+    """01/11: speech starts at the first sentence while the answer is still being written."""
+    engine = _FakeEngine()
+    worker, events, playback = make_worker(tmp_path, engine)
+    assert worker.handle_command({"type": "stream", "generation": 7, "text": "Primeira frase.", "final": False})
+    item = worker._pending
+    assert item is not None and item[0] == 7
+    feeder = threading.Timer(0.2, lambda: (
+        worker.handle_command({"type": "stream", "generation": 7, "text": "Segunda frase.", "final": False}),
+        worker.handle_command({"type": "stream", "generation": 7, "text": "", "final": True})))
+    feeder.start()
+    worker._active_generation = 7
+    worker._render(*item)
+    feeder.join()
+    assert engine.texts == ["Primeira frase.", "Segunda frase."]
+    assert events[-2:] == [{"type": "done", "generation": 7}, {"type": "ready", "generation": 7}]
+
+
+def test_a_stopped_stream_never_resumes(tmp_path) -> None:
+    worker, _events, _playback = make_worker(tmp_path, _FakeEngine())
+    worker.handle_command({"type": "stream", "generation": 8, "text": "Olá.", "final": False})
+    worker.handle_command({"type": "stop"})
+    worker._pending = None
+    worker.handle_command({"type": "stream", "generation": 8, "text": "Mais.", "final": True})
+    assert worker._pending is None
+    for bad in ({"type": "stream", "generation": "9", "text": "x", "final": True},
+                {"type": "stream", "generation": 9, "text": "x"}):
+        assert worker.handle_command(bad) is True and worker._pending is None

@@ -102,6 +102,8 @@ class VoiceManager:
         # VOICE INPUT V1: meio-duplex — microfone aberto recusa fala nova, sem mexer no
         # contrato de saída (`voice.state` e `capture_supported` ficam iguais).
         self._input_active = False
+        # The generation an answer is being spoken into while it is still being written.
+        self._stream_generation: int | None = None
 
     # ------------------------------------------------------------- ambiente --
     def environment(self) -> VoiceEnvironment:
@@ -307,8 +309,65 @@ class VoiceManager:
         self._publish()
         return result
 
+    # ------------------------------------------------------- fala em streaming --
+    def stream_ready(self) -> bool:
+        """Whether an answer may be spoken while it is written: the same gates as auto-speak."""
+        with self._lock:
+            return (self._prefs.enabled and self._prefs.auto_speak and not self._input_active
+                    and self.environment().available)
+
+    def stream_speak(self, text: str) -> bool:
+        """Speaks the next sentences of the answer being written; opens the utterance first."""
+        bounded = " ".join((text or "").split())
+        if not bounded:
+            return False
+        with self._lock:
+            env = self.environment()
+            if not (self._prefs.enabled and self._prefs.auto_speak and not self._input_active
+                    and env.available):
+                return False
+            if self._stream_generation is None or self._stream_generation != self._generation:
+                self._generation += 1
+                self._stream_generation = self._generation
+                self._error_message = ""
+                self._activity = "synthesizing"
+                if not (self._ensure_worker_locked(env) and self._send_locked({"type": "stop"})):
+                    self._activity = ""
+                    self._stream_generation = None
+                    self._error_message = MESSAGE_WORKER
+                    self._kill_worker_locked()
+                    return False
+            if not self._send_locked({"type": "stream", "generation": self._stream_generation,
+                                      "text": bounded, "final": False}):
+                self._activity = ""
+                self._stream_generation = None
+                self._error_message = MESSAGE_WORKER
+                self._kill_worker_locked()
+                return False
+        self._publish()
+        return True
+
+    def stream_close(self, text: str) -> None:
+        """Ends the streamed utterance; `text` is what `speak_last` repeats ("" stops it)."""
+        value = text if isinstance(text, str) else ""
+        with self._lock:
+            generation, self._stream_generation = self._stream_generation, None
+            self._last_text = value
+            if generation is not None and generation == self._generation:
+                if value:
+                    self._send_locked({"type": "stream", "generation": generation, "text": "",
+                                       "final": True})
+                else:
+                    # Not eligible after all (failed, cancelled, became a task): silence now.
+                    self._generation += 1
+                    self._activity = ""
+                    if self._proc is not None:
+                        self._send_locked({"type": "stop"})
+        self._publish()
+
     def stop(self) -> dict[str, Any]:
         with self._lock:
+            self._stream_generation = None
             self._generation += 1
             self._activity = ""
             self._error_message = ""
