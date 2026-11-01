@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.ui import ui_preferences as prefs
+from app import preferences as prefs
 
 SCREEN_W = 1920
 SCREEN_H = 1080

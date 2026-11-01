@@ -65,7 +65,7 @@ from app.settings import (
     ConfigurationError,
     Settings,
 )
-from app.ui import ui_preferences
+from app import preferences as ui_preferences
 from app.integrations.web_search import WebSearchError, WebSearchManager
 from app.integrations.web_state import WebPreferencesError, identity_for_settings
 from app.voice.eligibility import SpeechStream, speakable_reply

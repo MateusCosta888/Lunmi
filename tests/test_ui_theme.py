@@ -1,4 +1,4 @@
-from app.ui import ui_preferences as prefs
+from app import preferences as prefs
 
 
 def test_theme_round_trip_and_legacy_defaults(tmp_path):

@@ -50,12 +50,10 @@ def main() -> int:
         configure_logging(settings)
         if arguments.instruction or arguments.engine_check:
             return asyncio.run(command(settings, arguments.instruction or "open_notepad", arguments.engine_check))
-        import tkinter as tk
-        from app.ui.chat_window import ChatWindow
-        root = tk.Tk()
-        ChatWindow(root, settings)
-        root.mainloop()
-        return 0
+        # The legacy Tkinter window was removed (01/11): the app is the Electron desktop.
+        parser.print_help()
+        print("\nA aplicação abre com run.bat (desktop Electron).", file=sys.stderr)
+        return 2
     except ConfigurationError as exc:
         print(str(exc), file=sys.stderr)
         return 2

@@ -1,7 +1,7 @@
 /**
  * Preferências de apresentação lidas pela camada confiável (`desktop/electron/preferences.ts`).
  *
- * Espelha as decisões de `app/ui/ui_preferences.py`: leitura **tolerante** (arquivo ausente,
+ * Espelha as decisões de `app/preferences.py`: leitura **tolerante** (arquivo ausente,
  * inválido, gigante ou com tipo errado devolve o padrão e nunca levanta) e um único teto de
  * bytes antes de qualquer parse.
  *

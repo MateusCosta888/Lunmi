@@ -12,8 +12,6 @@ O Electron baixa seu binário durante a instalação npm. Não desabilite os scr
 
 Depois da instalação e do build, execute `run.bat`. O launcher verifica o checkout UFO fixado. A abertura celestial aguarda os dados de inicialização e sua sequência visual antes de mostrar a interface; erros oferecem recuperação explícita.
 
-O frontend legado é opcional: `run.bat --tk` ou `run-tk.bat`.
-
 ## Configurar um Brain
 
 1. Abra **Brain** na lateral.
@@ -88,8 +86,7 @@ da aplicação, sem alterar o Electron instalado. Esse executável depende do ch
 não é um instalador nem uma distribuição portátil. `vendor/` contém a revisão do UFO²
 obtida por `install_ufo.py` e fica fora do Git.
 
-O launcher verifica essa revisão antes de abrir. A alternativa Tkinter usa `run.bat --tk`
-ou `run-tk.bat` e exige uma instalação Python com Tkinter. O histórico de desenvolvimento,
+O launcher verifica essa revisão antes de abrir. O histórico de desenvolvimento,
 os relatórios locais e o mapa de caminhos são descritos no [índice dos guias](README.md#documentação-local-de-desenvolvimento).
 
 ## Solução de problemas

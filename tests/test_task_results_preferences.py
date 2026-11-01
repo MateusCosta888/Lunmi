@@ -5,7 +5,7 @@ import pytest
 
 from app.bridge.protocol import ProtocolError
 from app.bridge.service import BridgeService
-from app.ui import ui_preferences
+from app import preferences as ui_preferences
 
 
 def prefs_service(tmp_path: Path) -> BridgeService:
