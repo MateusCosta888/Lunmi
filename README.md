@@ -1,225 +1,165 @@
 <div align="center">
 
-<img src="docs/assets/lunmi-logo.svg" width="180" height="180" alt="Logo Lunmi" />
+<img src="docs/assets/lunmi-logo.svg" width="150" height="150" alt="Lunmi" />
 
 # Lunmi
 
-**Uma assistente para o Windows que conversa com você e faz as coisas no seu computador.**
+**Uma assistente de IA para Windows que conversa contigo e executa tarefas no computador.**
 
-[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-5161D8?style=flat-square)](#instalar)
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)](#rodar-pelo-código-fonte)
-[![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-242938?style=flat-square&logo=electron&logoColor=white)](desktop/)
+[**Descarregar Alpha 9 · Windows x64 · 2,13 GB**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.9/Lunmi-0.1.0-alpha.9-Setup.exe)
+
+[Notas da versão](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.9) · [Instalar](#instalar) · [Documentação](docs/README.md) · [Contribuir](CONTRIBUTING.md)
+
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
-
-[**Baixar Lunmi Alpha 9 · Windows x64**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.9/Lunmi-0.1.0-alpha.9-Setup.exe)
-
-[O que é](#o-que-é-a-lunmi) · [Instalar](#instalar) · [Funcionalidades](#funcionalidades) · [Privacidade](#memória-e-privacidade) · [Código-fonte](#rodar-pelo-código-fonte) · [Arquitetura](docs/ARCHITECTURE.md) · [Contribuir](CONTRIBUTING.md)
 
 </div>
 
+A Lunmi junta um chat de IA com ferramentas para agir no Windows. Podes pedir-lhe para abrir um programa, criar uma pasta, consultar páginas web ou recordar uma preferência. O modelo de IA é escolhido por ti, no painel **Brain**.
+
 <p align="center">
-  <img src="docs/assets/lunmi-dark.png" width="1100" alt="Tela inicial da conversa da Lunmi no tema Celestial, com o orb" />
+  <img src="docs/assets/lunmi-dark.png" width="1000" alt="Conversa da Lunmi, com histórico na lateral, seletor de modelo e controlo de Autoaprovação" />
 </p>
 
-## O que é a Lunmi
+> **Em fase alpha.** A versão publicada é a 0.1.0-alpha.9. Começa com tarefas pequenas e ficheiros de teste. O instalador ainda não tem certificado de editor do Windows.
 
-A Lunmi é uma assistente de desktop para Windows. Você escreve (ou fala) o que precisa, e ela responde como um chat ou executa a tarefa no próprio computador: abre programas, mexe em arquivos e pastas, abre páginas de configuração do Windows, pesquisa na web e prepara emails.
+## Tarefas no Windows
 
-Ela serve para quem quer usar uma IA no dia a dia sem ficar copiando e colando entre o chat e o computador. A mesma janela responde dúvidas, organiza ideias e faz o trabalho, e você continua no controle: ações que mudam alguma coisa pedem a sua confirmação, e você pode parar qualquer tarefa no meio.
+O **Computer Use** permite passar de uma pergunta a uma ação no mesmo chat. Não é preciso escolher um modo: «Como crio uma pasta?» pede uma explicação; «Cria uma pasta chamada Teste Lunmi no ambiente de trabalho» pede uma operação.
 
-Alguns pedidos que ela entende:
+Podes começar por pedidos como:
 
-- "Abre o Bloco de Notas."
-- "Cria uma pasta chamada Orçamentos na área de trabalho."
-- "Abre as configurações de Bluetooth."
-- "Quem ganhou a Copa do Mundo de 2026?" (ela pesquisa, lê as páginas e cita as fontes)
-- "Lê os meus últimos emails e prepara uma resposta para o primeiro." (com o Gmail ligado; o envio pede a sua aprovação)
-- "Lembra que eu prefiro respostas curtas."
+- «Abre o Bloco de Notas.»
+- «Cria uma pasta chamada Teste Lunmi no ambiente de trabalho.»
+- «Abre as definições de Bluetooth.»
 
-A Lunmi não vem com uma IA própria. Ela usa o cérebro que você escolher: o Groq, que é gratuito, o Kiro CLI, uma API como OpenAI, Anthropic ou Gemini, ou um modelo local pelo Ollama ou LM Studio. As conversas, a memória e as configurações ficam no seu computador.
+A execução combina ferramentas Windows da Lunmi com os agentes do [Microsoft UFO²](https://github.com/microsoft/UFO), que identificam janelas e interagem com os controlos das aplicações. A Lunmi procura verificar o resultado; quando não o consegue confirmar, indica essa limitação. Nem todas as aplicações expõem controlos utilizáveis, e o modelo também pode interpretar mal o pedido.
 
-Por baixo, é um app Electron com backend em Python. O controle do Windows usa o [Microsoft UFO²](https://github.com/microsoft/UFO).
+Mantém a sessão do Windows aberta e desbloqueada. Lê os pedidos de confirmação e usa **Parar** para cancelar. A **Autoaprovação** altera as confirmações das tarefas seguintes; não elimina a aprovação manual do envio de emails. Uma tarefa interrompida não é repetida automaticamente ao reiniciar.
 
-> **Alpha 9 em teste.** O projeto ainda está em fase alpha. O instalador não tem certificado de editor do Windows, então o Windows pode avisar na primeira execução. Veja [a Release](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.9) e [os limites de segurança](SECURITY.md).
+O cartão com os detalhes do resultado está oculto por defeito. Podes ativar **Mostrar resultado da tarefa no chat** nas configurações.
+
+<!-- Demonstração pendente: gravação real da versão publicada, com pedido, confirmação quando aplicável e resultado observado. Não ligar um vídeo antes de existir. -->
 
 ## Instalar
 
-1. Baixe o [instalador para Windows 10/11 x64](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.9/Lunmi-0.1.0-alpha.9-Setup.exe) (cerca de 2,13 GB, com os modelos de voz). A instalação leva alguns minutos.
-2. Execute o instalador e abra a Lunmi. O Python vem junto; você não precisa instalar Python, Node.js nem Git.
-3. Na primeira abertura, a introdução ajuda a ligar um cérebro em cerca de um minuto: o Groq ou o Kiro CLI. Depois, em **Brain**, você pode trocar para outra API, endpoint ou CLI com o seu próprio acesso. A Lunmi não inclui créditos nem chaves de IA.
+1. Descarrega o [setup da Alpha 9](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.9/Lunmi-0.1.0-alpha.9-Setup.exe) para **Windows 10 ou 11, x64**. São cerca de **2,13 GB**: inclui Python, o runtime de áudio e os modelos de voz e ditado.
+2. Executa o setup. O destino predefinido é `%LOCALAPPDATA%\Programs\Lunmi`. Não precisas de instalar Python, Node.js ou Git à parte. A extração dos modelos pode demorar vários minutos.
+3. Abre a Lunmi e segue a introdução para ligar um Brain. Escolhe **Groq**, com a tua chave de API, ou **Kiro CLI**, com a tua conta. A introdução pode instalar o Kiro; este percurso exige **Windows 11**. Também podes configurar outro provedor mais tarde no painel Brain.
 
-<p align="center">
-  <img src="docs/assets/lunmi-onboarding.png" width="900" alt="Tela de boas-vindas da introdução da Lunmi, com o botão Começar" />
-</p>
+O Windows pode mostrar um aviso de editor desconhecido. Confirma que obtiveste o ficheiro nesta release e lê o aviso antes de continuar. A assinatura usada pelo atualizador não substitui o certificado de editor do executável.
 
-### Atualizações
+### Escolher o modelo de IA
 
-A Lunmi procura novas versões e baixa em segundo plano. Para instalar, vá em **Configurações → Atualizações** e escolha **Reiniciar e atualizar**. Uma tarefa ou a voz em andamento bloqueia a instalação. Histórico, memória e configurações ficam fora da pasta do programa e não se perdem.
+O Brain é a ligação ao modelo que interpreta os pedidos e gera as respostas. Podes usar APIs como OpenAI, Anthropic, Gemini ou Groq; CLIs compatíveis, como Kiro CLI e Codex CLI; ou um serviço local, como Ollama ou LM Studio, instalado por ti. Uma CLI instalada no computador pode continuar a enviar pedidos para a cloud.
 
-Quem tem o Alpha 4, 5, 6, 7 ou 8 recebe o Alpha 9 pelo atualizador. A partir do Alpha 7, a Lunmi avisa ao abrir quando há versão nova, mostra o que mudou e pergunta antes de instalar. Quem usa o Alpha 3 precisa instalar o Alpha 9 manualmente uma vez.
+O download da Lunmi é gratuito, mas **não inclui um modelo de conversação, chaves nem créditos de IA**. Os custos e as quotas dependem da conta e do provedor. O plano gratuito do Groq tem [limites por modelo, minuto e dia](https://console.groq.com/docs/rate-limits); não corresponde a um número fixo de pesquisas. O Kiro também está sujeito às condições da tua conta.
 
-Uma versão nova só chega quando publicamos uma Release; enviar código para `main` apenas roda os testes. O modo `run.bat` não se atualiza sozinho. [Como funcionam as atualizações](docs/UPDATES.md)
+<details>
+<summary>Ver o painel Brain</summary>
 
-## Funcionalidades
+<img src="docs/assets/lunmi-brain.png" width="1000" alt="Painel Brain com Groq selecionado e opções separadas em APIs cloud, endpoints locais e CLIs" />
 
-| Recurso | Como funciona |
-| --- | --- |
-| Chat único | Responde, pergunta quando o pedido não está claro ou usa ferramentas. A autorização e a verificação ficam no backend. |
-| Tarefas no Windows | Abre programas e configurações e mexe em arquivos. Tarefas conhecidas seguem caminhos fixos; as outras passam pelos agentes do UFO². |
-| Pesquisa web | O cérebro decide quando pesquisar, lê as páginas e cita as fontes. Perguntas de continuação usam o contexto da conversa. |
-| Brain configurável | APIs, endpoints compatíveis e CLIs locais. Os modelos disponíveis dependem do provedor. |
-| Memória local | Um texto livre que você edita, com Salvar e Desfazer, aprendizado opcional e importação e exportação. |
-| Conversas salvas | Histórico local, separado da memória pessoal. Dá para retomar, renomear, apagar ou abrir uma conversa temporária. |
-| Resposta progressiva | O texto aparece aos poucos quando o provedor oferece streaming; nos outros, chega inteiro. |
-| Gmail via Composio | Pesquisa, lê e prepara emails com a sua conta Composio. Enviar exige aprovar uma prévia. Experimental. |
-| Voz e ditado locais | Voz e ditado pela CPU, incluídos no instalador. Ficam desligados até você ativar; o microfone só abre quando você pede. |
-| Lunmi Node | Ao fechar a janela principal, a Lunmi pode continuar na bandeja com um Node num canto da tela, com mini chat, estado das tarefas e controle de mídia do Windows (tocar, pausar, anterior, próxima). |
-| Anexos de texto | Até 4 arquivos UTF-8, 32 KiB cada e 64 KiB no total. Um pedido com anexos não autoriza ações. |
-| Perfil local | Nome e foto, editáveis na janela. A foto não vai para o Brain. |
-| Temas | Celestial, Claro suave e Red Velvet. A opção Reduzir animações fica em Configurações → Aparência. O orb fica na conversa principal. |
-| Atualizações pelo GitHub | Desde o Alpha 4: download automático, verificação da assinatura e instalação quando você confirma. |
+Os provedores aparecem agrupados por tipo. O campo de chave só surge quando é necessário. O catálogo de modelos depende do provedor e do teu acesso.
 
-### Brain no tema Red Velvet
+</details>
 
-Os provedores aparecem como botões com as suas marcas, separados em APIs, endpoints locais e CLIs. O campo de chave só aparece quando o provedor precisa de uma. O que está disponível depende do que você instalou.
+### Atualizar
 
-<p align="center">
-  <img src="docs/assets/lunmi-brain.png" width="1100" alt="Painel Brain no tema Red Velvet com o Groq selecionado e os botões de API, endpoint e CLI" />
-</p>
+Na aplicação instalada, as novas releases são descarregadas em segundo plano. Em **Configurações → Atualizações**, escolhe **Reiniciar e atualizar** quando não houver uma tarefa ou voz em curso. Guarda os rascunhos antes de reiniciar. Os dados pessoais ficam fora da pasta do programa.
 
-### Memória no tema Claro suave
+O atualizador pode descarregar apenas os blocos alterados, mas recorre ao setup completo quando necessário. A partir da Alpha 6, os componentes de Python e voz só voltam a ser extraídos quando mudam. Para atualizar versões anteriores ou resolver uma falha, consulta o [guia de atualizações](docs/UPDATES.md).
 
-O texto da memória é editado e salvo no próprio painel. O tema muda em **Configurações → Aparência**, na hora, sem perder o que você estava escrevendo.
+## Na conversa e no ambiente de trabalho
 
-<p align="center">
-  <img src="docs/assets/lunmi-light.png" width="1100" alt="Editor de memória no tema Claro suave com um perfil de demonstração" />
-</p>
+### Pesquisa web
 
-As imagens mostram a interface do Alpha 6 com um perfil de demonstração, sem dados pessoais nem credenciais.
+Com a pesquisa ativada, o Brain decide quando consultar informação externa. A pesquisa integrada usa **Free Search MCP**, lê páginas e apresenta fontes junto da resposta. Quando o Brain dispõe de pesquisa nativa compatível, podes escolher essa origem ou o modo automático nas definições. Isto não equivale a controlar um navegador completo.
 
-## Você no controle
+Uma fonte citada não garante que a resposta esteja correta ou atual. Páginas inacessíveis, fontes antigas e quotas do provedor podem impedir a confirmação. A aplicação distingue uma resposta verificada de uma resposta limitada a excertos ou não verificada.
 
-Você não precisa escolher entre conversar e executar. "Como apago uma pasta?" recebe uma explicação; "apaga a pasta X" pode usar ferramentas. Se o pedido for ambíguo, a Lunmi pergunta antes. Uma ação enviada não prova que deu certo: confira o resultado e a evidência que a Lunmi mostra.
+### Memória e histórico
 
-- Comece com tarefas pequenas e arquivos de teste.
-- Leia cada pedido de confirmação antes de aceitar.
-- **Parar** cancela a tarefa atual.
-- Se o backend reiniciar depois de uma falha, a última instrução não é repetida.
-- Mudar a Autoaprovação vale a partir da próxima tarefa.
-- Enviar email sempre pede aprovação da prévia, mesmo com Autoaprovação ligada. Um envio com resultado incerto não é repetido, e o Gmail aceitar a mensagem não garante que ela chegou.
+Podes pedir «Lembra que prefiro respostas curtas» ou editar diretamente o texto no painel **Memória**. As opções **Usar memória** e **Aprender com as conversas** controlam a utilização e a aprendizagem. Também podes consultar, exportar ou apagar os dados.
 
-O histórico em **Conversa** guarda as conversas neste computador. Em Configurações, você pode desligar a gravação e escolher se a Lunmi abre a última conversa ou uma nova. Apagar o histórico não apaga a memória pessoal.
+O **histórico de conversas** é separado: guarda novas conversas neste computador e permite retomá-las, renomeá-las ou apagá-las pela lateral. Nas definições, podes desligar a gravação, escolher a conversa de arranque ou usar uma conversa temporária. Apagar o histórico não apaga a memória pessoal.
 
-Em **Configurações → Segundo plano**, você escolhe se fechar a janela mantém a Lunmi aberta, e ajusta o canto, a visibilidade e o atalho do Node. **Sair**, na bandeja, fecha o programa. O mini chat usa a mesma conversa da janela principal, e confirmações sensíveis abrem na principal. Enquanto uma tarefa roda, o Node não aceita cliques nem rouba o foco; use a bandeja para voltar à janela principal.
+<details>
+<summary>Ver o editor de memória</summary>
 
-Voz e ditado são opcionais e experimentais. Pelo código-fonte, os modelos e o runtime de áudio não vêm junto; sem eles, a interface avisa que a voz está indisponível e o chat funciona normalmente. [Limites da voz e do segundo plano](docs/GETTING_STARTED.md#node-e-segundo-plano)
+<img src="docs/assets/lunmi-light.png" width="1000" alt="Editor de memória com um perfil de demonstração, Guardar, Desfazer e opções de utilização e aprendizagem" />
 
-## Memória e privacidade
+A captura mostra a memória pessoal; o histórico de conversas fica na barra lateral de Conversa.
 
-A memória fica num banco SQLite no seu computador. No painel, ela aparece como um texto livre, **O que a Lunmi deve saber sobre ti**, que você edita e salva. Você também pode pedir no chat para a Lunmi lembrar algo. As opções **Usar memória** e **Aprender com as conversas** controlam o que entra. O histórico do chat é separado e vem ligado para conversas novas.
+</details>
 
-A memória ser local não torna a inferência privada. Instruções, trechos de memória e observações da tarefa podem ir para o provedor que você escolheu, e um endpoint local tem limites de privacidade diferentes de uma API externa.
+### Voz, ditado e Lunmi Node
 
-As chaves salvas pela interface usam a proteção DPAPI do Windows. O repositório não tem banco pessoal, credenciais, logs nem exportações de memória.
+A voz e o ditado funcionam localmente pela **CPU, sem exigir NVIDIA**, e são opcionais. O setup inclui os modelos; não há escuta contínua. O botão do microfone permite rever a transcrição antes de enviar. O atalho de ditado envia ao largar a tecla — confirma esse comportamento antes de o ativar. A transcrição pode ser lenta em alguns computadores.
 
-[Memória: uso e limites](docs/MEMORY.md) · [Segurança e dados locais](SECURITY.md)
+O **Lunmi Node** mantém um mini chat num canto do ecrã quando a aplicação fica em segundo plano. Partilha a conversa com a janela principal e encaminha para ela as confirmações. Inclui reproduzir, pausar, anterior e seguinte quando o leitor multimédia expõe esses controlos ao Windows. Durante uma tarefa, o Node fica passivo para não interferir com a automação; a bandeja permite voltar à janela principal.
 
-## Rodar pelo código-fonte
+<!-- Falta uma captura pública do Node com mini chat e leitor multimédia, sem dados pessoais. -->
 
-### Requisitos
+### Gmail e outros recursos
 
-- Windows 10 ou 11, com a sessão aberta e desbloqueada.
-- Python 3.11 (com Tkinter, se quiser a interface antiga).
-- Node.js 24 LTS, npm e Git no terminal.
-- Internet na instalação, para baixar as dependências e a versão fixa do UFO².
-- Um provedor de IA. Endpoints locais e CLIs precisam ser instalados e configurados à parte. Custos, limites e disponibilidade são do provedor.
+A integração **experimental com Gmail**, através da tua conta Composio, permite pesquisar, ler e preparar emails. O envio exige rever e aprovar a mensagem, mesmo com Autoaprovação ligada. A ligação e a leitura foram ensaiadas numa conta de testes; o envio foi validado apenas com simulações. [Como ligar o Gmail](docs/GETTING_STARTED.md#ligar-gmail).
 
-### Instalação
+O chat também aceita anexos de texto e código UTF-8. Há três temas, um perfil local com nome e fotografia e a opção **Reduzir animações**. As capturas deste README são da Alpha 6, com um perfil de demonstração.
 
-No PowerShell:
+## Privacidade e limites
+
+As conversas e a memória são guardadas localmente, em bases **SQLite separadas**. Podes gerir esses dados na aplicação. **Quando usas um Brain cloud, os pedidos, o contexto necessário e observações das tarefas podem ser enviados para esse provedor.** A pesquisa web e o Gmail também contactam serviços externos.
+
+As chaves guardadas pela interface usam a proteção do Windows. O ficheiro `.env`, se utilizado, é texto simples e deve ser protegido. Não publiques bases de dados, exportações, credenciais ou logs com dados pessoais. [Memória e controlo dos dados](docs/MEMORY.md) · [Segurança](SECURITY.md).
+
+A Alpha 9 não foi validada em todos os ambientes. A instalação num PC limpo ainda está a ser ensaiada; faltam cobertura de Windows 10, vários monitores e escalas, e testes do leitor do Node com aplicações como Spotify e browsers. Voz e ditado continuam experimentais e dependem dos dispositivos de áudio. Não há versão para macOS ou Linux. Os avisos conhecidos das dependências estão documentados em [SECURITY.md](SECURITY.md#dependências-upstream).
+
+## Para programadores
+
+A interface usa **Electron, React e TypeScript**. Uma bridge liga-a ao backend **Python**, que gere o Brain, a memória SQLite e a execução por ferramentas Windows, UI Automation e UFO². Autorização, cancelamento e verificação ficam no backend. A [arquitetura](docs/ARCHITECTURE.md) descreve estas ligações e os diretórios do projeto.
+
+<a id="rodar-pelo-código-fonte"></a>
+
+### Executar pelo código-fonte
+
+Precisas de Windows, **Python 3.11, Node.js 24 LTS, npm e Git**, além de acesso a um Brain. No PowerShell:
 
 ```powershell
 git clone https://github.com/MateusCosta888/Lunmi.git
 cd Lunmi
-
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\.venv\Scripts\python.exe install_ufo.py
-
 cd desktop
 npm ci --include=dev
 npm run build
 cd ..
-
 .\run.bat
 ```
 
-O `--include=dev` garante as ferramentas de build e teste (TypeScript, Vitest) mesmo numa máquina com `NODE_ENV=production`, que faria o npm pular essas dependências.
+A instalação precisa de internet. `install_ufo.py` obtém e verifica a revisão fixada em [`ufo.lock.json`](ufo.lock.json). O launcher depende deste checkout; não é uma versão portátil. Pelo código-fonte, os recursos de voz não vêm incluídos e o atualizador está desligado. A ausência de voz não impede o chat.
 
-O build cria `desktop/.runtime/Lunmi.exe`, com o nome e o ícone da Lunmi, que o `run.bat` abre. Ele depende deste checkout e não mexe no Electron instalado; não é um instalador nem um executável portátil.
+Para usar variáveis de ambiente, copia [`.env.example`](.env.example) para `.env`; os valores explícitos têm prioridade sobre os da interface. Os [primeiros passos](docs/GETTING_STARTED.md) explicam o ambiente, os anexos e a resolução de problemas.
 
-`install_ufo.py` baixa e confere a versão registrada em [`ufo.lock.json`](ufo.lock.json). A pasta `vendor/` é local e fica fora do repositório. O launcher confere essa pasta antes de abrir o app.
+### Testar e contribuir
 
-Em **Brain**, escolha o provedor e informe a chave ou o endpoint. Quando o provedor tem catálogo, os modelos aparecem no seletor da barra de conversa.
-
-Para configurar por variáveis de ambiente, copie [`.env.example`](.env.example) para `.env`. Esse arquivo é ignorado pelo Git, e os valores dele têm prioridade sobre os da interface.
-
-[Guia de instalação e solução de problemas](docs/GETTING_STARTED.md)
-
-### Testes
+Na raiz do projeto, com as dependências instaladas:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m mypy
 .\.venv\Scripts\python.exe -m ruff check app tests
-
 cd desktop
 npm run typecheck
 npm test
 npm run build
 ```
 
-Os testes usam fixtures e sandboxes e não validam aplicativos externos. Testar inferência real ou controle do desktop exige um ambiente próprio e o seu consentimento para os efeitos. A interface Tkinter antiga abre com `run.bat --tk` ou `run-tk.bat`.
+Os testes automatizados não certificam operações em aplicações reais. Ensaios com modelos, contas ou controlo do computador precisam de um ambiente e efeitos definidos. Consulta [CONTRIBUTING.md](CONTRIBUTING.md) antes de propor alterações e o [índice da documentação](docs/README.md) para aprofundar o projeto.
 
-### Estrutura
+## Créditos e licença
 
-```text
-app/
-  brain/        Provedores, descoberta e transportes de inferência
-  bridge/       Protocolo JSONL entre Electron e Python
-  computer/     Ferramentas Windows e integração UFO²
-  core/         Controle da tarefa e política de execução
-  integrations/ Composio OAuth e ferramentas restritas de Gmail
-  memory/       Persistência e recuperação de memória
-  ui/           Frontend Tkinter legado
-desktop/
-  electron/     Processo principal, preload e supervisão do backend
-  src/          Interface React, temas e componentes
-  scripts/      Montagem, auditoria e aceite dos pacotes
-  tests/        Testes do frontend e do protocolo
-  resources/    Metadados do runtime; binários locais fora do Git
-  release/      Instaladores gerados localmente, fora do Git
-docs/           Guias públicos e recursos de apresentação
-tests/          Regressões do backend
-benchmarks/     Ferramentas locais de medição
-```
+A Lunmi utiliza [Microsoft UFO²](https://github.com/microsoft/UFO), Electron, React, Supertonic, Whisper e outros projetos. As atribuições e condições aplicáveis estão em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-[Índice dos guias](docs/README.md) · [Como as partes se conectam](docs/ARCHITECTURE.md)
-
-Na cópia de trabalho completa, `docs/LOCAL-INDEX.md` organiza relatórios, planos e evidências por assunto. As pastas `docs/reports/`, `docs/plans/`, `logs/`, `output/`, `research/` e `Relatorio Final/` guardam esse histórico localmente e não vão para o repositório. `docs/MAPA-DE-CAMINHOS.tsv` registra onde cada arquivo reorganizado estava e onde está.
-
-## Limites atuais
-
-- A automação depende do que cada aplicativo expõe por UIA/Win32 e do que dá para verificar.
-- Anexos aceitam só texto e código UTF-8. Imagens, PDF e binários são recusados, e nada desse turno vira memória automaticamente.
-- A pesquisa web lê páginas, mas não controla um navegador por completo. No Groq gratuito, o limite diário de tokens dá para cerca de 60 a 80 pesquisas por dia.
-- O Gmail é experimental: a conexão e a leitura foram testadas numa conta de testes, e o envio só com simulações. Cada pessoa usa a própria conta Composio e Gmail, com os limites desses serviços.
-- A distribuição é alpha, só Windows x64, sem certificado Authenticode. As atualizações exigem assinatura Ed25519 válida. Faltam testes em outras máquinas, com todos os provedores e com vários monitores e escalas; não há versão para macOS ou Linux.
-- Algumas dependências upstream são antigas; os avisos conhecidos estão em [Segurança](SECURITY.md#dependências-upstream).
-
-## Créditos e licenças
-
-A Lunmi usa [Microsoft UFO²](https://github.com/microsoft/UFO), Electron, React e outros projetos. Avisos de fontes, ícones e referências visuais estão em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-O código próprio da Lunmi ainda não tem licença definida. A licença de uma dependência não vale para o projeto inteiro, e os avisos e restrições de terceiros continuam valendo.
+**O código próprio da Lunmi ainda não tem licença definida.** A disponibilidade do código no GitHub não concede as permissões de uma licença open source. As licenças das dependências continuam a aplicar-se aos respetivos componentes.

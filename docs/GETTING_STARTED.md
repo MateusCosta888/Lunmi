@@ -73,6 +73,25 @@ local. Em CPU a transcrição pode demorar mais do que a gravação; o prazo é 
 com cancelamento disponível. A validação física do Node foi feita num Windows com um monitor a100% DPI; outros
 DPI, múltiplos monitores e sessões prolongadas exigem validação adicional.
 
+## Anexos e perfil local
+
+O chat aceita até quatro ficheiros de texto ou código UTF-8, com 32 KiB por ficheiro
+e 64 KiB no total. Imagens, PDF e binários não são aceites. Um pedido com anexos não
+autoriza ações no Windows nem alimenta automaticamente a memória. O nome e a fotografia
+do perfil são editáveis na aplicação; a fotografia não é enviada para o Brain.
+
+## Particularidades do código-fonte
+
+`npm ci --include=dev` instala também TypeScript e as ferramentas de teste, mesmo quando
+`NODE_ENV=production`. O build prepara `desktop/.runtime/Lunmi.exe`, com o nome e o ícone
+da aplicação, sem alterar o Electron instalado. Esse executável depende do checkout;
+não é um instalador nem uma distribuição portátil. `vendor/` contém a revisão do UFO²
+obtida por `install_ufo.py` e fica fora do Git.
+
+O launcher verifica essa revisão antes de abrir. A alternativa Tkinter usa `run.bat --tk`
+ou `run-tk.bat` e exige uma instalação Python com Tkinter. O histórico de desenvolvimento,
+os relatórios locais e o mapa de caminhos são descritos no [índice dos guias](README.md#documentação-local-de-desenvolvimento).
+
 ## Solução de problemas
 
 | Sintoma | Confira |
