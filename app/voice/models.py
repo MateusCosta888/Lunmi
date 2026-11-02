@@ -24,6 +24,7 @@ Review 21a75b0 (orchestrator, 01/11) found P1-1..P1-5 in the first version; each
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -54,6 +55,8 @@ CHUNK = 1 << 20
 SPACE_MARGIN = 256 << 20
 TIMEOUT_S = 30.0
 RETRIES = 2
+# A dropped connection resumes the .part by itself after these pauses before the user sees it.
+NETWORK_RETRY_WAITS_S = (2.0, 5.0, 15.0, 30.0)
 MODEL_HOST_SUFFIXES = ("huggingface.co", "hf.co", "raw.githubusercontent.com")
 
 MESSAGE_NO_NETWORK = "Sem ligação aos servidores dos modelos. A transferência retoma onde parou."
@@ -440,7 +443,15 @@ class VoiceModels:
         part = _guard(self.root, staged.with_name(staged.name + ".part"))
         meta = _guard(self.root, part.with_name(part.name + ".json"))
         for _attempt in range(RETRIES + 1):
-            self._download_part(group, item, part, meta, cancelled, before)
+            for wait in (*NETWORK_RETRY_WAITS_S, None):
+                try:
+                    self._download_part(group, item, part, meta, cancelled, before)
+                    break
+                except ModelsError as exc:
+                    if str(exc) != MESSAGE_NO_NETWORK or wait is None:
+                        raise
+                    if self._cancel.get(group, threading.Event()).wait(wait):  # True: cancelled
+                        raise ModelsError("cancelled") from exc
             if _sha256(part, cancelled) == item.sha256:
                 os.replace(part, staged)
                 meta.unlink(missing_ok=True)
@@ -495,7 +506,10 @@ class VoiceModels:
                 while True:
                     if cancelled():
                         raise ModelsError("cancelled")
-                    block = response.read(CHUNK)
+                    try:
+                        block = response.read(CHUNK)
+                    except (OSError, http.client.HTTPException) as exc:  # timeout or cut mid-file
+                        raise ModelsError(MESSAGE_NO_NETWORK) from exc
                     if not block:
                         break
                     written += len(block)

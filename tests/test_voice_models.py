@@ -106,13 +106,13 @@ def test_a_group_downloads_verifies_and_activates(tmp_path: Path, server: Server
     assert models.installed_dir("dictation") is None  # groups are independent
 
 
-def test_an_interrupted_file_resumes_with_range_and_the_same_etag(tmp_path: Path, server: Server) -> None:
+def test_an_interrupted_file_resumes_by_itself_with_range_and_the_same_etag(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    monkeypatch.setattr(voice_models, "NETWORK_RETRY_WAITS_S", (0.0,))
     models = make(tmp_path, server)
     big = "models/supertonic-3/onnx/a.onnx"
     server.truncate_once.add(big)
-    first = run(models, "speech")
-    assert first["state"] == "error" and models.installed_dir("speech") is None
-    assert run(models, "speech")["state"] == "installed"
+    assert run(models, "speech")["state"] == "installed"  # a dropped connection, no click needed
     ranged = [(rng, if_range) for path, rng, if_range in server.requests if path == big and rng]
     assert ranged and ranged[-1][1] == "A"
 
@@ -427,3 +427,19 @@ def test_downloads_check_certificates_through_windows_not_only_cached_roots(
     real = voice_models.truststore.SSLContext
     monkeypatch.setattr(voice_models.truststore, "SSLContext", lambda *a: built.append(a) or real(*a))
     assert run(make(tmp_path, server), "speech")["state"] == "installed" and built
+
+
+def test_a_lasting_outage_still_ends_in_an_error_and_cancel_stops_the_pauses(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    models = make(tmp_path, server)
+    server.httpd.shutdown()
+    server.httpd.server_close()  # nothing listens: every attempt fails to connect
+    monkeypatch.setattr(voice_models, "NETWORK_RETRY_WAITS_S", (0.0, 0.0))
+    status = run(models, "speech")
+    assert status["state"] == "error" and status["message"] == voice_models.MESSAGE_NO_NETWORK
+    monkeypatch.setattr(voice_models, "NETWORK_RETRY_WAITS_S", (60.0,))
+    models.download("speech")
+    time.sleep(0.5)  # now inside the 60 s pause
+    models.cancel("speech")
+    models.wait("speech", 5)
+    assert models.snapshot()["groups"]["speech"]["state"] == "missing"
