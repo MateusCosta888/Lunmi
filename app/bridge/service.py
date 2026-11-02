@@ -72,7 +72,7 @@ from app.voice.eligibility import SpeechStream, speakable_reply
 from app.voice.input_manager import VoiceInputManager
 from app.voice.manager import VoiceError, VoiceManager
 from app.voice.models import GROUPS as VOICE_MODEL_GROUPS
-from app.voice.models import ModelsError, VoiceModels, manifest_for, models_root
+from app.voice.models import ModelsError, VoiceModels, manifest_for, models_root, older_voice_components
 from app.voice.runtime import voice_home
 from app.voice.warmup import VoiceWarmup
 
@@ -218,9 +218,10 @@ class BridgeService:
             models_root(self.settings.state_root),
             manifest_for(voice_home(self.settings.state_root)),
             emit=self._emit_voice_models,
-            legacy_dirs=self._older_voice_components,
+            legacy_dirs=older_voice_components,
         )
-        if self._older_voice_components():
+        self._voice_models_usable: frozenset[str] = frozenset()
+        if older_voice_components():
             # An update from Alpha 4-9: verify and keep the models that install already had,
             # without downloading or asking. Nothing happens when there is nothing to adopt.
             for group in VOICE_MODEL_GROUPS:
@@ -498,19 +499,24 @@ class BridgeService:
         if self._closed:
             return
         self._emit("voice.models", {**payload, "session_id": self.session_id})
+        raw_groups = payload.get("groups")
+        groups: dict[str, Any] = raw_groups if isinstance(raw_groups, dict) else {}
+        usable = frozenset(name for name, item in groups.items()
+                           if isinstance(item, dict) and (item.get("state") == "installed" or item.get("previous")))
+        if usable != getattr(self, "_voice_models_usable", frozenset()):
+            # Review 21a75b0 P1-4: voice and dictation availability changed under the UI; publish
+            # their canonical state (same DTOs, session and generation guards) so it unlocks
+            # without a reload.
+            self._voice_models_usable = usable
+            for manager in (self.voice, self.voice_input):
+                try:
+                    manager.refresh()
+                except Exception:  # noqa: BLE001 - a stale badge is better than a broken download
+                    pass
 
     @staticmethod
     def _older_voice_components() -> list[Path]:
-        """Voice components of earlier versions next to the current one that still hold models."""
-        bundled = os.environ.get("LUNMI_BUNDLED_VOICE_HOME", "").strip()
-        if not bundled or not Path(bundled).is_absolute():
-            return []
-        current = Path(bundled)
-        try:
-            return [folder for folder in current.parent.glob("voice-*")
-                    if folder != current and (folder / "models").is_dir()]
-        except OSError:
-            return []
+        return older_voice_components()
 
     def _handle_voice_models(self, cmd: str, payload: dict[str, Any]) -> dict[str, Any]:
         if cmd == "voice.models.get":

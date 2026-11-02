@@ -212,6 +212,10 @@ class VoiceManager:
             "reason": reason,
         }
 
+    def refresh(self) -> None:
+        """Publishes the current state again, e.g. after its models were installed."""
+        self._publish()
+
     def _publish(self) -> None:
         with self._lock:
             env = self.environment()

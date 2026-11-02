@@ -175,8 +175,9 @@ def test_an_older_install_s_models_are_adopted_only_when_their_hashes_match(tmp_
             (folder / path).write_bytes(bytes(len(body)) if corrupt else body)
     models = make(tmp_path, server, legacy_dirs=lambda: [bad, good])
     assert run(models, "speech")["state"] == "installed" and not server.requests  # nothing downloaded
-    assert not (good / "models/supertonic-3/onnx/a.onnx").exists()  # moved, not duplicated
-    assert (bad / "models/supertonic-3/onnx/a.onnx").exists()  # a copy that failed the hash is left alone
+    assert (models.root / "models/supertonic-3/onnx/a.onnx").read_bytes() == SPEECH["models/supertonic-3/onnx/a.onnx"]
+    # Old copies go only after the new group is active (review P1-3), the bad one included.
+    assert not (good / "models/supertonic-3/onnx/a.onnx").exists() and not (bad / "models/supertonic-3/onnx/a.onnx").exists()
 
 
 def test_a_changed_manifest_means_not_installed_and_repair_fixes_a_bad_file(tmp_path: Path, server: Server) -> None:
@@ -251,3 +252,131 @@ def test_the_bridge_finds_older_voice_components_that_still_hold_models(tmp_path
     assert BridgeService._older_voice_components() == [older]
     monkeypatch.setenv("LUNMI_BUNDLED_VOICE_HOME", "relative/path")
     assert BridgeService._older_voice_components() == []
+
+
+# --- review 21a75b0 (orchestrator, 01/11): one test per blocker ------------------------------
+def _write(folder: Path, files: dict[str, bytes]) -> None:
+    for path, body in files.items():
+        (folder / path).parent.mkdir(parents=True, exist_ok=True)
+        (folder / path).write_bytes(body)
+
+
+def test_p1_1_same_size_corrupt_files_without_a_marker_are_never_accepted(tmp_path: Path, server: Server) -> None:
+    models = make(tmp_path, server)
+    _write(models.root, {path: bytes(len(body)) for path, body in SPEECH.items()})  # right size, wrong bytes
+    models.download("speech", network=False)
+    models.wait("speech", 30)
+    assert models.installed_dir("speech") is None  # no network allowed: not installed, not faked
+    assert run(models, "speech")["state"] == "installed" and server.requests  # fetched for real
+    assert all((models.root / p).read_bytes() == b for p, b in SPEECH.items())
+    server.files["models/supertonic-3/voice_styles/F5.json"] = b"()" * 50  # new pin, same size
+    server.manifest(tmp_path)
+    before = len(server.requests)
+    assert run(models, "speech")["state"] == "installed" and len(server.requests) > before
+    assert (models.root / "models/supertonic-3/voice_styles/F5.json").read_bytes() == b"()" * 50
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are a Windows feature")
+def test_p1_2_a_junction_below_the_root_is_refused_and_outside_files_untouched(tmp_path: Path, server: Server) -> None:
+    models = make(tmp_path, server)
+    outside = tmp_path / "outside"
+    _write(outside, {"supertonic-3/onnx/a.onnx": b"keep me"})
+    (models.root / ".staging").mkdir(parents=True)
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(models.root / ".staging" / "models"), str(outside)],
+                   check=True, capture_output=True)
+    status = run(models, "speech")
+    assert status["state"] == "error" and status["message"] == MESSAGE_LINKED
+    assert (outside / "supertonic-3/onnx/a.onnx").read_bytes() == b"keep me" and models.installed_dir("speech") is None
+
+
+def test_p1_3_a_failed_migration_keeps_the_older_copy_and_recovers(tmp_path: Path, server: Server) -> None:
+    older = tmp_path / "voice-old"
+    _write(older, SPEECH)
+    models = make(tmp_path, server, legacy_dirs=lambda: [older])
+    blocker = models.root / "models/supertonic-3/voice_styles/F5.json"
+    blocker.mkdir(parents=True)  # the second file cannot be activated
+    models.download("speech", network=False)
+    models.wait("speech", 30)
+    assert models.installed_dir("speech") is None
+    assert all((older / p).read_bytes() == b for p, b in SPEECH.items())  # nothing lost
+    blocker.rmdir()
+    models.download("speech", network=False)
+    models.wait("speech", 30)
+    assert models.installed_dir("speech") is not None and not server.requests
+
+
+def test_p1_4_the_bridge_republishes_voice_and_dictation_when_models_become_usable() -> None:
+    from types import SimpleNamespace
+
+    from app.bridge.service import BridgeService
+    refreshed: list[str] = []
+    events: list[tuple[str, Any]] = []
+    owner = SimpleNamespace(_closed=False, session_id="s", _emit=lambda kind, payload: events.append((kind, payload)),
+                            voice=SimpleNamespace(refresh=lambda: refreshed.append("voice")),
+                            voice_input=SimpleNamespace(refresh=lambda: refreshed.append("input")))
+    emit = BridgeService._emit_voice_models
+    downloading = {"groups": {"speech": {"state": "downloading"}}}
+    installed = {"groups": {"speech": {"state": "installed"}}}
+    emit(owner, downloading)  # type: ignore[arg-type]
+    assert refreshed == []
+    emit(owner, installed)  # type: ignore[arg-type]
+    emit(owner, installed)  # type: ignore[arg-type]
+    assert refreshed == ["voice", "input"] and events[-1][0] == "voice.models"
+
+
+def test_p1_5_an_alpha_9_copy_without_f5_keeps_the_voice_until_the_user_downloads(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    """Alpha 9 shipped F4 only. Its copy, verified against its own pins, stays in use offline;
+    downloading then fetches only what is new and cleans the old copy up."""
+    from app.voice.runtime import resolve_environment
+    older_files = {k: v for k, v in SPEECH.items() if not k.endswith("F5.json")}
+    older_files["models/supertonic-3/voice_styles/F4.json"] = b"[F4]" * 10
+    older = tmp_path / "runtime" / "voice-old"
+    _write(older, older_files)
+    (older / "VOICE-SOURCE.json").write_text(json.dumps({"files": [
+        {"path": p, "url": server.url + p, "sha256": hashlib.sha256(b).hexdigest(), "bytes": len(b)}
+        for p, b in {**older_files, **DICTATION}.items()]}), encoding="utf-8")
+    _write(older, DICTATION)
+    state = tmp_path / "estado"
+    home = tmp_path / "runtime" / "voice-new"
+    (home / "runtime").mkdir(parents=True)
+    (home / "runtime" / "python.exe").write_bytes(b"")
+    server.manifest(home)
+    monkeypatch.setenv("LUNMI_BUNDLED_VOICE_HOME", str(home))
+    monkeypatch.delenv("LUNMI_VOICE_HOME", raising=False)
+    models = VoiceModels(state / ".local" / "voice-models", home / "VOICE-SOURCE.json",
+                         legacy_dirs=voice_models.older_voice_components,
+                         allow_hosts={"127.0.0.1"}, require_https=False)
+    models.download("speech", network=False)
+    models.wait("speech", 30)
+    assert models.installed_dir("speech") is None and models.previous_dir("speech") == older and not server.requests
+    assert resolve_environment(state).models == (older / "models/supertonic-3").resolve()  # still speaks
+    assert run(models, "speech")["state"] == "installed"
+    assert [path for path, _, _ in server.requests] == ["models/supertonic-3/voice_styles/F5.json"]
+    assert models.previous_dir("speech") is None and not (older / "models/supertonic-3/onnx/a.onnx").exists()
+
+
+def test_p2_cancel_mid_file_keeps_the_part_and_resumes_with_range(tmp_path: Path, server: Server, monkeypatch) -> None:
+    monkeypatch.setattr(voice_models, "CHUNK", 16 * 1024)
+    big = "models/supertonic-3/onnx/a.onnx"
+    server.files[big] = os.urandom(2_000_000)
+    original = server.httpd.RequestHandlerClass.do_GET
+    import time as clock
+
+    class Slow(server.httpd.RequestHandlerClass):  # type: ignore[misc, name-defined]
+        def do_GET(self) -> None:  # noqa: N802
+            write = self.wfile.write
+            self.wfile.write = lambda data: [(write(data[i:i + 65536]), clock.sleep(0.02))  # type: ignore[method-assign]
+                                             for i in range(0, len(data), 65536)]
+            original(self)
+    server.httpd.RequestHandlerClass = Slow
+    models = make(tmp_path, server)
+    models.download("speech")
+    while models.snapshot()["groups"]["speech"]["bytes_done"] < 300_000:
+        clock.sleep(0.01)
+    models.cancel("speech")
+    models.wait("speech", 30)
+    part = models.root / ".staging" / (big + ".part")
+    assert models.snapshot()["groups"]["speech"]["state"] == "paused" and 0 < part.stat().st_size < 2_000_000
+    assert run(models, "speech")["state"] == "installed"
+    assert any(path == big and rng for path, rng, _ in server.requests[-3:])

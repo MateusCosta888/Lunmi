@@ -9,14 +9,17 @@ dictation.
 Rules, each guarding a failure seen or expected on users' machines:
 - only pinned URLs, over HTTPS, to the model hosts (redirects included);
 - a file is written to an isolated ``.part``, resumed with ``Range`` + ``If-Range`` so changed
-  content restarts instead of being stitched, and checked for size and SHA-256 before use;
-- a group is activated atomically: files move into place, then a marker is written last, so a
-  crash never leaves a half group that looks installed;
-- free space is checked first; cancel keeps the ``.part`` for resume; repair re-hashes all;
-- folders that are links/junctions are refused (writes must stay in the user's data);
-- models of an older install (inside a previous voice component) are adopted only after their
-  hashes are verified, then that copy is removed.
+  content restarts instead of being stitched, and its SHA-256 is checked before use;
+- a marker is written only after every file of the group was hash-verified in that run (a
+  same-size corrupt file is never accepted), and last, so a crash never looks installed;
+- every path written, moved or read from an older install is checked component by component:
+  links/junctions anywhere on the way are refused (writes must stay in the user's data);
+- an older install's models are adopted file by file by link/copy and hash of the copy; the
+  originals are removed only after the new group is active, so a failure mid-way loses nothing;
+  until the new group is complete, that older copy (verified against its own pins) stays in use;
+- free space is checked first; cancel keeps the ``.part`` for resume; repair re-hashes all.
 Nothing here opens the microphone or plays audio.
+Review 21a75b0 (orchestrator, 01/11) found P1-1..P1-5 in the first version; each has a test.
 """
 from __future__ import annotations
 
@@ -41,6 +44,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
 MODELS_DIRNAME = "voice-models"
 MARKER = ".lunmi-verified"
 STAGING = ".staging"
+HASH_CACHE = ".hash-cache.json"
 CHUNK = 1 << 20
 # Room for the staging-to-final moves and the filesystem itself, beyond the bytes to fetch.
 SPACE_MARGIN = 256 << 20
@@ -104,6 +108,23 @@ def _is_link(path: Path) -> bool:
     return stat.S_ISLNK(info.st_mode) or bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
 
+def _guard(base: Path, path: Path) -> Path:
+    """`path` inside `base` with no link/junction on any component from base down (P1-2)."""
+    relative = path.relative_to(base)  # lexical: raises for anything outside
+    current = base
+    if _is_link(current):
+        raise ModelsError(MESSAGE_LINKED)
+    for part in relative.parts:
+        current = current / part
+        if _is_link(current):
+            raise ModelsError(MESSAGE_LINKED)
+    try:
+        path.resolve(strict=False).relative_to(base.resolve(strict=False))
+    except ValueError as exc:
+        raise ModelsError(MESSAGE_LINKED) from exc
+    return path
+
+
 def _sha256(path: Path, cancelled: Callable[[], bool] = lambda: False) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -114,12 +135,33 @@ def _sha256(path: Path, cancelled: Callable[[], bool] = lambda: False) -> str:
     return digest.hexdigest()
 
 
+def _stamp(path: Path) -> list[int] | None:
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return [info.st_size, info.st_mtime_ns]
+
+
 def _host_allowed(url: str, allow_hosts: frozenset[str], require_https: bool) -> bool:
     parts = urllib.parse.urlsplit(url)
     host = (parts.hostname or "").lower()
     if require_https and parts.scheme != "https":
         return False
     return host in allow_hosts or any(host == suffix or host.endswith("." + suffix) for suffix in MODEL_HOST_SUFFIXES)
+
+
+def older_voice_components() -> list[Path]:
+    """Voice components of earlier versions next to the current one that still hold models."""
+    bundled = os.environ.get("LUNMI_BUNDLED_VOICE_HOME", "").strip()
+    if not bundled or not Path(bundled).is_absolute():
+        return []
+    current = Path(bundled)
+    try:
+        return sorted(folder for folder in current.parent.glob("voice-*")
+                      if folder != current and (folder / "models").is_dir() and not _is_link(folder))
+    except OSError:
+        return []
 
 
 class VoiceModels:
@@ -145,18 +187,40 @@ class VoiceModels:
         return load_manifest(self.manifest_path)
 
     def installed_dir(self, group: str) -> Path | None:
-        """The models folder to load ``group`` from, or None when it is not installed and verified."""
+        """The folder holding this version's verified models for `group`, or None."""
         try:
             files = self._groups()[group]
         except (ModelsError, KeyError):
             return None
         return self.root if self._quick_ok(files, self._marker(group)) else None
 
+    def previous_dir(self, group: str) -> Path | None:
+        """An older install's copy of `group`, verified against its own pins, still unchanged.
+
+        Used only while this version's group is incomplete (P1-5: Alpha 9 lacked F5.json), so an
+        update keeps a working voice without downloading anything until the user agrees to.
+        """
+        try:
+            record = json.loads(self._previous_record(group).read_text(encoding="utf-8"))
+            folder = Path(record["folder"])
+            if _is_link(folder) or not folder.is_dir():
+                return None
+            for path, stamp in record["stamps"].items():
+                if _stamp(_guard(folder, folder / path)) != stamp:
+                    return None
+            return folder
+        except (OSError, ValueError, KeyError, TypeError, ModelsError):
+            return None
+
     def _marker(self, group: str) -> Path:
         return self.root / f"{MARKER}-{group}.json"
 
+    def _previous_record(self, group: str) -> Path:
+        return self.root / f".previous-{group}.json"
+
     def _quick_ok(self, files: list[ModelFile], marker: Path) -> bool:
-        """Installed means: marker for this exact manifest, and every file present at its size."""
+        """Installed means: a marker for this exact manifest (written only after every file was
+        hash-verified) and every file still present at its size."""
         try:
             saved = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -175,21 +239,26 @@ class VoiceModels:
             for name, files in groups.items():
                 total = sum(f.bytes for f in files)
                 job = self._jobs.get(name)
+                previous = self.previous_dir(name) is not None
                 if job is not None and job["state"] in {"downloading", "verifying"}:
-                    out[name] = {"state": job["state"], "bytes_total": total, "bytes_done": job["done"], "message": ""}
+                    out[name] = {"state": job["state"], "bytes_total": total, "bytes_done": job["done"],
+                                 "message": "", "previous": previous}
                 elif self._quick_ok(files, self._marker(name)):
-                    out[name] = {"state": "installed", "bytes_total": total, "bytes_done": total, "message": ""}
+                    out[name] = {"state": "installed", "bytes_total": total, "bytes_done": total,
+                                 "message": "", "previous": False}
                 else:
-                    partial = sum(self._staged_size(f) for f in files)
+                    partial = sum(self._present_size(f) for f in files)
                     state, message = ("error", job["message"]) if job and job["state"] == "error" else (
                         ("paused" if partial else "missing"), "")
-                    out[name] = {"state": state, "bytes_total": total, "bytes_done": partial, "message": message}
+                    out[name] = {"state": state, "bytes_total": total, "bytes_done": partial, "message": message,
+                                 "previous": previous}
         return {"groups": out, "message": ""}
 
-    def _staged_size(self, item: ModelFile) -> int:
-        done = self.root / STAGING / item.path
-        part = done.with_name(done.name + ".part")
-        for candidate in (done, part):
+    def _present_size(self, item: ModelFile) -> int:
+        """Bytes already here for a file: final, staged, or partly downloaded."""
+        final = self.root / item.path
+        staged = self.root / STAGING / item.path
+        for candidate in (final, staged, staged.with_name(staged.name + ".part")):
             try:
                 return min(candidate.stat().st_size, item.bytes)
             except OSError:
@@ -220,7 +289,7 @@ class VoiceModels:
             if thread is not None and thread.is_alive():
                 return self.snapshot()
             self._cancel[group] = threading.Event()
-            self._jobs[group] = {"state": "downloading", "done": 0, "message": ""}
+            self._jobs[group] = {"state": "verifying" if not network else "downloading", "done": 0, "message": ""}
             thread = threading.Thread(target=self._run, args=(group, repair, network), name=f"voice-models-{group}",
                                       daemon=True)
             self._threads[group] = thread
@@ -248,10 +317,10 @@ class VoiceModels:
             if repair:
                 self._marker(group).unlink(missing_ok=True)
             if not self._quick_ok(files, self._marker(group)):
-                if not self._adopt_legacy(group, files, cancelled):
-                    if not network:
-                        raise ModelsError("cancelled")  # nothing to adopt; downloading needs consent
-                    self._fetch_group(group, files, cancelled, verify_existing=repair)
+                if not self._complete(group, files, cancelled, network=network, trust_cache=not repair):
+                    self._remember_previous(group, cancelled)
+                    raise ModelsError("cancelled")  # incomplete without consent to download
+            self._forget_previous(group)
             state, message = "installed", ""
         except ModelsError as exc:
             state, message = ("missing", "") if str(exc) == "cancelled" else ("error", str(exc))
@@ -274,52 +343,87 @@ class VoiceModels:
             self._jobs[group] = {"state": state, "done": done, "message": ""}
         self._publish()
 
-    # ---------------------------------------------------------------- download --
-    def _fetch_group(self, group: str, files: list[ModelFile], cancelled: Callable[[], bool], *,
-                     verify_existing: bool) -> None:
-        pending = [f for f in files if not self._final_ok(f, full=verify_existing, cancelled=cancelled)]
-        need = sum(f.bytes - self._staged_size(f) for f in pending)
+    # ------------------------------------------------------------ verification --
+    def _hash_cache(self) -> dict[str, Any]:
+        try:
+            data = json.loads((self.root / HASH_CACHE).read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _proven(self, path: Path, item: ModelFile, cancelled: Callable[[], bool], *, trust_cache: bool) -> bool:
+        """`path` holds exactly `item`, proven by its SHA-256 (cached by size+mtime of our files)."""
+        stamp = _stamp(path)
+        if stamp is None or stamp[0] != item.bytes:
+            return False
+        key = str(path)
+        cache = self._hash_cache()
+        if trust_cache and cache.get(key) == [*stamp, item.sha256]:
+            return True
+        if _sha256(path, cancelled) != item.sha256:
+            return False
+        cache[key] = [*stamp, item.sha256]
+        temp = self.root / (HASH_CACHE + ".tmp")
+        temp.write_text(json.dumps(cache), encoding="utf-8")
+        os.replace(temp, self.root / HASH_CACHE)
+        return True
+
+    # ---------------------------------------------------------------- complete --
+    def _complete(self, group: str, files: list[ModelFile], cancelled: Callable[[], bool], *,
+                  network: bool, trust_cache: bool) -> bool:
+        """Makes every file of `group` present and hash-proven in this run, then activates it."""
+        self._progress(group, 0, "verifying")
+        where: dict[str, str] = {}  # path -> "final" | "staged", each proven by hash in this run
+        for item in files:
+            final = _guard(self.root, self.root / item.path)
+            staged = _guard(self.root, self.root / STAGING / item.path)
+            if self._proven(final, item, cancelled, trust_cache=trust_cache):
+                where[item.path] = "final"
+            elif self._proven(staged, item, cancelled, trust_cache=trust_cache):
+                where[item.path] = "staged"
+        for item in files:
+            if item.path not in where and self._stage_from_previous(item, cancelled, trust_cache=trust_cache):
+                where[item.path] = "staged"
+        missing = [f for f in files if f.path not in where]
+        if missing and not network:
+            return False
+        need = sum(f.bytes - self._present_size(f) for f in missing)
         if need and shutil.disk_usage(self.root).free < need + SPACE_MARGIN:
             raise ModelsError(MESSAGE_NO_SPACE)
-        done = sum(f.bytes for f in files if f not in pending)
-        for item in pending:
+        done = sum(f.bytes for f in files if f.path in where)
+        for item in missing:
             self._fetch_file(group, item, cancelled, done)
+            where[item.path] = "staged"
             done += item.bytes
         self._progress(group, done, "verifying")
-        # Activate: verified staged files move into place, then the marker is written last.
-        for item in pending:
-            staged = self.root / STAGING / item.path
-            final = self.root / item.path
-            final.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(staged, final)
+        for item in files:  # activate: proven staged files move into place
+            if where[item.path] == "staged":
+                staged = _guard(self.root, self.root / STAGING / item.path)
+                final = _guard(self.root, self.root / item.path)
+                final.parent.mkdir(parents=True, exist_ok=True)
+                _guard(self.root, final)
+                os.replace(staged, final)
         for item in files:
-            if not self._final_ok(item, full=False):
+            if _stamp(self.root / item.path) is None or (self.root / item.path).stat().st_size != item.bytes:
                 raise ModelsError(MESSAGE_CORRUPT)
-        self._write_marker(group, files)
-
-    def _final_ok(self, item: ModelFile, *, full: bool, cancelled: Callable[[], bool] = lambda: False) -> bool:
-        final = self.root / item.path
-        try:
-            if final.stat().st_size != item.bytes:
-                return False
-        except OSError:
-            return False
-        return not full or _sha256(final, cancelled) == item.sha256
+        self._write_marker(group, files)  # last: only now does the group count as installed
+        self._remove_previous_copies(files)
+        return True
 
     def _write_marker(self, group: str, files: list[ModelFile]) -> None:
-        marker = self._marker(group)
+        marker = _guard(self.root, self._marker(group))
         temp = marker.with_name(marker.name + ".tmp")
         temp.write_text(json.dumps({"group": group, "fingerprint": _fingerprint(files)}), encoding="utf-8")
         os.replace(temp, marker)
 
+    # ---------------------------------------------------------------- download --
     def _fetch_file(self, group: str, item: ModelFile, cancelled: Callable[[], bool], before: int) -> None:
-        staged = self.root / STAGING / item.path
-        if staged.is_file() and staged.stat().st_size == item.bytes and _sha256(staged, cancelled) == item.sha256:
-            return  # verified in an earlier run, not yet activated
+        staged = _guard(self.root, self.root / STAGING / item.path)
         staged.parent.mkdir(parents=True, exist_ok=True)
-        part = staged.with_name(staged.name + ".part")
-        meta = part.with_name(part.name + ".json")
-        for attempt in range(RETRIES + 1):
+        _guard(self.root, staged)
+        part = _guard(self.root, staged.with_name(staged.name + ".part"))
+        meta = _guard(self.root, part.with_name(part.name + ".json"))
+        for _attempt in range(RETRIES + 1):
             self._download_part(group, item, part, meta, cancelled, before)
             if _sha256(part, cancelled) == item.sha256:
                 os.replace(part, staged)
@@ -384,34 +488,78 @@ class VoiceModels:
         if written != item.bytes:
             raise ModelsError(MESSAGE_NO_NETWORK)  # cut short: the .part resumes next time
 
-    # ------------------------------------------------------------------ legacy --
-    def _adopt_legacy(self, group: str, files: list[ModelFile], cancelled: Callable[[], bool]) -> bool:
-        """Models inside an older install's voice component, verified by hash, become ours."""
-        for folder in self._legacy_dirs():
-            base = Path(folder)
-            if _is_link(base) or not all((base / f.path).is_file() and (base / f.path).stat().st_size == f.bytes
-                                         for f in files):
-                continue
-            self._progress(group, 0, "verifying")
-            if not all(_sha256(base / f.path, cancelled) == f.sha256 for f in files):
-                continue
-            for item in files:
-                staged = self.root / STAGING / item.path
+    # ------------------------------------------------------------- older install --
+    def _older(self) -> list[Path]:
+        return [Path(folder) for folder in self._legacy_dirs() if not _is_link(Path(folder))]
+
+    def _stage_from_previous(self, item: ModelFile, cancelled: Callable[[], bool], *, trust_cache: bool) -> bool:
+        """An identical file of an older install, linked or copied into staging and proven by
+        the hash of the copy (P1-3). The original is never moved or deleted here."""
+        for base in self._older():
+            try:
+                source = _guard(base, base / item.path)
+                if _stamp(source) is None or source.stat().st_size != item.bytes:
+                    continue
+                staged = _guard(self.root, self.root / STAGING / item.path)
                 staged.parent.mkdir(parents=True, exist_ok=True)
+                _guard(self.root, staged)
+                staged.unlink(missing_ok=True)
                 try:
-                    os.replace(base / item.path, staged)
+                    os.link(source, staged)  # same volume: no extra space, no copy
                 except OSError:
-                    shutil.copyfile(base / item.path, staged)  # another drive: copy, then re-check below
-            for item in files:
-                staged = self.root / STAGING / item.path
-                if staged.stat().st_size != item.bytes:
-                    raise ModelsError(MESSAGE_CORRUPT)
-                final = self.root / item.path
-                final.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(staged, final)
-            self._write_marker(group, files)
-            return True
+                    if shutil.disk_usage(self.root).free < item.bytes + SPACE_MARGIN:
+                        raise ModelsError(MESSAGE_NO_SPACE)
+                    shutil.copyfile(source, staged)
+                if self._proven(staged, item, cancelled, trust_cache=False):
+                    return True
+                staged.unlink(missing_ok=True)
+            except ModelsError as exc:
+                if str(exc) in {"cancelled", MESSAGE_NO_SPACE}:
+                    raise
+                continue  # a linked or odd older copy is simply not used
+            except OSError:
+                continue
         return False
+
+    def _remember_previous(self, group: str, cancelled: Callable[[], bool]) -> None:
+        """Keeps an older install's complete copy of `group` in use, proven against its own pins."""
+        for base in self._older():
+            try:
+                files = load_manifest(_guard(base, base / "VOICE-SOURCE.json"))[group]
+                stamps: dict[str, list[int] | None] = {}
+                for item in files:
+                    path = _guard(base, base / item.path)
+                    if not self._proven(path, item, cancelled, trust_cache=True):
+                        break
+                    stamps[item.path] = _stamp(path)
+                else:
+                    record = _guard(self.root, self._previous_record(group))
+                    temp = record.with_name(record.name + ".tmp")
+                    temp.write_text(json.dumps({"folder": str(base), "stamps": stamps}), encoding="utf-8")
+                    os.replace(temp, record)
+                    return
+            except ModelsError as exc:
+                if str(exc) == "cancelled":
+                    raise
+            except OSError:
+                continue
+
+    def _forget_previous(self, group: str) -> None:
+        self._previous_record(group).unlink(missing_ok=True)
+
+    def _remove_previous_copies(self, files: list[ModelFile]) -> None:
+        """After this version's group is active, the older copies of those files can go."""
+        for base in self._older():
+            for item in files:
+                try:
+                    _guard(base, base / item.path).unlink(missing_ok=True)
+                except (ModelsError, OSError):
+                    continue
+            for folder in sorted((p for p in (base / "models").rglob("*") if p.is_dir()), reverse=True):
+                try:
+                    folder.rmdir()  # only empty folders
+                except OSError:
+                    pass
 
 
 class _PinnedRedirects(urllib.request.HTTPRedirectHandler):
@@ -442,5 +590,7 @@ def manifest_for(voice_home: Path) -> Path:
 
 
 def verified_models(state_root: str | Path, voice_home: Path, group: str) -> Path | None:
-    """The downloaded models folder for `group` when installed and verified, else None."""
-    return VoiceModels(models_root(state_root), manifest_for(voice_home)).installed_dir(group)
+    """The models folder to load `group` from: this version's verified copy, else an older
+    install's copy still verified against its own pins, else None."""
+    manager = VoiceModels(models_root(state_root), manifest_for(voice_home))
+    return manager.installed_dir(group) or manager.previous_dir(group)
