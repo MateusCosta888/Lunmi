@@ -25,6 +25,7 @@ import platform
 import re
 import secrets
 import shutil
+import ssl
 import stat
 import subprocess
 import threading
@@ -34,6 +35,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
+
+import truststore
 
 from app.integrations import spotify_contract as contract
 from app.integrations.spotify import SpotifyBroker, SpotifyBrokerError
@@ -328,7 +331,9 @@ def _default_fetch(url: str) -> bytes:
     if url != CLI_URL:
         raise SpotifyInstallError("offline")
     request = urllib.request.Request(url, headers={"User-Agent": "Lunmi/1.0"})
-    with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - URL fixa
+    # Windows' own chain check: a fresh install has no cached roots, and only it fetches them.
+    context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    with urllib.request.urlopen(request, timeout=20, context=context) as response:  # noqa: S310 - URL fixa
         payload = response.read(MAX_CLI_DOWNLOAD_BYTES + 1)
     if len(payload) > MAX_CLI_DOWNLOAD_BYTES:
         raise SpotifyInstallError("offline")

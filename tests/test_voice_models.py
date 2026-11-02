@@ -418,3 +418,12 @@ def test_6d0_planted_hard_links_at_temp_names_are_never_written_through(tmp_path
         victims.append(victim)
     assert run(models, "speech")["state"] == "installed"
     assert all(victim.read_bytes() == b"keep me" for victim in victims)
+
+
+def test_downloads_check_certificates_through_windows_not_only_cached_roots(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    # A clean Windows has no cached roots; plain urllib fails there with CERTIFICATE_VERIFY_FAILED.
+    built: list[object] = []
+    real = voice_models.truststore.SSLContext
+    monkeypatch.setattr(voice_models.truststore, "SSLContext", lambda *a: built.append(a) or real(*a))
+    assert run(make(tmp_path, server), "speech")["state"] == "installed" and built

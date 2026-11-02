@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import stat
 import tempfile
 import threading
@@ -37,6 +38,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+import truststore
 
 GROUPS: dict[str, tuple[str, ...]] = {
     "speech": ("models/supertonic-3/",),
@@ -467,7 +470,9 @@ class VoiceModels:
         headers = {"User-Agent": "Lunmi-voice-models"}
         if offset:
             headers.update({"Range": f"bytes={offset}-", "If-Range": str(saved["etag"])})
-        opener = urllib.request.build_opener(_PinnedRedirects(self._allow_hosts, self._require_https))
+        # Windows' own chain check: a fresh install has no cached roots, and only it fetches them.
+        tls = urllib.request.HTTPSHandler(context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+        opener = urllib.request.build_opener(tls, _PinnedRedirects(self._allow_hosts, self._require_https))
         try:
             response = opener.open(urllib.request.Request(item.url, headers=headers), timeout=TIMEOUT_S)
         except urllib.error.HTTPError as exc:
