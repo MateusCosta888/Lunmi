@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -380,3 +381,40 @@ def test_p2_cancel_mid_file_keeps_the_part_and_resumes_with_range(tmp_path: Path
     assert models.snapshot()["groups"]["speech"]["state"] == "paused" and 0 < part.stat().st_size < 2_000_000
     assert run(models, "speech")["state"] == "installed"
     assert any(path == big and rng for path, rng, _ in server.requests[-3:])
+
+
+def test_6d0_speech_and_dictation_hash_at_once_without_losing_cache_entries(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    older = tmp_path / "voice-old"
+    _write(older, {**SPEECH, **DICTATION})
+    (older / "VOICE-SOURCE.json").write_bytes(server.manifest(tmp_path).read_bytes())
+    models = make(tmp_path, server, legacy_dirs=lambda: [older])
+    real_replace = os.replace
+
+    def slow_replace(src: Any, dst: Any) -> None:
+        time.sleep(0.05)  # widens the window where both threads used to share one .tmp name
+        real_replace(src, dst)
+
+    monkeypatch.setattr(voice_models.os, "replace", slow_replace)
+    models.download("speech", network=False)  # what the bridge starts for an update
+    models.download("dictation", network=False)
+    models.wait("speech", 30)
+    models.wait("dictation", 30)
+    groups = models.snapshot()["groups"]
+    assert groups["speech"]["state"] == groups["dictation"]["state"] == "installed"
+    cache = json.loads((models.root / ".hash-cache.json").read_text(encoding="utf-8"))
+    assert {str(models.root / ".staging" / p) for p in {**SPEECH, **DICTATION}} <= set(cache)
+    assert not server.requests
+
+
+def test_6d0_planted_hard_links_at_temp_names_are_never_written_through(tmp_path: Path, server: Server) -> None:
+    models = make(tmp_path, server)
+    models.root.mkdir(parents=True)
+    victims = []
+    for name in (".hash-cache.json.tmp", ".lunmi-verified-speech.json.tmp"):
+        victim = tmp_path / f"victim-{name}"
+        victim.write_bytes(b"keep me")
+        os.link(victim, models.root / name)
+        victims.append(victim)
+    assert run(models, "speech")["state"] == "installed"
+    assert all(victim.read_bytes() == b"keep me" for victim in victims)

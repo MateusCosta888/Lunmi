@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import stat
+import tempfile
 import threading
 import time
 import urllib.error
@@ -125,6 +126,20 @@ def _guard(base: Path, path: Path) -> Path:
     return path
 
 
+def _write_json(base: Path, target: Path, data: Any) -> None:
+    """Atomic JSON write through a new, exclusive temp file: an existing name (even a hard link
+    planted to a file elsewhere) is never opened or truncated, only replaced as a directory entry."""
+    folder = _guard(base, target.parent)
+    handle, temp = tempfile.mkstemp(dir=folder, prefix=target.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(data, stream)
+        os.replace(temp, _guard(base, target))
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
 def _sha256(path: Path, cancelled: Callable[[], bool] = lambda: False) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -177,6 +192,7 @@ class VoiceModels:
         self._allow_hosts = frozenset(host.lower() for host in allow_hosts)
         self._require_https = require_https
         self._lock = threading.RLock()
+        self._cache_lock = threading.Lock()  # speech and dictation threads share the hash cache
         self._jobs: dict[str, dict[str, Any]] = {}
         self._cancel: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
@@ -362,10 +378,10 @@ class VoiceModels:
             return True
         if _sha256(path, cancelled) != item.sha256:
             return False
-        cache[key] = [*stamp, item.sha256]
-        temp = self.root / (HASH_CACHE + ".tmp")
-        temp.write_text(json.dumps(cache), encoding="utf-8")
-        os.replace(temp, self.root / HASH_CACHE)
+        with self._cache_lock:  # re-read inside the lock: another group's entries are kept
+            cache = self._hash_cache()
+            cache[key] = [*stamp, item.sha256]
+            _write_json(self.root, self.root / HASH_CACHE, cache)
         return True
 
     # ---------------------------------------------------------------- complete --
@@ -411,10 +427,7 @@ class VoiceModels:
         return True
 
     def _write_marker(self, group: str, files: list[ModelFile]) -> None:
-        marker = _guard(self.root, self._marker(group))
-        temp = marker.with_name(marker.name + ".tmp")
-        temp.write_text(json.dumps({"group": group, "fingerprint": _fingerprint(files)}), encoding="utf-8")
-        os.replace(temp, marker)
+        _write_json(self.root, self._marker(group), {"group": group, "fingerprint": _fingerprint(files)})
 
     # ---------------------------------------------------------------- download --
     def _fetch_file(self, group: str, item: ModelFile, cancelled: Callable[[], bool], before: int) -> None:
@@ -471,7 +484,7 @@ class VoiceModels:
                 # The server sent the whole file (content changed or no range support): restart.
                 offset = 0
             etag = response.headers.get("ETag") or saved.get("etag") or ""
-            meta.write_text(json.dumps({"url": item.url, "sha256": item.sha256, "etag": etag}), encoding="utf-8")
+            _write_json(self.root, meta, {"url": item.url, "sha256": item.sha256, "etag": etag})
             written = offset
             with open(part, "ab" if offset else "wb") as handle:
                 while True:
@@ -533,10 +546,7 @@ class VoiceModels:
                         break
                     stamps[item.path] = _stamp(path)
                 else:
-                    record = _guard(self.root, self._previous_record(group))
-                    temp = record.with_name(record.name + ".tmp")
-                    temp.write_text(json.dumps({"folder": str(base), "stamps": stamps}), encoding="utf-8")
-                    os.replace(temp, record)
+                    _write_json(self.root, self._previous_record(group), {"folder": str(base), "stamps": stamps})
                     return
             except ModelsError as exc:
                 if str(exc) == "cancelled":
