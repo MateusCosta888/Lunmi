@@ -65,6 +65,10 @@ MESSAGE_CORRUPT = "Um ficheiro chegou diferente do esperado e foi descartado; te
 MESSAGE_LINKED = "A pasta dos modelos é uma ligação para outro sítio; a transferência foi recusada."
 MESSAGE_SOURCE = "A origem de um modelo não é a fixada pela Lunmi; a transferência foi recusada."
 MESSAGE_MANIFEST = "A lista de modelos desta versão está em falta ou inválida."
+MESSAGE_TLS = ("Não foi possível confirmar o certificado dos servidores dos modelos. Confirma a data e a "
+               "hora do PC; numa rede com proxy ou antivírus que inspeciona HTTPS, tenta noutra rede.")
+FAILURE_LOG = "download-errors.log"
+FAILURE_LOG_MAX = 64 << 10
 
 
 class ModelsError(RuntimeError):
@@ -130,6 +134,16 @@ def _guard(base: Path, path: Path) -> Path:
     except ValueError as exc:
         raise ModelsError(MESSAGE_LINKED) from exc
     return path
+
+
+def _tls_failure(exc: BaseException) -> bool:
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, ssl.SSLCertVerificationError) or isinstance(getattr(seen, "reason", None),
+                                                                        ssl.SSLCertVerificationError):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
 
 
 def _write_json(base: Path, target: Path, data: Any) -> None:
@@ -345,12 +359,36 @@ class VoiceModels:
             self._forget_previous(group)
             state, message = "installed", ""
         except ModelsError as exc:
-            state, message = ("missing", "") if str(exc) == "cancelled" else ("error", str(exc))
-        except Exception:  # noqa: BLE001 - never a raw exception text in the UI
-            state, message = "error", MESSAGE_NO_NETWORK
+            if str(exc) == "cancelled":
+                state, message = "missing", ""
+            else:
+                self._note_failure(group, exc)
+                state, message = "error", MESSAGE_TLS if _tls_failure(exc) else str(exc)
+        except Exception as exc:  # noqa: BLE001 - never a raw exception text in the UI
+            self._note_failure(group, exc)
+            state, message = "error", MESSAGE_TLS if _tls_failure(exc) else MESSAGE_NO_NETWORK
         with self._lock:
             self._jobs[group] = {"state": state, "done": 0, "message": message}
         self._publish(force=True)
+
+    def _note_failure(self, group: str, exc: BaseException) -> None:
+        """The real cause behind a generic UI message, kept beside the models for support (audit
+        02/11: a clean-machine TLS failure showed only "Sem ligação" and nothing was recorded)."""
+        chain: list[str] = []
+        seen: BaseException | None = exc
+        while seen is not None and len(chain) < 4:
+            reason = getattr(seen, "reason", None)  # URLError hides its cause's type in .reason
+            inner = f" [{type(reason).__name__}]" if isinstance(reason, BaseException) else ""
+            chain.append(f"{type(seen).__name__}{inner}: {str(seen)[:300]}")
+            seen = seen.__cause__ or seen.__context__
+        try:
+            log = _guard(self.root, self.root / FAILURE_LOG)
+            if log.is_file() and log.stat().st_size > FAILURE_LOG_MAX:
+                log.unlink()  # a small rolling record, never a growing file
+            with open(log, "a", encoding="utf-8") as stream:
+                stream.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {group} | {' <- '.join(chain)}\n")
+        except (OSError, ModelsError):
+            pass  # the record is a help, never a reason to fail
 
     def _prepare_root(self) -> None:
         for folder in (self.root, self.root / STAGING):

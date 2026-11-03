@@ -443,3 +443,22 @@ def test_a_lasting_outage_still_ends_in_an_error_and_cancel_stops_the_pauses(
     models.cancel("speech")
     models.wait("speech", 5)
     assert models.snapshot()["groups"]["speech"]["state"] == "missing"
+
+
+def test_a_certificate_failure_says_so_and_the_real_cause_is_recorded(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    # Audit 02/11: on a clean Windows the TLS failure showed "Sem ligação" and left no trace.
+    import ssl
+    import urllib.error
+
+    class Refusing:
+        def open(self, *_a: Any, **_k: Any) -> Any:
+            raise urllib.error.URLError(ssl.SSLCertVerificationError(1, "unable to get local issuer certificate"))
+
+    monkeypatch.setattr(voice_models, "NETWORK_RETRY_WAITS_S", (0.0,))
+    monkeypatch.setattr(voice_models.urllib.request, "build_opener", lambda *_a: Refusing())
+    models = make(tmp_path, server)
+    status = run(models, "speech")
+    assert status["state"] == "error" and status["message"] == voice_models.MESSAGE_TLS
+    record = (models.root / voice_models.FAILURE_LOG).read_text(encoding="utf-8")
+    assert "speech" in record and "SSLCertVerificationError" in record and "local issuer" in record
