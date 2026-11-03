@@ -72,6 +72,9 @@ export const COMMAND_TIMEOUT_MS: Readonly<Record<string, number>> = Object.freez
   // `whoami` + `--version` do Kiro CLI: arranque a frio de um binário de 430 MB.
   "brain.kiro.status": 70000,
   "brain.set": 35000,
+  // First start on a fresh install: the just-extracted runtime is scanned by Defender while
+  // Python imports it; a clean VM took over 30 s and showed "não foi possível iniciar".
+  "session.hello": 120000,
 });
 
 export function commandTimeoutMs(type: string): number {

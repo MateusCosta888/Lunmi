@@ -26,6 +26,10 @@ it("dá aos comandos que esperam o provider mais prazo que a espera do backend",
   expect(commandTimeoutMs("task.cancel")).toBe(DEFAULT_COMMAND_TIMEOUT_MS);
 });
 
+it("espera o primeiro arranque a frio do Python numa instalação nova", () => {
+  expect(commandTimeoutMs("session.hello")).toBeGreaterThanOrEqual(120000);
+});
+
 it("recusa leitura direta de arquivo pelo renderer antes de iniciar o backend", async () => {
   const supervisor = new PythonBackendSupervisor({
     repoRoot, clientVersion: "test", getHostPids: () => [], onEvent: () => undefined,
