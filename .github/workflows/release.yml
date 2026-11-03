@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   windows:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.repository == 'MateusCosta888/Lunmi'
     runs-on: windows-latest
     timeout-minutes: 60
     environment: release
@@ -39,7 +39,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          node -e "const v=require('./desktop/package.json').version;if(v!==process.env.RELEASE_VERSION||!/^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(v))process.exit(1)"
+          node --input-type=module -e "import {validateVersion} from './desktop/scripts/update-release.mjs'; import fs from 'node:fs'; const v=JSON.parse(fs.readFileSync('./desktop/package.json')).version; validateVersion(v); if(v!==process.env.RELEASE_VERSION)process.exit(1)"
       - run: python -m pip install -r requirements.lock -r requirements-dev.txt
       - run: python install_ufo.py
       - run: python -m ruff check app tests
@@ -64,28 +64,41 @@ jobs:
       - run: python desktop/scripts/fetch_web.py
       - run: python desktop/scripts/fetch_voice.py
       - run: python desktop/scripts/assemble_resources.py
-      - run: python desktop/scripts/components.py pack
+      - name: Build native launcher
+        working-directory: desktop/installer
+        run: cargo build --release --locked
+      - name: Pack runtimes and write component keys before Electron packaging
+        run: node desktop/scripts/beta-release.mjs components desktop/installer/target/release/Lunmi.exe
       - run: npm run dist
         working-directory: desktop
+      - name: Pack app and base, build offline setup and verification tree
+        run: node desktop/scripts/beta-release.mjs package desktop/installer/target/release/Lunmi.exe
       - name: Verify setup starts without external VC++ runtime
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: python desktop/scripts/verify_installer_runtime.py "desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe"
-      - run: python desktop/scripts/verify_installer_defaults.py
-      - run: python desktop/scripts/verify_package.py
-      - run: python desktop/scripts/audit_payload.py
-      - name: Sign update descriptor
+      - name: Verify packaged runtimes and app
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python desktop/scripts/verify_package.py "desktop/release/beta-root/versions/$env:RELEASE_VERSION" "output/beta-acceptance"
+          if ($LASTEXITCODE -ne 0) { throw "Package verification failed" }
+          python desktop/scripts/audit_payload.py "desktop/release/beta-root/versions/$env:RELEASE_VERSION"
+      - name: Sign exact final update manifest bytes
         env:
           LUNMI_UPDATE_PRIVATE_KEY: ${{ secrets.LUNMI_UPDATE_PRIVATE_KEY }}
-        run: node desktop/scripts/update-release.mjs
+        run: node desktop/scripts/update-release.mjs sign
+      - name: Add immutable packs, checking every existing asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/beta-release.mjs upload-packs
       - name: Upload complete draft release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           $tag = "v$env:RELEASE_VERSION"
-          $files = @("desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe", "desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe.blockmap", "desktop/release/lunmi-update.json", "desktop/release/lunmi-update.sig")
-          $files += 'desktop/release/latest.yml'
+          $files = @("desktop/release/Lunmi-$env:RELEASE_VERSION-Setup.exe", "desktop/release/latest.json", "desktop/release/latest.json.sig")
           foreach ($file in $files) { if (!(Test-Path -LiteralPath $file)) { throw "Missing release artifact" } }
           $flags = @('--draft', '--target', $env:GITHUB_SHA, '--title', "Lunmi $env:RELEASE_VERSION", '--generate-notes')
           if ($env:RELEASE_VERSION.Contains('-')) { $flags += '--prerelease' }

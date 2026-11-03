@@ -1,0 +1,99 @@
+name: Publish verified Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Prepared beta or stable version (without v)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lunmi-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && github.repository == 'MateusCosta888/Lunmi'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Download release manifest and verify signature before using its fields
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module -e "import {validateVersion} from './desktop/scripts/update-release.mjs';validateVersion(process.env.RELEASE_VERSION)"
+          if ($LASTEXITCODE -ne 0) { throw "Invalid release version" }
+          $tag = "v$env:RELEASE_VERSION"
+          $release = gh release view $tag --json isDraft,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Expected an existing prepared release" }
+          $expected = @("Lunmi-$env:RELEASE_VERSION-Setup.exe", 'latest.json', 'latest.json.sig')
+          if ($release.assets.Count -ne 3) { throw "Unexpected release assets" }
+          foreach ($name in $expected) {
+            if (@($release.assets | Where-Object name -eq $name).Count -ne 1) { throw "Missing or duplicate release asset" }
+          }
+          gh release download $tag --pattern latest.json --pattern latest.json.sig --dir prepared
+          if ($LASTEXITCODE -ne 0) { throw "Manifest download failed" }
+          node desktop/scripts/update-release.mjs verify prepared $env:RELEASE_VERSION --manifest-only
+          if ($LASTEXITCODE -ne 0) { throw "Manifest verification failed" }
+      - name: Verify setup and every immutable pack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          gh release download "v$env:RELEASE_VERSION" --pattern "Lunmi-$env:RELEASE_VERSION-Setup.exe" --dir prepared
+          if ($LASTEXITCODE -ne 0) { throw "Setup download failed" }
+          $manifest = Get-Content -Raw -LiteralPath prepared/latest.json | ConvertFrom-Json
+          foreach ($pack in $manifest.packs) {
+            $file = "$($pack.name)-$($pack.key).tar.zst"
+            gh release download packs --pattern $file --dir prepared/packs
+            if ($LASTEXITCODE -ne 0) { throw "Pack download failed" }
+          }
+          node desktop/scripts/update-release.mjs verify prepared $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "Artifact verification failed" }
+      - name: Verify current channel signature and prevent version rollback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $channel = gh release view channel-beta --json isDraft,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $channel.isDraft) { throw "The public fixed channel-beta release must already exist" }
+          $manifestCount = @($channel.assets | Where-Object name -eq latest.json).Count
+          $signatureCount = @($channel.assets | Where-Object name -eq latest.json.sig).Count
+          if ($channel.assets.Count -ne 0 -and ($channel.assets.Count -ne 2 -or $manifestCount -ne 1 -or $signatureCount -ne 1)) {
+            throw "Incomplete or unexpected channel assets; restore the last valid pair manually"
+          }
+          New-Item -ItemType Directory -Path channel-current | Out-Null
+          if ($manifestCount -eq 1) {
+            gh release download channel-beta --pattern latest.json --pattern latest.json.sig --dir channel-current
+            if ($LASTEXITCODE -ne 0) { throw "Current channel download failed" }
+          }
+          node desktop/scripts/update-release.mjs verify-channel prepared $env:RELEASE_VERSION channel-current
+          if ($LASTEXITCODE -ne 0) { throw "Channel signature, version or exact-byte verification failed; a mismatched pair requires manual restoration" }
+      - name: Publish if still draft and update fixed beta channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $release = gh release view "v$env:RELEASE_VERSION" --json isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Release state lookup failed" }
+          if ($release.isDraft) {
+            gh release edit "v$env:RELEASE_VERSION" --draft=false --latest=false
+            if ($LASTEXITCODE -ne 0) { throw "Release publication failed" }
+          }
+          # Replacement is not atomic: a mismatched pair fails closed and requires manual restoration.
+          gh release upload channel-beta prepared/latest.json prepared/latest.json.sig --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Channel update failed; rerun verifies everything again and rejects a mismatched channel pair" }
