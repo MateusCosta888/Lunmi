@@ -14,6 +14,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from components import SEVEN_ZIP_ARGS, seven_zip  # noqa: E402
@@ -31,6 +33,7 @@ def _tools() -> tuple[Path, Path, Path]:
 
 def _header(work: Path, out: Path, plugins: Path, templates: Path, updated: bool) -> str:
     return f'''
+!define LUNMI_SETUP_LOG "{work / 'setup.log'}"
 Unicode true
 Name "Lunmi installer verification"
 OutFile "{out}"
@@ -214,7 +217,35 @@ SectionEnd
     assert not (runtime / f'python-{damaged["LUNMI_PYTHON_KEY"]}').exists()
     assert not (runtime / f'python-{damaged["LUNMI_PYTHON_KEY"]}.partial').exists()
     assert (new_py / 'Lib/a.py').read_text() == 'b'
+    assert 'nsis: python not prepared: 7za exit 2' in (work / 'setup.log').read_text(), (work / 'setup.log').read_text()
     checks.append('CRC failure after the sentinel stops with code 2, never marked complete, installed version intact')
+
+    # Windows Search or an antivirus holding a fresh file open blocks the rename for a moment.
+    stop = threading.Event()
+
+    def hold() -> None:
+        while not stop.is_set():
+            partial = next(runtime.glob('python-*.partial'), None)
+            sentinel = partial / 'python.exe' if partial else None
+            if sentinel and sentinel.is_file():
+                try:
+                    with open(sentinel, 'rb'):
+                        time.sleep(3)
+                    return
+                except OSError:
+                    pass
+            time.sleep(0.01)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        code, held = build_and_run({'python.exe': 'four', 'Lib/a.py': 'held'})
+    finally:
+        stop.set()
+        holder.join()
+    held_py = runtime / f'python-{held["LUNMI_PYTHON_KEY"]}'
+    assert code == 0 and (held_py / 'Lib/a.py').read_text() == 'held', code
+    checks.append('a rename blocked by a file held open for a few seconds is retried until it succeeds')
 
     deep = work / ('d' * max(1, 101 - len(str(work)) - 1))
     assert len(str(deep)) == 101, len(str(deep))

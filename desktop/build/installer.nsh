@@ -35,6 +35,24 @@
     ${EndIf}
   !macroend
 
+  ; Why the setup stopped, in the same setup.log the Lunmi launcher writes (it only sees code 2).
+  !ifndef LUNMI_SETUP_LOG
+    !define LUNMI_SETUP_LOG "$LOCALAPPDATA\Lunmi\logs\setup.log"  ; tests point it elsewhere
+  !endif
+  !macro lunmiLog TEXT
+    ${GetParent} "${LUNMI_SETUP_LOG}" $9
+    CreateDirectory $9
+    ClearErrors
+    FileOpen $9 "${LUNMI_SETUP_LOG}" a
+    ${IfNot} ${Errors}
+      FileSeek $9 0 END
+      FileWrite $9 "nsis: ${TEXT}"
+      FileWriteByte $9 13
+      FileWriteByte $9 10
+      FileClose $9
+    ${EndIf}
+  !macroend
+
   ; Nothing has been removed yet: reopen the installed version (updates) and stop with code 2.
   !macro lunmiAbort
     ${If} ${isUpdated}
@@ -51,6 +69,7 @@
   !macro lunmiCheckPath
     StrLen $lunmiOut "$INSTDIR"
     ${If} $lunmiOut > 100
+      !insertmacro lunmiLog "install folder too long: $lunmiOut chars"
       MessageBox MB_OK|MB_ICONEXCLAMATION "A pasta de instalação tem $lunmiOut caracteres e o máximo é 100: o Windows não carregaria os ficheiros mais fundos da Lunmi. Escolhe uma pasta mais curta, por exemplo a sugerida. Nada foi alterado." /SD IDOK
       !insertmacro lunmiAbort
     ${EndIf}
@@ -99,6 +118,7 @@
       ${If} $lunmiMoved != ""
         StrCpy $appExe "$lunmiMoved\${APP_EXECUTABLE_FILENAME}"  ; reopen the copy that still works
       ${EndIf}
+      !insertmacro lunmiLog "cannot write to $INSTDIR"
       MessageBox MB_OK|MB_ICONEXCLAMATION "O Windows não deixa o instalador escrever em $INSTDIR. Isto acontece com o Acesso controlado a pastas do Windows Defender (pastas como Documentos ou Ambiente de Trabalho). Escolhe outra pasta, por exemplo a sugerida, ou permite o instalador em Segurança do Windows. Nada foi alterado." /SD IDOK
       !insertmacro lunmiAbort
     ${EndIf}
@@ -119,6 +139,7 @@
     ${DriveSpace} "${ROOT}\" "/D=F /S=M" $lunmiOut
     ${IfNot} ${Errors}
     ${AndIf} $lunmiOut < ${MB}
+      !insertmacro lunmiLog "not enough space on ${ROOT}: need ${MB} MB, have $lunmiOut MB"
       MessageBox MB_OK|MB_ICONEXCLAMATION "Espaço insuficiente em ${ROOT}: a instalação precisa de ${MB} MB livres e há $lunmiOut MB. Nada foi alterado na versão instalada; liberta espaço e executa novamente o instalador." /SD IDOK
       !insertmacro lunmiAbort
     ${EndIf}
@@ -173,12 +194,32 @@
       Pop $lunmiOut
       Pop $lunmiValue
       Delete "$lunmiRuntime\${NAME}.7z"
-      StrCpy $lunmiValue "failed"
+      StrCpy $lunmiValue "7za exit $lunmiOut"
+      ${If} $lunmiOut == 0
+        StrCpy $lunmiValue "sentinel ${SENTINEL} missing"
+      ${EndIf}
       ${If} $lunmiOut == 0
       ${AndIf} ${FileExists} "$lunmiTarget.partial\${SENTINEL}"
-        ClearErrors
-        Rename "$lunmiTarget.partial" "$lunmiTarget"
-        ${IfNot} ${Errors}
+        ; Windows Search and antivirus hold freshly written files open for a moment (Documents is
+        ; indexed) and a folder with an open file cannot be renamed: retry for up to a minute.
+        StrCpy $lunmiValue "rename failed"
+        StrCpy $lunmiOut 0
+        ${Do}
+          ClearErrors
+          Rename "$lunmiTarget.partial" "$lunmiTarget"
+          ${IfNot} ${Errors}
+            StrCpy $lunmiValue "renamed"
+            ${Break}
+          ${EndIf}
+          IntOp $lunmiOut $lunmiOut + 1
+          ${If} $lunmiOut > 60
+            ${Break}
+          ${EndIf}
+          Sleep 1000
+        ${Loop}
+        ${If} $lunmiValue == "renamed"
+          StrCpy $lunmiValue "marker not written"
+          ClearErrors
           FileOpen $lunmiHandle "$lunmiTarget\.lunmi-complete" w
           ${IfNot} ${Errors}
             FileWrite $lunmiHandle "${KEY}"
@@ -188,6 +229,7 @@
         ${EndIf}
       ${EndIf}
       ${If} $lunmiValue != "ok"
+        !insertmacro lunmiLog "${NAME} not prepared: $lunmiValue ($lunmiTarget)"
         RMDir /r "$lunmiTarget.partial"
         MessageBox MB_OK|MB_ICONEXCLAMATION "Não foi possível preparar os componentes da Lunmi (${NAME}). Nada foi alterado na versão instalada. Confirma o espaço em disco e o antivírus e executa novamente o instalador." /SD IDOK
         !insertmacro lunmiAbort
@@ -273,9 +315,11 @@
       ClearErrors
       DetailPrint "A versão anterior em $lunmiMoved fica por remover; já não é usada."
     ${ElseIf} ${Errors}
+      !insertmacro lunmiLog "old uninstaller could not start"
       MessageBox MB_OK|MB_ICONEXCLAMATION "Não foi possível iniciar a remoção da versão anterior da Lunmi. A instalação não foi concluída. Os teus dados em $LOCALAPPDATA\Lunmi foram mantidos.$\n$\nExecuta novamente o instalador; se o erro continuar, desinstala a Lunmi nas Definições do Windows e instala de novo." /SD IDOK
       !insertmacro lunmiAbort
     ${ElseIf} $R0 != 0
+      !insertmacro lunmiLog "old uninstaller failed with code $R0"
       MessageBox MB_OK|MB_ICONEXCLAMATION "Não foi possível substituir a versão anterior da Lunmi (código $R0). A instalação não foi concluída. Os teus dados em $LOCALAPPDATA\Lunmi foram mantidos.$\n$\nFecha a Lunmi e os programas que possam estar a usar os seus ficheiros e executa novamente o instalador."
       !insertmacro lunmiAbort
     ${EndIf}
