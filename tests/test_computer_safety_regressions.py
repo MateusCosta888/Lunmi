@@ -11,7 +11,7 @@ def test_portuguese_sensitive_buttons_always_ask(label):
 
 
 def test_unknown_button_is_not_proven_safe_by_an_unrecognised_label():
-    verdict = click_verdict(control_label="OK", control_type="Button")
+    verdict = click_verdict(control_label="Detalhes", control_type="Button")
     assert verdict.level == UNKNOWN and verdict.needs_consent(MANUAL)
 
 

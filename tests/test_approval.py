@@ -307,3 +307,26 @@ def test_the_vendor_spelling_of_a_shortcut_becomes_the_shortcut(raw: str, expect
 
 def test_a_spelled_save_shortcut_is_judged_as_a_save() -> None:
     assert keyboard_verdict(keys="{VK_CONTROL}s").level == HIGH
+
+
+@pytest.mark.parametrize("label", ["Sim", "Yes", "OK", "&Sim", "Substituir o arquivo no destino",
+                                   "Descartar", "Esvaziar Lixeira", "Sair", "Pagar agora", "Sign out"])
+def test_a_dialog_answer_or_a_committing_label_asks_even_under_auto_approval(label: str) -> None:
+    # Audit 02/11: these were UNKNOWN, so auto-approval clicked "Sim" in "Excluir permanentemente?".
+    verdict = click_verdict(control_label=label, control_type="Button")
+    assert verdict.level == HIGH and verdict.needs_consent(AUTO)
+
+
+@pytest.mark.parametrize("label", ["Book", "Simular", "Página inicial", "Display"])
+def test_short_answers_are_matched_by_exact_name_not_inside_other_words(label: str) -> None:
+    assert click_verdict(control_label=label, control_type="Button").level != HIGH
+
+
+@pytest.mark.parametrize("keys", ["^{ENTER}", "%{ENTER}", "^{VK_RETURN}", "^d"])
+def test_send_and_delete_shortcuts_ask_even_under_auto_approval(keys: str) -> None:
+    verdict = keyboard_verdict(keys=keys, control_type="Edit", control_label="")
+    assert verdict.level == HIGH and verdict.needs_consent(AUTO)
+
+
+def test_shift_enter_is_still_a_new_line_not_a_send() -> None:
+    assert keyboard_verdict(keys="+{ENTER}", control_type="Edit", control_label="Pesquisar").level == LOW

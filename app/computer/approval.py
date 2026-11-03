@@ -55,7 +55,7 @@ _SEARCH_WORDS = ("search", "pesquis", "buscar", "busca", "find", "procur", "quer
                  "filtro", "filter", "localizar", "type to search", "searchbox")
 
 # Keys that save, close, quit, cut or force-close: their effect outlives the round.
-_DESTRUCTIVE_KEYS = ("delete", "{del}", "%{f4}", "{f4}", "^s", "^+s", "^w", "^q", "^x")
+_DESTRUCTIVE_KEYS = ("delete", "{del}", "%{f4}", "{f4}", "^s", "^+s", "^w", "^q", "^x", "^d")
 
 # Shortcuts that only read or navigate. Everything else with a modifier is not *proven*
 # safe, so it is ``UNKNOWN``: manual asks, auto-approval proceeds.
@@ -70,7 +70,15 @@ _NAVIGATION_KEYS = ("{tab}", "{esc}", "{escape}", "{up}", "{down}", "{left}", "{
 _DESTRUCTIVE_WORDS = ("excluir", "delete", "remove", "remover", "apagar", "instalar",
                       "uninstall", "enviar", "send", "salvar", "save", "fechar", "close",
                       "publish", "publicar", "comprar", "buy", "formatar", "reset",
-                      "restaurar", "confirmar", "confirm", "guardar", "eliminar")
+                      "restaurar", "confirmar", "confirm", "guardar", "eliminar",
+                      "substituir", "replace", "descartar", "discard", "esvaziar", "empty",
+                      "pagar", "pagamento", "payment", "sign out", "log out", "terminar sessão")
+
+# A dialog's answer button commits whatever the dialog asked ("Excluir permanentemente?",
+# "Substituir o arquivo?"): its own label says nothing, so the short answers are judged by
+# exact name — a substring "ok" would catch "Book", "sim" would catch "Simular".
+_CONFIRM_LABELS = frozenset({"sim", "yes", "ok", "aceitar", "accept", "permitir", "allow",
+                             "sair", "exit", "quit"})
 
 # Control types whose click changes a persisted state rather than navigating.
 _SETTING_TYPES = ("CheckBox", "RadioButton", "Slider", "Spinner")
@@ -178,6 +186,8 @@ def keyboard_verdict(*, keys: str, control_type: str = "", control_label: str = 
         return low("nenhuma tecla foi enviada")
     lowered = text.casefold()
     if submit_keys(text):
+        if re.search(r"[\^%]\s*(?:\{(?:vk_)?(?:enter|return)\}|enter|return)", lowered):
+            return high("Ctrl/Alt+Enter envia a mensagem ou o formulário em quase todos os programas")
         if looks_like_composer(control_type, control_label):
             return high("Enter em campo de mensagem/conteúdo: pode enviar ou publicar o texto")
         if typed_into_control or looks_like_search(control_label):
@@ -207,6 +217,8 @@ def click_verdict(*, control_label: str, control_type: str = "",
         return high("controle de estado (marca/opção/valor): alterar muda uma configuração")
     label = str(control_label or "").casefold()
     matched = next((word for word in _DESTRUCTIVE_WORDS if word in label), "")
+    if not matched and label.strip(" .!&") in _CONFIRM_LABELS:
+        matched = label.strip(" .!&")
     if matched:
         return high(f"o próprio controle se chama '{matched}': pode excluir, enviar ou salvar")
     if settings_process and str(control_type) in {"ComboBox", *_SETTING_TYPES}:
