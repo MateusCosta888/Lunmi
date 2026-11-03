@@ -167,6 +167,7 @@ Function .onInit
   StrCpy $INSTDIR "''' + str(install) + r'''"
 FunctionEnd
 Section
+  !insertmacro lunmiCheckPath
   StrCpy $lunmiRuntime "$INSTDIR-runtime"
   InitPluginsDir
   CreateDirectory $lunmiRuntime
@@ -214,6 +215,14 @@ SectionEnd
     assert not (runtime / f'python-{damaged["LUNMI_PYTHON_KEY"]}.partial').exists()
     assert (new_py / 'Lib/a.py').read_text() == 'b'
     checks.append('CRC failure after the sentinel stops with code 2, never marked complete, installed version intact')
+
+    deep = work / ('d' * max(1, 101 - len(str(work)) - 1))
+    assert len(str(deep)) == 101, len(str(deep))
+    _compile(compiler, work / 'deep.nsi', _header(work, work / 'deep.exe', plugins, templates, False)
+             + stage.replace(str(install), str(deep)))
+    code = subprocess.run([str(work / 'deep.exe')], timeout=60).returncode
+    assert code == 2 and not Path(str(deep) + '-runtime').exists(), code
+    checks.append('a folder past 100 characters stops with code 2 before anything is created')
     return checks
 
 

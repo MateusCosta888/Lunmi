@@ -24,6 +24,7 @@ Uso:  python desktop/scripts/verify_package.py [raiz_unpacked] [pasta_de_evidenc
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import sqlite3
@@ -246,6 +247,30 @@ def _stage_downloaded_models(user_data: Path, models: Path = VOICE_MODELS_SOURCE
     return states
 
 
+INSTALLER_NSH = REPO / "desktop" / "build" / "installer.nsh"
+MAX_PATH = 259  # Windows refuses DLL loads at 260 characters and beyond
+
+
+def _path_budget_failure(root: Path, component_dirs: dict[str, Path]) -> str:
+    """Why this tree cannot run where it is, or would not run under the installer's longest
+    accepted folder; "" when both fit (02/11: a deep checkout failed with a bare DLL error)."""
+    deepest = max((p for tree in [root, *component_dirs.values()] for p in tree.rglob("*") if p.is_file()),
+                  key=lambda p: len(str(p)))
+    if len(str(deepest)) > MAX_PATH:
+        return (f"caminho com {len(str(deepest))} caracteres (máximo {MAX_PATH}): {deepest}. "
+                "Move o checkout para uma pasta mais curta; o Windows não carregaria as DLLs.")
+    match = re.search(r"StrLen \$lunmiOut \"\$INSTDIR\"\s+\$\{If\} \$lunmiOut > (\d+)",
+                      INSTALLER_NSH.read_text(encoding="utf-8"))
+    if not match:
+        return "installer.nsh deixou de limitar o comprimento da pasta de instalação."
+    below_instdir = max(len("-runtime\\" + str(p.relative_to(d.parent)))
+                        for d in component_dirs.values() for p in d.rglob("*") if p.is_file())
+    if int(match[1]) + below_instdir > MAX_PATH:
+        return (f"o instalador aceita pastas até {match[1]} caracteres, mas há ficheiros a {below_instdir} "
+                f"abaixo dela: baixa o limite em installer.nsh para {MAX_PATH - below_instdir}.")
+    return ""
+
+
 def main() -> int:
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_ROOT
     evidence = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else REPO / "output" / "alpha-acceptance"
@@ -263,6 +288,10 @@ def main() -> int:
     legacy_inside = sorted(name for name in components.NAMES if (root / "resources" / name).exists()
                            and component_dirs[name] != root / "resources" / name)
     trees = [root / "resources", *component_dirs.values()]
+    failure = _path_budget_failure(root, component_dirs)
+    if failure:
+        print(f"[verify] {failure}", file=sys.stderr)
+        return 1
     evidence.mkdir(parents=True, exist_ok=True)
     # Diretório próprio, com espaços e acentos, como pede o aceite.
     user_data = evidence / "dados do testador çã"

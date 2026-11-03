@@ -44,6 +44,17 @@
     Quit
   !macroend
 
+  ; Windows will not load a DLL past 260 characters: the deepest runtime file sits ~160 below
+  ; $INSTDIR (verify_package.py proves this limit against every build), so a deeper folder
+  ; would install and then fail to start. Refuse it before anything changes.
+  !macro lunmiCheckPath
+    StrLen $lunmiOut "$INSTDIR"
+    ${If} $lunmiOut > 100
+      MessageBox MB_OK|MB_ICONEXCLAMATION "A pasta de instalação tem $lunmiOut caracteres e o máximo é 100: o Windows não carregaria os ficheiros mais fundos da Lunmi. Escolhe uma pasta mais curta, por exemplo a sugerida. Nada foi alterado." /SD IDOK
+      !insertmacro lunmiAbort
+    ${EndIf}
+  !macroend
+
   ; Free MB needed on ROOT, or abort before anything is removed.
   !macro lunmiNeed ROOT MB
     ClearErrors
@@ -146,6 +157,7 @@
     Var /GLOBAL lunmiValue
     Var /GLOBAL lunmiOut
     Var /GLOBAL lunmiHandle
+    !insertmacro lunmiCheckPath
     StrCpy $lunmiRuntime "$INSTDIR-runtime"
     CreateDirectory $lunmiRuntime
     File "/oname=$PLUGINSDIR\7za.exe" "${LUNMI_SEVEN_ZIP}"

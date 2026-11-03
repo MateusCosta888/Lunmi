@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -289,3 +290,34 @@ def test_the_mounted_payload_has_no_forbidden_paths() -> None:
         if not assemble._relative_is_clean(path.relative_to(payload))
     ]
     assert offenders == []
+
+
+def test_paths_past_the_windows_limit_fail_verification_with_a_clear_reason(tmp_path: Path, monkeypatch) -> None:
+    # 02/11: a deep checkout failed with a bare "DLL load failed"; a deep install would do the same.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "desktop" / "scripts"))
+    import verify_package
+
+    root, voice = tmp_path / "win-unpacked", tmp_path / "runtime" / "voice-0123456789abcdef"
+    (root / "resources").mkdir(parents=True)
+    (root / "resources" / "a.txt").write_text("x", encoding="utf-8")
+    deep = voice / ("d" * 60) / "file.pyd"
+    deep.parent.mkdir(parents=True)
+    deep.write_bytes(b"x")
+    nsh = tmp_path / "installer.nsh"
+    monkeypatch.setattr(verify_package, "INSTALLER_NSH", nsh)
+    nsh.write_text('    StrLen $lunmiOut "$INSTDIR"\n    ${If} $lunmiOut > 100\n', encoding="utf-8")
+    assert verify_package._path_budget_failure(root, {"voice": voice}) == ""
+    nsh.write_text('    StrLen $lunmiOut "$INSTDIR"\n    ${If} $lunmiOut > 200\n', encoding="utf-8")
+    assert "baixa o limite" in verify_package._path_budget_failure(root, {"voice": voice})
+    nsh.write_text("no guard\n", encoding="utf-8")
+    assert "deixou de limitar" in verify_package._path_budget_failure(root, {"voice": voice})
+    monkeypatch.setattr(verify_package, "MAX_PATH", len(str(deep)) - 1)
+    assert "Move o checkout" in verify_package._path_budget_failure(root, {"voice": voice})
+
+
+def test_the_shipped_installer_keeps_its_folder_length_guard(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "desktop" / "scripts"))
+    import verify_package
+
+    text = verify_package.INSTALLER_NSH.read_text(encoding="utf-8")
+    assert re.search(r"StrLen \$lunmiOut \"\$INSTDIR\"\s+\$\{If\} \$lunmiOut > 100", text)
