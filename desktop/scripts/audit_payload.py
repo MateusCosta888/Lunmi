@@ -1,6 +1,6 @@
 """Audita a árvore extraída do pacote: nenhum segredo, dado pessoal ou dependência de caminho.
 
-Roda sobre `desktop/release/win-unpacked` (ou outra raiz de payload) e falha quando encontra:
+Roda sobre `ROOT/versions/<versão>` e os seus componentes em `ROOT/store`; falha quando encontra:
 
 * estado pessoal/gravável que não pode viajar (`.env`, `.local`, `.git`, `.agents`, DPAPI,
   SQLite com os seus sidecars, diretórios `logs/` e `output/` sob `resources/`);
@@ -17,7 +17,7 @@ código-fonte de bibliotecas — o caminho pessoal continua sendo varrido em tod
 
 Nunca imprime valores sensíveis: mostra o caminho e o tipo de achado.
 
-Uso:  python desktop/scripts/audit_payload.py [raiz]
+Uso:  python desktop/scripts/audit_payload.py ROOT/versions/<versão>
 """
 from __future__ import annotations
 
@@ -29,9 +29,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import components  # noqa: E402
-
-DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "release" / "win-unpacked"
+from verify_package import component_directories  # noqa: E402
 
 FORBIDDEN_NAMES = {".env", ".local", ".git", ".agents", ".claude", ".cursor", ".qoder",
                    ".freebuff", "secret.bin", "install.json", "state.json"}
@@ -232,17 +230,23 @@ def _audit_asar(path: Path, relative: Path) -> list[str]:
 
 
 def main() -> int:
-    root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_ROOT
+    if len(sys.argv) != 2:
+        print("Uso: audit_payload.py ROOT/versions/<versão>", file=sys.stderr)
+        return 2
+    root = Path(sys.argv[1]).absolute()
     if not root.is_dir():
         print(f"[audit] raiz inexistente: {root}", file=sys.stderr)
         return 1
+    try:
+        component_dirs = component_directories(root)
+    except (OSError, ValueError) as exc:
+        print(f"[audit] layout beta inválido: {exc}", file=sys.stderr)
+        return 1
     findings = audit_tree(root)
     entries = sum(1 for _ in root.rglob("*"))
-    # Python e voz viajam como arquivos de componentes; audita-se o conteúdo extraído e conferido.
-    if (root / "resources" / components.MANIFEST).is_file():
-        for name, directory in components.ensure_materialized(root).items():
-            findings += audit_tree(directory, Path("resources") / name)
-            entries += sum(1 for _ in directory.rglob("*"))
+    for name, directory in component_dirs.items():
+        findings += audit_tree(directory, Path("resources") / name)
+        entries += sum(1 for _ in directory.rglob("*"))
     if findings:
         print(f"[audit] {len(findings)} achado(s) em {root}:")
         for item in findings[:40]:

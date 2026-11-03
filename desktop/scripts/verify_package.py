@@ -1,6 +1,6 @@
 """Aceite do PACOTE: exercita o artefato extraído, sem o checkout, .venv, Node ou Python do dev.
 
-O que este script prova, contra `desktop/release/win-unpacked` (ou outra raiz):
+O que este script prova, contra `ROOT/versions/<versão>` da beta:
 
 1. o backend empacotado sobe por stdio e completa `session.hello -> session.ready`;
 2. `memory.list` cria o banco **na raiz de dados do utilizador** (`LUNMI_USER_DATA`), nunca
@@ -12,14 +12,12 @@ O que este script prova, contra `desktop/release/win-unpacked` (ou outra raiz):
    senão o "primeiro uso" não estaria sendo exercitado;
 4. o worker UFO **real** do pacote inicializa (`{"ready": true}`), responde a uma operação de
    observação sem inferência e encerra limpo;
-5. o intérprete executado é o Python do pacote, não o da máquina. Com `lunmi-components.json`,
-   Python e voz são extraídos dos arquivos de componentes para `<raiz>-runtime/`, como o
-   instalador faz, e a chave de conteúdo de cada um é conferida; nenhum pode continuar dentro
-   de `resources/`.
+5. o intérprete executado é o Python do pacote, não o da máquina. O manifesto aponta para
+   `ROOT/store/<nome>-<chave>`; marcador, conteúdo e caminhos são conferidos sem extração.
 
 Não usa GUI, não faz inferência, não abre provedor e não toca aplicativos pessoais.
 
-Uso:  python desktop/scripts/verify_package.py [raiz_unpacked] [pasta_de_evidencia]
+Uso:  python desktop/scripts/verify_package.py ROOT/versions/<versão> [pasta_de_evidencia]
 """
 from __future__ import annotations
 
@@ -30,18 +28,74 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import hashlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import components  # noqa: E402
 from bundle_vc_runtime import missing_vc_runtime  # noqa: E402
-from verify_runtime_engines import run_probe  # noqa: E402
+from verify_runtime_engines import probe_environment, run_probe  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = REPO / "desktop" / "release" / "win-unpacked"
 WORKER_STARTUP_SECONDS = 300.0
+MANIFEST = "lunmi-components.json"
+COMPONENTS = {"python": "python.exe", "voice": "runtime/python.exe"}
+
+
+def _pack_files(root: Path) -> list[Path]:
+    def unreadable(error: OSError) -> None:
+        raise error
+
+    files = []
+    for directory, names, filenames in os.walk(root, followlinks=False, onerror=unreadable):
+        for name in names + filenames:
+            path = Path(directory) / name
+            if path.is_symlink() or getattr(path.lstat(), "st_file_attributes", 0) & 0x400:
+                raise ValueError(f"ligação no pacote: {path}")
+            if path.is_file():
+                files.append(path)
+    return sorted(files, key=lambda p: p.relative_to(root).as_posix().encode("utf-8"))
+
+
+def _pack_content_key(root: Path) -> str:
+    """Same path/size/file-hash stream as Rust pack; the install marker is not payload."""
+    digest = hashlib.sha256()
+    for path in _pack_files(root):
+        if path.relative_to(root).as_posix() == ".complete":
+            continue
+        with path.open("rb") as stream:
+            sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest.update(f"{path.relative_to(root).as_posix()}\0{path.stat().st_size}\0{sha256}\n".encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+def component_directories(root: Path) -> dict[str, Path]:
+    """Read an already mounted beta fixture; never materialize or trust a marker alone."""
+    if root.parent.name != "versions" or not re.fullmatch(r"\d+\.\d+\.\d+(?:-beta\.\d+)?", root.name):
+        raise ValueError("a raiz deve ser ROOT/versions/<versão beta ou estável>")
+    if not root.is_dir() or root.resolve() != root.absolute():
+        raise ValueError("raiz de versão ausente ou redirecionada")
+    _pack_files(root)
+    keys = json.loads((root / "resources" / MANIFEST).read_text(encoding="utf-8"))
+    if not isinstance(keys, dict) or set(keys) != set(COMPONENTS):
+        raise ValueError("manifesto deve conter apenas python e voice")
+    result = {}
+    for name, sentinel in COMPONENTS.items():
+        key = keys[name]
+        if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{16}", key):
+            raise ValueError(f"chave inválida: {name}")
+        directory = root.parent.parent / "store" / f"{name}-{key}"
+        if directory.resolve() != directory.absolute() or not (directory / sentinel).is_file():
+            raise ValueError(f"componente ausente, incompleto ou redirecionado: {name}")
+        if (root / "resources" / name).exists():
+            raise ValueError(f"componente duplicado dentro de resources: {name}")
+        if (directory / ".complete").read_text(encoding="utf-8") != key:
+            raise ValueError(f"marcador incompleto: {name}")
+        if _pack_content_key(directory) != key:
+            raise ValueError(f"conteúdo difere da chave: {name}")
+        result[name] = directory
+    return result
 
 
 def _snapshot(root: Path) -> dict[str, int]:
@@ -109,7 +163,7 @@ def _pre_generated_wrappers(resources: Path) -> list[str]:
 
 
 def _run_bridge(app_root: Path, python: Path, voice: Path, user_data: Path) -> dict[str, object]:
-    env = dict(os.environ)
+    env = probe_environment(python, user_data)
     env.update({
         "LUNMI_USER_DATA": str(user_data),
         "PYTHONIOENCODING": "utf-8",
@@ -149,7 +203,7 @@ def _run_bridge(app_root: Path, python: Path, voice: Path, user_data: Path) -> d
 
 
 def _run_worker(app_root: Path, python: Path, user_data: Path) -> dict[str, object]:
-    env = dict(os.environ)
+    env = probe_environment(python, user_data)
     env.update({
         "UFO_PATH": str(app_root / "vendor" / "UFO"),
         "OUTPUT_DIRECTORY": str(user_data / "output"),
@@ -271,33 +325,48 @@ def _path_budget_failure(root: Path, component_dirs: dict[str, Path]) -> str:
     return ""
 
 
+def _beta_path_budget_failure(root: Path, component_dirs: dict[str, Path]) -> str:
+    """Check the fixture and its fixed LOCALAPPDATA install destination, in UTF-16 units."""
+    install_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "Programs" / "Lunmi"
+    beta_root = root.parent.parent
+    for tree in [root, *component_dirs.values()]:
+        for path in tree.rglob("*"):
+            if not path.is_file():
+                continue
+            for candidate in (path, install_root / path.relative_to(beta_root)):
+                length = len(str(candidate).encode("utf-16-le")) // 2
+                if length > MAX_PATH:
+                    return f"caminho com {length} caracteres (máximo {MAX_PATH}): {candidate}"
+    return ""
+
+
 def main() -> int:
-    root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_ROOT
-    evidence = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else REPO / "output" / "alpha-acceptance"
+    if len(sys.argv) not in (2, 3):
+        print("Uso: verify_package.py ROOT/versions/<versão> [pasta_de_evidencia]", file=sys.stderr)
+        return 2
+    root = Path(sys.argv[1]).absolute()
+    evidence = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else REPO / "output" / "beta-acceptance"
     app_root = root / "resources" / "app"
-    # Python e voz chegam como componentes: extraídos ao lado da raiz, como faz o instalador.
-    if (root / "resources" / components.MANIFEST).is_file():
-        component_dirs = components.materialize(root)
-    else:
-        component_dirs = {name: root / "resources" / name for name in components.NAMES}
-    python = component_dirs["python"] / "python.exe"
-    if not python.is_file():
-        print(f"[verify] runtime ausente: {python}", file=sys.stderr)
+    try:
+        component_dirs = component_directories(root)
+        if not all((root / name).is_file() for name in ("Lunmi.exe", "Lunmi-app.exe", "resources/app.asar")) or not app_root.is_dir():
+            raise ValueError("árvore da aplicação incompleta")
+        beta_root = root.parent.parent
+        if evidence.is_relative_to(beta_root) or beta_root.is_relative_to(evidence):
+            raise ValueError("a pasta de evidência deve ficar fora da árvore beta")
+    except (OSError, ValueError) as exc:
+        print(f"[verify] layout beta inválido: {exc}", file=sys.stderr)
         return 1
-    # Com manifesto, uma cópia dentro de resources/ voltaria a pesar em cada atualização.
-    legacy_inside = sorted(name for name in components.NAMES if (root / "resources" / name).exists()
-                           and component_dirs[name] != root / "resources" / name)
+    python = component_dirs["python"] / "python.exe"
+    legacy_inside: list[str] = []
     trees = [root / "resources", *component_dirs.values()]
-    failure = _path_budget_failure(root, component_dirs)
+    failure = _beta_path_budget_failure(root, component_dirs)
     if failure:
         print(f"[verify] {failure}", file=sys.stderr)
         return 1
     evidence.mkdir(parents=True, exist_ok=True)
     # Diretório próprio, com espaços e acentos, como pede o aceite.
-    user_data = evidence / "dados do testador çã"
-    if user_data.exists():
-        shutil.rmtree(user_data)
-    user_data.mkdir(parents=True)
+    user_data = Path(tempfile.mkdtemp(prefix="dados do testador çã-", dir=evidence))
 
     before = {k: v for tree in trees for k, v in _snapshot(tree).items()}
     pre_generated = [p for tree in trees for p in _pre_generated_wrappers(tree)]
