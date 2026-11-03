@@ -110,8 +110,8 @@ export function VoiceSettingsCard({ sessionId }: VoiceSettingsCardProps): React.
             {binding ? `Atalho de ditado: ${binding}` : "Sem atalho de ditado configurado."}
           </p>
           <p style={{ margin: "0 0 10px", fontSize: "12px", color: TOKENS.textMuted }}>
-            Mantém premido o atalho para ditar; ao largar, a transcrição é enviada. O botão de
-            microfone no chat continua a ditado manual, sempre revisto antes de enviar.
+            Mantém premido o atalho, ou o botão de microfone no chat, para ditar; ao largar, a
+            transcrição é enviada.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             <KeyRecorder api={shortcutApi} disabled={shortcutBusy}
