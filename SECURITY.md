@@ -93,3 +93,49 @@ A procura de caminhos pessoais continua ativa. Modificar um byte ou mover o fich
 a exceção; as restantes fontes web e pastas de agente continuam a ser auditadas.
 A pasta `.agents` trazida pelo Typer é retirada antes de empacotar. Estas exceções de conteúdo
 público não são exclusões de vulnerabilidades; o lock web passa pela auditoria sem dispensas.
+
+### Reavaliação do gate de distribuição — 2026-11-03
+
+Esta revisão substitui o prazo e a lista de exceções da preparação de outubro. FastMCP
+passa de 3.2.4 para **3.4.10**, incluindo `fastmcp-slim` na mesma versão, para corrigir
+[GHSA-7xgj-8392-5q4r](https://github.com/PrefectHQ/fastmcp/security/advisories/GHSA-7xgj-8392-5q4r).
+LangChain passa de 0.3.27 para **0.3.30**, que corrige
+[GHSA-3644-q5cj-c5c7 / PYSEC-2026-2555](https://github.com/langchain-ai/langsmith-sdk/security/advisories/GHSA-3644-q5cj-c5c7).
+LangSmith já satisfaz o mínimo 0.8.0 indicado pelo mantenedor. MCP 1.30.0 e Pydantic 2.11.7
+mantêm-se. O lock de desenvolvimento também atualiza Authlib para 1.9.1, dnspython para
+2.9.0 e opentelemetry-api para 1.45.1; estas versões já estavam no lock de distribuição.
+
+Ficam **quatro avisos**, com reavaliação obrigatória até **2026-12-01**:
+
+- `PYSEC-2026-2192` — LangChain: busca de ficheiros e loaders de configurações afetados não
+  são chamados pela Lunmi. A correção publicada exige LangChain 1.3.9.
+- `PYSEC-2026-2193` — core: a bridge não aceita configurações para `load_prompt` nem
+  `load_prompt_from_config`. A correção publicada exige core 1.2.22.
+- `PYSEC-2026-2562` — core: não há chamada a `ChatOpenAI.get_num_tokens_from_messages`
+  nem o pacote `langchain-openai` nos locks. O aviso descreve a obtenção de imagens por
+  URL durante essa contagem; a correção usa langchain-openai 1.1.9 e core 1.2.11.
+- `PYSEC-2026-77` — text-splitters: não há chamada a `split_text_from_url`. O worker
+  desativa os quatro modos RAG do UFO; o código upstream de pesquisa, mesmo desativado,
+  obtém HTML com `safe_get` e usa `split_text`. A correção publicada exige splitters 1.1.2
+  e core ≥1.2.31.
+
+Foram revistos o worker, a bridge, os imports e as chamadas no UFO fixado em `a795552d`.
+Não há backports publicados destas quatro correções para a linha 0.3, e LangChain 0.3.30
+exige core e splitters abaixo de 1. A migração conjunta para 1.x precisa de validação própria;
+não se força essa mudança neste lote. A exceção é uma decisão temporária de alcance,
+não uma correção upstream. Habilitar RAG, loaders, Hub ou contagem de imagens exige nova revisão.
+
+`pip-audit` sem dispensas reporta agora os mesmos quatro avisos nos locks de desenvolvimento
+e de distribuição, e nenhum nos locks de voz e web. O gate ignora apenas os quatro IDs
+acima, apenas no runtime principal; novos avisos, falhas da auditoria e prazo expirado
+continuam a impedir a distribuição.
+
+`npm audit` reporta **15 entradas moderadas, nenhuma alta ou crítica**, na árvore de build,
+com origem em [minimatch / GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+São entradas da cadeia de dependências, não 15 falhas independentes. `npm audit --omit=dev`
+não reporta avisos. A correção publicada exige minimatch 11.0.1; o `audit fix` sugere
+recuar electron-builder para 20.23.1. Nenhuma dessas mudanças é aplicada: há consumidores
+que chamam a API antiga de minimatch como função, incompatível com uma substituição global
+pela major 11. Os padrões de empacotamento vêm dos ficheiros versionados, não de pedidos
+do chat. Reavaliar a cadeia de build até **2026-12-01**, mantendo o gate npm para avisos
+altos/críticos e sem aceitar padrões ou configurações de build não confiáveis.

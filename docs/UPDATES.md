@@ -30,7 +30,7 @@ Ed25519 não é um certificado Authenticode e não elimina avisos de editor desc
 6. O workflow testa, prepara Python e UFO pinados, audita, assina e cria uma Release em rascunho. Não executa em cada push nem publica automaticamente.
 7. Confirma versão, commit, testes e cinco artefactos: setup `.exe`, `.exe.blockmap`, `latest.yml`, `lunmi-update.json` e `lunmi-update.sig`. O provider GitHub usa a marca de pré-lançamento da Release; o empacotador gera `latest.yml` também para alpha. Só então publica o rascunho. Não alteres os artefactos de uma versão publicada.
 
-Conserva setups e blockmaps antigos. Corrige problemas com uma versão superior. A revisão das seis exceções Python em `SECURITY.md` expira em 2026-11-15; novas publicações ficam bloqueadas após essa data até revisão explícita.
+Conserva setups e blockmaps antigos. Corrige problemas com uma versão superior. Após a reavaliação de 03/11/2026, a revisão das quatro exceções Python em `SECURITY.md` expira em 2026-12-01; novas publicações ficam bloqueadas após essa data até revisão explícita.
 
 ## Build local e testes
 

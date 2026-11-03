@@ -4,14 +4,16 @@ from pathlib import Path
 import subprocess
 import sys
 
-# SECURITY.md: no auth transforms, LangSmith Hub, config loaders or URL text splitter.
+# SECURITY.md, reviewed 2026-11-03: the remaining LangChain fixes require 1.x.
+REVIEW_UNTIL = date(2026, 12, 1)
 REVIEWED = (
-    "GHSA-7xgj-8392-5q4r", "PYSEC-2026-2192", "PYSEC-2026-2555",
+    "PYSEC-2026-2192",
     "PYSEC-2026-2193", "PYSEC-2026-2562", "PYSEC-2026-77",
 )
 
-if __name__ == "__main__":
-    if date.today() > date(2026, 11, 15):
+
+def main() -> int:
+    if date.today() > REVIEW_UNTIL:
         raise SystemExit("Runtime advisory review expired; re-evaluate SECURITY.md before publishing.")
     resources = Path(__file__).resolve().parents[1] / 'resources'
     for name in ('requirements-runtime.lock', 'requirements-voice.lock', 'requirements-web.lock'):
@@ -21,4 +23,9 @@ if __name__ == "__main__":
                 args.extend(['--ignore-vuln', advisory])
         result = subprocess.run(args, check=False)
         if result.returncode:
-            raise SystemExit(result.returncode)
+            return result.returncode
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

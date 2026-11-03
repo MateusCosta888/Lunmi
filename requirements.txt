@@ -2,7 +2,7 @@
 httpx==0.28.1
 python-dotenv==1.2.2
 psutil==5.9.8
-fastmcp==3.2.4
+fastmcp==3.4.10
 pydantic==2.11.7
 PyYAML==6.0.1
 pywin32==310
@@ -22,7 +22,7 @@ websockets==15.0.1
 # Imported by the official UFO HostAgent/AppAgent processors (no local models loaded).
 openai==3.24.0
 gradio-client==2.7.2
-langchain==0.3.27
+langchain==0.3.30
 langchain-community==0.3.31
 art==6.5
 Flask==3.1.3
