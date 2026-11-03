@@ -21,3 +21,18 @@ def isolated_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     yield
     for memory in opened:
         memory.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_recycle_bin(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests delete for real but never fill the developer's Recycle Bin; one test uses it."""
+    if request.node.get_closest_marker("real_recycle_bin"):
+        return
+    import shutil
+
+    from app.computer import windows_tools
+
+    def remove(path):  # type: ignore[no-untyped-def]
+        shutil.rmtree(path) if path.is_dir() else path.unlink()
+
+    monkeypatch.setattr(windows_tools, "_to_recycle_bin", remove)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -437,3 +438,29 @@ def test_unreadable_entry_metadata_is_never_traversed(
     assert opened == [str(tmp_path)]
     assert result["complete"] is False and result["errors"] == 1
     assert result["limit_reason"] == "access_limited"
+
+
+@pytest.mark.real_recycle_bin
+@pytest.mark.skipif(os.name != "nt", reason="the Recycle Bin is a Windows feature")
+def test_delete_goes_to_the_recycle_bin_and_can_be_restored(tmp_path: Path) -> None:
+    # Audit 02/11: delete used unlink/rmtree, so a wrong pick confirmed in a hurry was gone for good.
+    import uuid
+
+    marker = f"lunmi-recycle-proof-{uuid.uuid4().hex}"
+    folder = tmp_path / "Pasta a apagar"
+    folder.mkdir()
+    (folder / "nota.txt").write_text(marker, encoding="utf-8")
+
+    async def approve(_: str) -> bool:
+        return True
+
+    result = asyncio.run(WindowsTools(object(), approve).filesystem("delete", str(folder)))
+    assert result["verified"] and result["recycle_bin"] and not folder.exists()
+    sid = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                         check=True).stdout.strip().split(",")[-1].strip('"')
+    binned = [entry for entry in (Path(tmp_path.anchor) / "$Recycle.Bin" / sid).glob("$R*")
+              if (entry / "nota.txt").is_file() and (entry / "nota.txt").read_text(encoding="utf-8") == marker]
+    assert binned, "the folder is not in the Recycle Bin"
+    for entry in binned:  # leave the developer's bin as it was
+        shutil.rmtree(entry)
+        (entry.parent / ("$I" + entry.name[2:])).unlink(missing_ok=True)

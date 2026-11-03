@@ -1,5 +1,6 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["real_recycle_bin: uses the real Windows Recycle Bin"]
 
 [tool.mypy]
 python_version = "3.11"

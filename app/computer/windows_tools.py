@@ -752,6 +752,30 @@ def _launchable_result(match: Match) -> dict[str, Any]:
     return item
 
 
+class _FileOp(ctypes.Structure):
+    _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_uint16),
+                ("fAnyOperationsAborted", wintypes.BOOL), ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+
+def _to_recycle_bin(path: Path) -> None:
+    """Deletes through the Recycle Bin, so a wrong pick can still be restored (audit 02/11).
+
+    Where the volume has no bin (a USB stick, a file too big for it) Windows shows its own
+    "delete permanently?" warning instead of destroying silently; refused or failed: error.
+    """
+    fo_delete, fof_silent, fof_noconfirmation, fof_allowundo = 3, 0x4, 0x10, 0x40
+    fof_noerrorui, fof_wantnukewarning = 0x400, 0x4000
+    # pFrom is a list ended by an empty string: the path, then a second terminator.
+    operation = _FileOp(None, fo_delete, str(path.resolve()) + "\0", None,
+                        fof_allowundo | fof_noconfirmation | fof_silent | fof_noerrorui | fof_wantnukewarning,
+                        False, None, None)
+    code = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
+    if code or operation.fAnyOperationsAborted or path.exists():
+        raise PermissionError(f"Não foi possível enviar para a Reciclagem (código {code}); nada foi apagado.")
+
+
 class WindowsTools:
     def __init__(self, state: Any, confirm: Callable[[str], Awaitable[bool]]) -> None:
         self.state = state
@@ -1610,11 +1634,8 @@ class WindowsTools:
             source.rename(target)
             result.update(destination=str(target), verified=not source.exists() and target.exists())
         elif operation == "delete":
-            if source.is_dir():
-                shutil.rmtree(source)
-            else:
-                source.unlink()
-            result["verified"] = not source.exists()
+            _to_recycle_bin(source)
+            result.update(verified=not source.exists(), recycle_bin=True)
         elif operation == "read":
             # Leitura não tem efeito: sem consentimento e sem UI. O conteúdo vai para quem pediu
             # (chat/tool), mas a EVIDÊNCIA guarda só os metadados — `logs/tasks.jsonl` recebe
