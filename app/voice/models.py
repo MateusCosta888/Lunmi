@@ -36,7 +36,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -57,7 +57,9 @@ TIMEOUT_S = 30.0
 RETRIES = 2
 # A dropped connection resumes the .part by itself after these pauses before the user sees it.
 NETWORK_RETRY_WAITS_S = (2.0, 5.0, 15.0, 30.0)
-MODEL_HOST_SUFFIXES = ("huggingface.co", "hf.co", "raw.githubusercontent.com")
+# The pinned upstream hosts and the project's own GitHub release mirror (its downloads redirect
+# to githubusercontent.com). Any of them only ever serves bytes checked against the pinned hash.
+MODEL_HOST_SUFFIXES = ("huggingface.co", "hf.co", "github.com", "githubusercontent.com")
 
 MESSAGE_NO_NETWORK = "Sem ligação aos servidores dos modelos. A transferência retoma onde parou."
 MESSAGE_NO_SPACE = "Espaço em disco insuficiente para os modelos de voz."
@@ -81,13 +83,15 @@ class ModelFile:
     url: str
     sha256: str
     bytes: int
+    mirrors: tuple[str, ...] = ()  # same bytes elsewhere, tried in order when `url` stays down
 
 
 def load_manifest(path: Path) -> dict[str, list[ModelFile]]:
     """The pinned files of each group, from VOICE-SOURCE.json; raises on anything malformed."""
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        files = [ModelFile(str(item["path"]), str(item["url"]), str(item["sha256"]).lower(), int(item["bytes"]))
+        files = [ModelFile(str(item["path"]), str(item["url"]), str(item["sha256"]).lower(), int(item["bytes"]),
+                           tuple(str(url) for url in item.get("mirrors", [])))
                  for item in data["files"]]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ModelsError(MESSAGE_MANIFEST) from exc
@@ -480,16 +484,15 @@ class VoiceModels:
         _guard(self.root, staged)
         part = _guard(self.root, staged.with_name(staged.name + ".part"))
         meta = _guard(self.root, part.with_name(part.name + ".json"))
+        sources = (item.url, *item.mirrors)
         for _attempt in range(RETRIES + 1):
-            for wait in (*NETWORK_RETRY_WAITS_S, None):
+            for index, url in enumerate(sources):
                 try:
-                    self._download_part(group, item, part, meta, cancelled, before)
+                    self._download_resuming(group, replace(item, url=url), part, meta, cancelled, before)
                     break
                 except ModelsError as exc:
-                    if str(exc) != MESSAGE_NO_NETWORK or wait is None:
-                        raise
-                    if self._cancel.get(group, threading.Event()).wait(wait):  # True: cancelled
-                        raise ModelsError("cancelled") from exc
+                    if str(exc) != MESSAGE_NO_NETWORK or index == len(sources) - 1:
+                        raise  # a mirror only stands in for a source that stays unreachable
             if _sha256(part, cancelled) == item.sha256:
                 os.replace(part, staged)
                 meta.unlink(missing_ok=True)
@@ -498,6 +501,19 @@ class VoiceModels:
             part.unlink(missing_ok=True)
             meta.unlink(missing_ok=True)
         raise ModelsError(MESSAGE_CORRUPT)
+
+    def _download_resuming(self, group: str, item: ModelFile, part: Path, meta: Path,
+                           cancelled: Callable[[], bool], before: int) -> None:
+        """One source: a dropped connection resumes the .part by itself before giving up."""
+        for wait in (*NETWORK_RETRY_WAITS_S, None):
+            try:
+                self._download_part(group, item, part, meta, cancelled, before)
+                return
+            except ModelsError as exc:
+                if str(exc) != MESSAGE_NO_NETWORK or wait is None:
+                    raise
+                if self._cancel.get(group, threading.Event()).wait(wait):  # True: cancelled
+                    raise ModelsError("cancelled") from exc
 
     def _download_part(self, group: str, item: ModelFile, part: Path, meta: Path,
                        cancelled: Callable[[], bool], before: int) -> None:

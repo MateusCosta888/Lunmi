@@ -462,3 +462,24 @@ def test_a_certificate_failure_says_so_and_the_real_cause_is_recorded(
     assert status["state"] == "error" and status["message"] == voice_models.MESSAGE_TLS
     record = (models.root / voice_models.FAILURE_LOG).read_text(encoding="utf-8")
     assert "speech" in record and "SSLCertVerificationError" in record and "local issuer" in record
+
+
+def test_a_source_that_stays_down_falls_back_to_its_mirror_with_the_same_pin(
+        tmp_path: Path, server: Server, monkeypatch) -> None:
+    # Audit 02/11: dictation depended on one third-party repository; a mirror now stands in.
+    monkeypatch.setattr(voice_models, "NETWORK_RETRY_WAITS_S", (0.0,))
+    manifest = json.loads(server.manifest(tmp_path).read_text(encoding="utf-8"))
+    for entry in manifest["files"]:
+        if entry["path"].startswith("models/whisper"):
+            entry["mirrors"] = [entry["url"]]
+            entry["url"] = server.url + "gone/" + entry["path"]  # the upstream answers 404
+    (tmp_path / "VOICE-SOURCE.json").write_text(json.dumps(manifest), encoding="utf-8")
+    models = VoiceModels(tmp_path / "voice-models", tmp_path / "VOICE-SOURCE.json",
+                         allow_hosts={"127.0.0.1"}, require_https=False)
+    assert run(models, "dictation")["state"] == "installed"
+    assert any(path.startswith("gone/") for path, _, _ in server.requests)
+    # A mirror with different bytes is still refused by the pin.
+    server.corrupt.add("models/whisper-large-v3-turbo/model.bin")
+    fresh = VoiceModels(tmp_path / "fresh", tmp_path / "VOICE-SOURCE.json",
+                        allow_hosts={"127.0.0.1"}, require_https=False)
+    assert run(fresh, "dictation")["state"] == "error" and fresh.installed_dir("dictation") is None
