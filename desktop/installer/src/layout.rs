@@ -80,7 +80,8 @@ impl Layout {
         Ok(target)
     }
 
-    /// Apaga versões e pacotes que nem a versão atual nem a anterior usam. Em uso → fica para a próxima.
+    /// Apaga versões e pacotes que nem a atual, nem a anterior, nem uma versão preparada mais nova
+    /// (à espera de reinício) usam. Chamar só com o `InstallLock`. Em uso → fica para a próxima.
     pub fn gc(&self) {
         let Some(cur) = self.read_current() else { return };
         let mut keep_versions = BTreeSet::from([cur.version.clone()]);
@@ -88,6 +89,10 @@ impl Layout {
         if let Some(p) = &cur.previous {
             keep_versions.insert(p.version.clone());
             keep_packs.extend(p.packs.iter().map(|(n, k)| format!("{n}-{k}")));
+        }
+        for staged in self.staged_newer_than(&cur.version) {
+            keep_versions.insert(staged.version.clone());
+            keep_packs.extend(staged.packs.iter().map(|(n, k)| format!("{n}-{k}")));
         }
         for (dir, keep) in [(self.versions(), &keep_versions), (self.store(), &keep_packs)] {
             let Ok(entries) = fs::read_dir(&dir) else { continue };
@@ -98,6 +103,35 @@ impl Layout {
             }
         }
         let _ = remove_tree(&self.staging());
+    }
+
+    /// Versões montadas e completas mais novas do que `current` (prontas para `--activate`).
+    pub fn staged_newer_than(&self, current: &str) -> Vec<Staged> {
+        let Ok(entries) = fs::read_dir(self.versions()) else { return vec![] };
+        entries.flatten()
+            .filter_map(|e| self.is_staged(&e.file_name().to_string_lossy()))
+            .filter(|s| crate::update::newer(&s.version, current))
+            .collect()
+    }
+}
+
+/// Exclusão entre processos do lançador (`stage`, `activate`, setup, `gc`): `ROOT\install.lock`
+/// aberto sem partilha. O Windows liberta-o se o processo morrer.
+pub struct InstallLock(#[allow(dead_code)] fs::File);
+
+impl InstallLock {
+    /// Espera até `wait_ms`; `None` se outro processo o mantiver.
+    pub fn acquire(root: &Path, wait_ms: u64) -> Option<InstallLock> {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _ = fs::create_dir_all(root);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+        loop {
+            match fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).share_mode(0).open(root.join("install.lock")) {
+                Ok(f) => return Some(InstallLock(f)),
+                Err(_) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(200)),
+                Err(_) => return None,
+            }
+        }
     }
 }
 
@@ -199,5 +233,27 @@ mod tests {
         l.gc();
         assert!(!l.store().join("app-stale").exists() && !l.version_dir("0.9.0").exists());
         assert!(l.app_exe("1.0.0-beta.1").exists());
+
+        // Uma versão preparada e à espera de reinício sobrevive ao gc de um --healthy tardio.
+        let src = d.join("src").join("app2");
+        tree(&src, &[("resources/app.asar", b"asar2")]);
+        let info = pack(&src, "app", &d.join("out")).unwrap();
+        let f = fs::File::open(d.join("out").join(format!("app-{}.tar.zst", info.key))).unwrap();
+        install_pack(f, info.size, &info.sha256, "app", &info.key, &l.store(), &l.staging(), Box::new(|_| {})).unwrap();
+        let mut next = keys.clone();
+        next.insert("app".into(), info.key.clone());
+        l.assemble("1.0.0-beta.2", &next).unwrap();
+        l.gc();
+        assert!(l.is_staged("1.0.0-beta.2").is_some(), "a versão pronta não pode desaparecer");
+        assert!(l.store().join(format!("app-{}", info.key)).exists());
+    }
+
+    #[test]
+    fn the_install_lock_is_exclusive_between_holders() {
+        let d = scratch("lock");
+        let held = InstallLock::acquire(&d, 0).unwrap();
+        assert!(InstallLock::acquire(&d, 300).is_none());
+        drop(held);
+        assert!(InstallLock::acquire(&d, 0).is_some());
     }
 }

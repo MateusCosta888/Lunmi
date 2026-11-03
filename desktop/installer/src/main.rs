@@ -26,7 +26,7 @@ use wry::http::{header::CONTENT_TYPE, Response};
 use wry::WebViewBuilder;
 
 use common::{data, emit, free_bytes, log, remove_tree, root, wide, Fail, Res};
-use layout::{activated, on_launch, Layout};
+use layout::{activated, on_launch, InstallLock, Layout};
 
 const INDEX: &str = include_str!("../ui/index.html");
 const ORB: &str = include_str!("../../src/features/chat/orb/liveRenderer.js");
@@ -47,10 +47,10 @@ fn main() -> ExitCode {
             emit(match m { Some(m) => json!({ "phase": "available", "version": m.version, "notes": m.notes }), None => json!({ "phase": "idle" }) });
             ExitCode::SUCCESS
         }),
-        "--stage" if args.len() >= 2 => update::stage(&layout, &args[1]).map(|_| { emit(json!({ "phase": "ready", "version": args[1] })); ExitCode::SUCCESS }),
+        "--stage" if args.len() >= 2 => locked(&layout, 0).and_then(|_lock| update::stage(&layout, &args[1])).map(|_| { emit(json!({ "phase": "ready", "version": args[1] })); ExitCode::SUCCESS }),
         "--activate" if args.len() >= 2 => activate(&layout, &args[1], arg_after(&args, "--wait-pid").and_then(|p| p.parse().ok())),
         "--healthy" if args.len() >= 2 => healthy(&layout, &args[1]),
-        "--gc" => { layout.gc(); Ok(ExitCode::SUCCESS) }
+        "--gc" => locked(&layout, 0).map(|_lock| { layout.gc(); ExitCode::SUCCESS }),
         "--uninstall" => uninstall(&layout),
         _ if payload.is_some() => {
             let silent = args.iter().any(|a| a == "/S" || a == "--silent");
@@ -98,13 +98,18 @@ fn launch(layout: &Layout, args: &[String]) -> Res<ExitCode> {
     let Some(cur) = layout.read_current() else {
         return Err(Fail::new("internal", "a Lunmi não está instalada (falta current.json)"));
     };
-    let (next, rolled_back) = on_launch(&cur);
+    let lock = InstallLock::acquire(&layout.root, 2_000);
+    let on_disk = cur.clone();
+    let mut cur = cur;
+    if !cur.healthy && healthy_marker(layout, &cur.version).is_file() { cur.healthy = true; cur.attempts = 0; }
+    let (next, rolled_back) = if lock.is_some() { on_launch(&cur) } else { (cur.clone(), false) };
     if rolled_back { log(&format!("rollback {} -> {} (não confirmou em 2 arranques)", cur.version, next.version)); }
     if !layout.app_exe(&next.version).is_file() {
         // A pasta da versão desapareceu (limpeza manual, antivírus): remonta-a a partir do store.
         layout.assemble(&next.version, &next.packs)?;
     }
-    if next != cur { layout.write_current(&next)?; }
+    if lock.is_some() && next != on_disk { layout.write_current(&next)?; }
+    drop(lock);
     let exe = layout.app_exe(&next.version);
     let launcher = std::env::current_exe().unwrap_or_default();
     Command::new(&exe).args(args).current_dir(layout.version_dir(&next.version))
@@ -125,6 +130,7 @@ fn wait_pid(pid: u32, ms: u32) -> bool {
 }
 
 fn activate(layout: &Layout, version: &str, wait: Option<u32>) -> Res<ExitCode> {
+    let lock = locked(layout, 60_000)?;
     let staged = layout.is_staged(version).ok_or_else(|| Fail::new("internal", format!("{version} não está preparada")))?;
     if let Some(pid) = wait {
         if !wait_pid(pid, 30_000) { return Err(Fail::new("busy", format!("o processo {pid} não terminou em 30 s"))); }
@@ -138,10 +144,25 @@ fn activate(layout: &Layout, version: &str, wait: Option<u32>) -> Res<ExitCode> 
     let old = layout.read_current();
     layout.write_current(&activated(old.as_ref(), &staged))?;
     log(&format!("activated {version} (antes {:?})", old.map(|c| c.version)));
+    drop(lock);
     launch(layout, &[])
 }
 
+fn healthy_marker(layout: &Layout, version: &str) -> PathBuf { layout.root.join(format!("healthy.{version}")) }
+
+/// `None` → `busy`: outro processo do lançador está a instalar ou a ativar.
+fn locked(layout: &Layout, wait_ms: u64) -> Res<InstallLock> {
+    InstallLock::acquire(&layout.root, wait_ms).ok_or_else(|| Fail::new("busy", "outro processo da Lunmi está a instalar"))
+}
+
+/// Confirma a versão. Se um `--stage` longo tiver o bloqueio, deixa um marcador que o lançador lê
+/// e não faz `gc` (que só corre com o bloqueio e nunca apaga versões preparadas).
 fn healthy(layout: &Layout, version: &str) -> Res<ExitCode> {
+    let Some(_lock) = InstallLock::acquire(&layout.root, 10_000) else {
+        let _ = fs::write(healthy_marker(layout, version), version);
+        log(&format!("healthy {version} (marcador: instalação em curso)"));
+        return Ok(ExitCode::SUCCESS);
+    };
     if let Some(mut cur) = layout.read_current() {
         if cur.version == version && !cur.healthy {
             cur.healthy = true;
@@ -151,6 +172,11 @@ fn healthy(layout: &Layout, version: &str) -> Res<ExitCode> {
         }
     }
     layout.gc();
+    if let Ok(entries) = fs::read_dir(&layout.root) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("healthy.") { let _ = fs::remove_file(e.path()); }
+        }
+    }
     let _ = fs::remove_file(layout.root.join("Lunmi.exe.old"));
     Ok(ExitCode::SUCCESS)
 }
@@ -237,6 +263,7 @@ fn run_install(payload: &setup::Payload, layout: &Layout, desktop: bool, start_m
         None => Arc::new(|_, _| {}),
     };
     let started = std::time::Instant::now();
+    let _lock = locked(layout, 60_000)?;
     let r = setup::install(payload, layout, desktop, start_menu, progress);
     log(&format!("setup {} in {}s: {:?}", payload.manifest.version, started.elapsed().as_secs(), r.as_ref().err()));
     r
