@@ -353,7 +353,9 @@ export function App(): React.ReactElement {
             onRestart={() => void session.restart()} />
         )}
         {shellError && <p role="alert" className="lunmi-shell-error">{shellError}</p>}
-        {warmup.settledMessage && (
+        {/* Only real failures: "unavailable" (models not downloaded yet) is shown and fixed in the
+            voice card, and this startup notice never updates after a download. */}
+        {warmup.settledMessage && (!warmup.warmup || warmup.warmup.tts === "error" || warmup.warmup.stt === "error") && (
           <p role="status" className="lunmi-shell-error" data-testid="voice-notice">{warmup.settledMessage}</p>
         )}
         {brainNotice && (

@@ -193,3 +193,18 @@ it("canvas respeita movimento reduzido e remove todos os listeners ao sair", () 
   expect(docRemove).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
   expect(remove).toHaveBeenCalledWith("change", expect.any(Function));
 });
+
+it("só avisa no topo de falhas reais da voz, não de modelos ainda por transferir", async () => {
+  const missing = "Voz indisponível: runtime ou modelos de voz não instalados.";
+  for (const [tts, shown] of [["unavailable", false], ["error", true]] as const) {
+    const fake = bridge();
+    const base = fake.sendCommand.getMockImplementation()!;
+    fake.sendCommand.mockImplementation(async (type: string, ...rest: unknown[]) => type === "voice.warmup"
+      ? { state: "ready", ready: true, tts, stt: "unavailable", message: missing }
+      : (base as (t: string, ...r: unknown[]) => Promise<unknown>)(type, ...rest));
+    render(<App />);
+    await screen.findByTestId("composer");
+    expect(Boolean(screen.queryByTestId("voice-notice"))).toBe(shown);
+    cleanup();
+  }
+});
