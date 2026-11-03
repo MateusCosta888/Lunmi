@@ -255,6 +255,19 @@ def test_the_bridge_finds_older_voice_components_that_still_hold_models(tmp_path
     assert BridgeService._older_voice_components() == []
 
 
+def test_older_voice_components_follow_an_install_moved_out_of_a_protected_folder(tmp_path: Path, monkeypatch) -> None:
+    current = tmp_path / "AppData" / "Lunmi-runtime" / "voice-1111111111111111"
+    moved = tmp_path / "Documents" / "Lunmi-runtime" / "voice-2222222222222222"
+    current.mkdir(parents=True)
+    (moved / "models").mkdir(parents=True)
+    monkeypatch.setenv("LUNMI_BUNDLED_VOICE_HOME", str(current))
+    assert voice_models.older_voice_components() == []
+    (current.parent / voice_models.PREVIOUS_RUNTIME).write_text(str(moved.parent) + "\r\n", encoding="utf-16")
+    assert voice_models.older_voice_components() == [moved]
+    (current.parent / voice_models.PREVIOUS_RUNTIME).write_text("relative", encoding="utf-16")
+    assert voice_models.older_voice_components() == []
+
+
 # --- review 21a75b0 (orchestrator, 01/11): one test per blocker ------------------------------
 def _write(folder: Path, files: dict[str, bytes]) -> None:
     for path, body in files.items():

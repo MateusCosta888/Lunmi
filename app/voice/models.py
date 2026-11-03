@@ -48,6 +48,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
 }
 MODELS_DIRNAME = "voice-models"
 MARKER = ".lunmi-verified"
+PREVIOUS_RUNTIME = "previous-runtime.txt"  # written by desktop/build/installer.nsh
 STAGING = ".staging"
 HASH_CACHE = ".hash-cache.json"
 CHUNK = 1 << 20
@@ -196,8 +197,16 @@ def older_voice_components() -> list[Path]:
     if not bundled or not Path(bundled).is_absolute():
         return []
     current = Path(bundled)
+    parents = [current.parent]
     try:
-        return sorted(folder for folder in current.parent.glob("voice-*")
+        # An update the installer had to move out of a protected folder names the old runtime here.
+        moved = Path((current.parent / PREVIOUS_RUNTIME).read_text(encoding="utf-16").strip())
+        if moved.is_absolute() and moved != current.parent:
+            parents.append(moved)
+    except (OSError, ValueError):
+        pass
+    try:
+        return sorted(folder for parent in parents for folder in parent.glob("voice-*")
                       if folder != current and (folder / "models").is_dir() and not _is_link(folder))
     except OSError:
         return []

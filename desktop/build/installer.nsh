@@ -6,6 +6,7 @@
 
 !ifndef BUILD_UNINSTALLER
   Var lunmiUpdateDir
+  Var lunmiMoved  ; the protected folder an update had to leave, or ""
   !macro customInit
     ; The app starts updates with /S. A multi-minute install without a window looks like Lunmi vanished,
     ; unless the Lunmi setup window (--lunmi-ui) is already showing the progress.
@@ -52,6 +53,63 @@
     ${If} $lunmiOut > 100
       MessageBox MB_OK|MB_ICONEXCLAMATION "A pasta de instalação tem $lunmiOut caracteres e o máximo é 100: o Windows não carregaria os ficheiros mais fundos da Lunmi. Escolhe uma pasta mais curta, por exemplo a sugerida. Nada foi alterado." /SD IDOK
       !insertmacro lunmiAbort
+    ${EndIf}
+  !macroend
+
+  ; Sets $lunmiOut to 1 when a file can be created and removed in DIR.
+  !macro lunmiCanWrite DIR
+    StrCpy $lunmiOut 0
+    CreateDirectory "${DIR}"
+    ClearErrors
+    FileOpen $lunmiHandle "${DIR}\.lunmi-write-test" w
+    ${IfNot} ${Errors}
+      FileClose $lunmiHandle
+      ClearErrors
+      Delete "${DIR}\.lunmi-write-test"
+      ${IfNot} ${Errors}
+        StrCpy $lunmiOut 1
+      ${EndIf}
+    ${EndIf}
+  !macroend
+
+  ; Windows "Controlled folder access" (Documents, Desktop...) refuses writes from this unsigned
+  ; setup: every update of a copy installed there failed with code 2. An update moves to the
+  ; standard folder (the old copy stays, unused; its voice models are reused through
+  ; previous-runtime.txt, read by app/voice/models.py); a fresh install asks for another folder.
+  !ifndef LUNMI_STANDARD_DIR
+    !define LUNMI_STANDARD_DIR "$LOCALAPPDATA\Programs\${APP_FILENAME}"  ; tests point it elsewhere
+  !endif
+  !macro lunmiCheckWritable
+    !insertmacro lunmiCanWrite "$INSTDIR"
+    StrCpy $lunmiValue $lunmiOut
+    !insertmacro lunmiCanWrite "$lunmiRuntime"
+    ${If} "$lunmiValue$lunmiOut" != "11"
+    ${AndIf} ${isUpdated}
+    ${AndIf} "$INSTDIR" != "${LUNMI_STANDARD_DIR}"
+      StrCpy $lunmiMoved "$INSTDIR"
+      StrCpy $INSTDIR "${LUNMI_STANDARD_DIR}"
+      StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+      StrCpy $lunmiRuntime "$INSTDIR-runtime"
+      DetailPrint "O Windows protege $lunmiMoved: a Lunmi passa para $INSTDIR."
+      !insertmacro lunmiCanWrite "$INSTDIR"
+      StrCpy $lunmiValue $lunmiOut
+      !insertmacro lunmiCanWrite "$lunmiRuntime"
+    ${EndIf}
+    ${If} "$lunmiValue$lunmiOut" != "11"
+      ${If} $lunmiMoved != ""
+        StrCpy $appExe "$lunmiMoved\${APP_EXECUTABLE_FILENAME}"  ; reopen the copy that still works
+      ${EndIf}
+      MessageBox MB_OK|MB_ICONEXCLAMATION "O Windows não deixa o instalador escrever em $INSTDIR. Isto acontece com o Acesso controlado a pastas do Windows Defender (pastas como Documentos ou Ambiente de Trabalho). Escolhe outra pasta, por exemplo a sugerida, ou permite o instalador em Segurança do Windows. Nada foi alterado." /SD IDOK
+      !insertmacro lunmiAbort
+    ${EndIf}
+    ${If} $lunmiMoved != ""
+      ClearErrors
+      FileOpen $lunmiHandle "$lunmiRuntime\previous-runtime.txt" w
+      ${IfNot} ${Errors}
+        FileWriteWord $lunmiHandle 0xFEFF
+        FileWriteUTF16LE $lunmiHandle "$lunmiMoved-runtime"
+        FileClose $lunmiHandle
+      ${EndIf}
     ${EndIf}
   !macroend
 
@@ -159,7 +217,7 @@
     Var /GLOBAL lunmiHandle
     !insertmacro lunmiCheckPath
     StrCpy $lunmiRuntime "$INSTDIR-runtime"
-    CreateDirectory $lunmiRuntime
+    !insertmacro lunmiCheckWritable
     File "/oname=$PLUGINSDIR\7za.exe" "${LUNMI_SEVEN_ZIP}"
     !insertmacro lunmiCheckSpace
     !insertmacro lunmiStage python ${LUNMI_PYTHON_KEY} "${LUNMI_PYTHON_ARCHIVE}" "python.exe"
@@ -210,7 +268,11 @@
 
   ; Replaces the builder check: same outcome, but explains it and reopens the version that remains.
   !macro customUnInstallCheck
-    ${If} ${Errors}
+    ${If} $lunmiMoved != ""
+      ; The old copy sits in the protected folder its uninstaller cannot change; it stays unused.
+      ClearErrors
+      DetailPrint "A versão anterior em $lunmiMoved fica por remover; já não é usada."
+    ${ElseIf} ${Errors}
       MessageBox MB_OK|MB_ICONEXCLAMATION "Não foi possível iniciar a remoção da versão anterior da Lunmi. A instalação não foi concluída. Os teus dados em $LOCALAPPDATA\Lunmi foram mantidos.$\n$\nExecuta novamente o instalador; se o erro continuar, desinstala a Lunmi nas Definições do Windows e instala de novo." /SD IDOK
       !insertmacro lunmiAbort
     ${ElseIf} $R0 != 0

@@ -363,6 +363,9 @@ fn install(bundle: &Bundle, args: &Args, dir: String, desktop: bool, start_menu:
         Dispatch::Finished(Some(0)) => {
             log(&format!("nsis exit code=0 secs={}", started.elapsed().as_secs()));
             progress(1.0, "shortcuts");
+            // An update out of a folder Windows protects lands in the standard one: follow the registry.
+            let dir = if args.updated { installed_dir().unwrap_or(dir) } else { dir };
+            log(&format!("installed dir={dir}"));
             // Numa atualização com --force-run o próprio NSIS já reabriu a Lunmi.
             if args.updated && !args.force_run { launch(&dir); }
             send(&proxy, json!({ "type": "done", "dir": dir }));

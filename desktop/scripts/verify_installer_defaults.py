@@ -223,7 +223,46 @@ SectionEnd
     code = subprocess.run([str(work / 'deep.exe')], timeout=60).returncode
     assert code == 2 and not Path(str(deep) + '-runtime').exists(), code
     checks.append('a folder past 100 characters stops with code 2 before anything is created')
+    checks.extend(protected_folder_checks(compiler, plugins, templates, work))
     return checks
+
+
+def protected_folder_checks(compiler: Path, plugins: Path, templates: Path, work: Path) -> list[str]:
+    """Controlled folder access refuses the setup's writes; a deny-write ACL behaves the same."""
+    locked, standard, result = work / 'Documents' / 'Lunmi', work / 'Programs' / 'Lunmi', work / 'result.txt'
+    locked.mkdir(parents=True)
+    defines = f'!define LUNMI_STANDARD_DIR "{standard}"\n!define APP_EXECUTABLE_FILENAME "Lunmi.exe"\n'
+    probe = r'''
+Function .onInit
+  StrCpy $INSTDIR "''' + str(locked) + r'''"
+FunctionEnd
+Section
+  StrCpy $lunmiRuntime "$INSTDIR-runtime"
+  !insertmacro lunmiCheckWritable
+  FileOpen $0 "''' + str(result) + r'''" w
+  FileWrite $0 "$INSTDIR|$lunmiMoved"
+  FileClose $0
+SectionEnd
+'''
+    deny = subprocess.run(['icacls', str(locked.parent), '/deny', f'{os.environ["USERNAME"]}:(OI)(CI)(W,D)'],
+                          capture_output=True)
+    assert deny.returncode == 0, deny.stdout
+    try:
+        codes = {}
+        for updated in (True, False):
+            result.unlink(missing_ok=True)
+            out = work / f'protected-{updated}.exe'
+            _compile(compiler, work / 'protected.nsi', defines + _header(work, out, plugins, templates, updated) + probe)
+            codes[updated] = subprocess.run([str(out)], timeout=60).returncode
+            if updated:
+                assert codes[True] == 0 and result.read_text() == f'{standard}|{locked}', (codes, result.read_text())
+                moved = (Path(str(standard) + '-runtime') / 'previous-runtime.txt').read_text(encoding='utf-16')
+                assert moved == f'{locked}-runtime', moved
+        assert codes[False] == 2 and not result.exists(), codes
+    finally:
+        subprocess.run(['icacls', str(locked.parent), '/reset', '/T', '/Q'], capture_output=True)
+    return ['an update in a folder that refuses writes moves to the standard folder and names the old runtime',
+            'a fresh install into a folder that refuses writes stops with code 2 and explains why']
 
 
 def main() -> None:
