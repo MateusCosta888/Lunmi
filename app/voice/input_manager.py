@@ -92,6 +92,7 @@ class VoiceInputManager:
         popen: Callable[..., Any] | None = None,
         on_speech_interrupt: Callable[[], Any] | None = None,
         on_active_changed: Callable[[bool], Any] | None = None,
+        emit_level: Callable[[dict[str, Any]], None] | None = None,
         start_timeout_s: float = START_TIMEOUT_SECONDS,
         stt_timeout_s: float | None = None,
         cancel_timeout_s: float = CANCEL_TIMEOUT_SECONDS,
@@ -107,6 +108,7 @@ class VoiceInputManager:
         self._popen = popen or subprocess.Popen
         self._on_speech_interrupt = on_speech_interrupt
         self._on_active_changed = on_active_changed
+        self._emit_level = emit_level
         self.start_timeout_s = float(start_timeout_s)
         # The measured CPU path can take longer than the audio; max capture is 30 seconds.
         self.stt_timeout_s = float(stt_timeout_s if stt_timeout_s is not None else (
@@ -578,6 +580,7 @@ class VoiceInputManager:
         generation = data.get("generation")
         publish = False
         kill = False
+        level_payload: dict[str, Any] | None = None
         with self._lock:
             if self._closing or self._proc is not proc:
                 return
@@ -614,7 +617,15 @@ class VoiceInputManager:
             elif generation != self._generation:
                 return
 
-            if kind == "state":
+            if kind == "level":
+                level = data.get("level")
+                if (self._state == "listening" and self._emit_level is not None
+                        and not isinstance(level, bool) and isinstance(level, (int, float))):
+                    # A loudness number for the meter, never audio; emitted outside the lock.
+                    level_payload = {"session_id": self.session_id, "generation": self._generation,
+                                     "level": min(1.0, max(0.0, float(level)))}
+
+            elif kind == "state":
                 value = data.get("state")
                 if value == "listening" and self._state == "starting":
                     self._cancel_start_timer_locked()
@@ -677,6 +688,12 @@ class VoiceInputManager:
                     # O pid deixa de ser utilizável enquanto a árvore termina; o handle
                     # continua em `_proc` para close/cancel concorrentes.
                     self._terminating = self._proc
+        if level_payload is not None and self._emit_level is not None:
+            try:
+                self._emit_level(level_payload)
+            except Exception:
+                # Um cliente que já fechou stdout não pode derrubar o ditado.
+                pass
         if publish:
             with self._lock:
                 active = self._state in ACTIVE_STATES

@@ -134,6 +134,7 @@
     "task.need_input",
     "task.progress",
     "task.started",
+    "voice.input.level",
     "voice.input.state",
     "voice.readiness",
     "voice.models",

@@ -46,6 +46,8 @@ export interface VoiceInputApi {
   cancel: () => Promise<VoiceInputAckDto | null>;
   dismissTranscript: () => void;
   demoteTranscript: () => void;
+  /** Loudness 0..1 of the current listening turn, ~10/s; a subscription so only the meter re-renders. */
+  onLevel: (listener: (level: number) => void) => () => void;
 }
 
 export function useVoiceInput(sessionId: string | undefined, enabled = true): VoiceInputApi {
@@ -122,10 +124,20 @@ export function useVoiceInput(sessionId: string | undefined, enabled = true): Vo
     setError(null);
   }, [sessionId]);
 
+  const levelListenersRef = useRef(new Set<(level: number) => void>());
+
   // Subscrição primeiro: eventos que cheguem antes do GET inicial já valem.
   useEffect(() => {
     if (!supported || !api) return;
     return api.onEvent((event) => {
+      if (event.type === "voice.input.level") {
+        const payload = event.payload as { session_id?: string; generation?: number; level?: number };
+        if (sessionId && payload.session_id !== sessionId) return;
+        if (payload.generation !== generationRef.current || typeof payload.level !== "number") return;
+        const level = Math.min(1, Math.max(0, payload.level));
+        levelListenersRef.current.forEach(listener => listener(level));
+        return;
+      }
       if (event.type !== "voice.input.state") return;
       const payload = event.payload as unknown as VoiceInputStateEventDto;
       if (sessionId && payload.session_id !== sessionId) return;
@@ -165,14 +177,23 @@ export function useVoiceInput(sessionId: string | undefined, enabled = true): Vo
   }, [commit]);
 
   const busyRef = useRef(false);
+  const inFlightRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const sendAckCommand = useCallback(
     async (
       command: "voice.input.start" | "voice.input.cancel" | "voice.input.finish",
       payload: Record<string, unknown>,
     ): Promise<VoiceInputAckDto | null> => {
-      if (!supported || busyRef.current) return null;
+      if (!supported) return null;
+      // A second start is refused (never two captures), but finish/cancel wait their turn:
+      // a dropped finish left a hold turn listening until its 30 s cap.
+      while (busyRef.current) {
+        if (command === "voice.input.start") return null;
+        await inFlightRef.current.catch(() => undefined);
+      }
       busyRef.current = true;
+      let settle: () => void = () => undefined;
+      inFlightRef.current = new Promise<void>(resolve => { settle = resolve; });
       setBusy(true);
       const epoch = requestEpochRef.current;
       const sessionEpoch = sessionEpochRef.current;
@@ -194,9 +215,15 @@ export function useVoiceInput(sessionId: string | undefined, enabled = true): Vo
         return null;
       } finally {
         busyRef.current = false;
+        settle();
         if (mountedRef.current) setBusy(false);
       }
     }, [api, applyAck, supported]);
+
+  const onLevel = useCallback((listener: (level: number) => void) => {
+    levelListenersRef.current.add(listener);
+    return () => { levelListenersRef.current.delete(listener); };
+  }, []);
 
   const stateName = state?.state ?? "idle";
   const isActive = stateName === "starting" || stateName === "listening" || stateName === "transcribing";
@@ -221,5 +248,6 @@ export function useVoiceInput(sessionId: string | undefined, enabled = true): Vo
       transcriptRef.current = demoted;
       setTranscript(demoted);
     },
+    onLevel,
   };
 }

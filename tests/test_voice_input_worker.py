@@ -377,3 +377,22 @@ def test_hold_silence_still_hits_the_finite_capture_ceiling() -> None:
             finished = step
             break
     assert finished is not None and finished.reason == "max_capture"
+
+
+def test_each_listened_block_reports_one_loudness_number_and_never_audio(tmp_path: Path) -> None:
+    """The composer's meter reads this; speech must read louder than silence."""
+    blocks = _blocks(_silence(0.2), _tone(0.4), _silence(0.6))
+    worker, events, _stream, _model = _worker(tmp_path, blocks=blocks)
+    worker.start(9)
+    assert worker.wait_idle(5) is True
+    levels = [event for event in events if event["type"] == "level"]
+    assert levels and all(set(event) == {"type", "generation", "level"} for event in levels)
+    assert all(event["generation"] == 9 and 0.0 <= event["level"] <= 1.0 for event in levels)
+    assert max(event["level"] for event in levels) > levels[0]["level"]
+
+
+def test_loudness_is_zero_for_silence_and_bounded_for_any_signal() -> None:
+    from app.voice.input_worker import level_from_rms
+    assert level_from_rms(0.0) == 0.0 and level_from_rms(float("nan")) == 0.0
+    assert level_from_rms(1e-3) == 0.0 and level_from_rms(10.0) == 1.0
+    assert 0.4 < level_from_rms(0.05) < 0.8

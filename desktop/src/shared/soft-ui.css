@@ -51,8 +51,6 @@
 .lunmi-mode { padding: 3px; border-radius: 12px; background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-inset); }
 .lunmi-mode-option { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 12px; border-radius: 9px; }
 .lunmi-mode-option[data-checked="true"] { color: var(--lunmi-accent); background: var(--lunmi-bg-card); box-shadow: var(--lunmi-depth-control); }
-.lunmi-composer-counter { color: var(--lunmi-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.lunmi-composer-counter[data-near-limit="true"] { color: var(--lunmi-warning); }
 .lunmi-send { width: auto; min-width: 102px; height: 40px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 0 14px;
   background: var(--lunmi-accent); color: var(--lunmi-on-accent); box-shadow: var(--lunmi-depth-control); font-size: 12px; font-weight: 600; }
 .lunmi-send svg { flex-shrink: 0; }

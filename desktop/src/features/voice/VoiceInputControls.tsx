@@ -14,7 +14,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Mic } from "lucide-react";
 import type { VoiceInputApi } from "./useVoiceInput";
+import type { HoldButton } from "./useHoldController";
 import "./voice.css";
+
+/** A press shorter than this is a tap, not speech: cancelled with a hint instead of sent. */
+const MIN_HOLD_MS = 250;
+const METER_BARS = 24;
+const HOLD_KEYS = new Set([" ", "Enter"]);
 
 const STATE_LABEL: Record<string, string> = {
   unavailable: "indisponível",
@@ -35,18 +41,36 @@ export interface VoiceInputControlsProps {
   setDraft: React.Dispatch<React.SetStateAction<string>>;
   /** Aviso do controlador de hold (autoenvio falhou; texto ficou para ação manual). */
   holdNotice?: string;
+  /** Premir-e-falar: enquanto premido escuta; ao soltar transcreve e envia (mesmo fluxo do atalho). */
+  hold?: HoldButton;
 }
 
 export function VoiceInputControls({
-  api, supportedBySession, draft, setDraft, holdNotice = "",
+  api, supportedBySession, draft, setDraft, holdNotice = "", hold,
 }: VoiceInputControlsProps): React.ReactElement | null {
   if (!supportedBySession) return null;
-  return <VoiceInputControlsInner api={api} draft={draft} setDraft={setDraft} holdNotice={holdNotice} />;
+  return <VoiceInputControlsInner api={api} draft={draft} setDraft={setDraft} holdNotice={holdNotice} hold={hold} />;
+}
+
+/** Live loudness bars: the newest sits against the button and the history flows left. */
+function VoiceLevelMeter({ onLevel }: { onLevel: VoiceInputApi["onLevel"] }): React.ReactElement {
+  const [levels, setLevels] = useState<number[]>(() => Array<number>(METER_BARS).fill(0));
+  useEffect(() => onLevel(level => setLevels(previous => [...previous.slice(1), level])), [onLevel]);
+  return (
+    <div className="lunmi-voice-meter" data-testid="voice-level-meter" aria-hidden="true">
+      <div className="lunmi-voice-meter-bars">
+        {levels.map((level, index) => (
+          <span key={index} style={{ "--level": Math.max(0.18, level) } as React.CSSProperties} />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function VoiceInputControlsInner({
-  api, draft, setDraft, holdNotice,
-}: { api: VoiceInputApi; draft: string; setDraft: React.Dispatch<React.SetStateAction<string>>; holdNotice: string }): React.ReactElement {
+  api, draft, setDraft, holdNotice, hold,
+}: { api: VoiceInputApi; draft: string; setDraft: React.Dispatch<React.SetStateAction<string>>; holdNotice: string;
+     hold?: HoldButton }): React.ReactElement {
   const { state, supported, busy, error, transcript, isActive, start, cancel, dismissTranscript } = api;
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -104,6 +128,32 @@ function VoiceInputControlsInner({
     void start();
   };
 
+  // Premir-e-falar: um gesto por vez; soltar envia, um toque curto ou Esc cancela.
+  const [held, setHeld] = useState(false);
+  // pointerup is followed by lostpointercapture: the ref ends the gesture exactly once.
+  const heldRef = useRef(false);
+  const heldAtRef = useRef(0);
+  const beginHold = () => {
+    // Chromium still delivers pointerdown to a disabled button: unavailable never listens.
+    if (!hold || heldRef.current || unavailable || busy || isActive) return;
+    heldRef.current = true;
+    setNotice("");
+    heldAtRef.current = performance.now();
+    setHeld(true);
+    hold.press();
+  };
+  const endHold = (send: boolean) => {
+    if (!hold || !heldRef.current) return;
+    heldRef.current = false;
+    setHeld(false);
+    if (send && performance.now() - heldAtRef.current >= MIN_HOLD_MS) {
+      hold.release();
+      return;
+    }
+    hold.cancel();
+    if (send) setNotice("Mantém o botão premido enquanto falas; solta para enviar.");
+  };
+
   const insertPreview = () => {
     if (preview === null) return;
     const base = draftRef.current.replace(/\s+$/u, "");
@@ -113,30 +163,60 @@ function VoiceInputControlsInner({
   };
 
   const stateAria = unavailable ? "Ditado indisponível"
+    : held ? "A ouvir — solta para enviar, Esc cancela"
     : isActive ? `A gravar — ${STATE_LABEL[stateName] ?? stateName}`
     : stateName === "error" ? `Ditado com erro — ${message || "tenta novamente"}`
+    : hold ? "Manter premido para falar"
     : "Gravar ditado";
+
+  const holdHandlers: React.ButtonHTMLAttributes<HTMLButtonElement> = hold ? {
+    onPointerDown: event => {
+      if (event.button > 0) return; // só o botão principal; o direito não fala
+      event.preventDefault(); // o rascunho mantém o foco; o gesto é só deste botão
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      beginHold();
+    },
+    onPointerUp: () => endHold(true),
+    onPointerCancel: () => endHold(false),
+    onLostPointerCapture: () => endHold(true),
+    onKeyDown: event => {
+      if (event.key === "Escape" && heldRef.current) { event.preventDefault(); endHold(false); return; }
+      if (!HOLD_KEYS.has(event.key)) return;
+      event.preventDefault();
+      if (!event.repeat) beginHold();
+    },
+    onKeyUp: event => {
+      if (!HOLD_KEYS.has(event.key)) return;
+      event.preventDefault();
+      endHold(true);
+    },
+    onBlur: () => endHold(false),
+  } : { onClick: onStart };
 
   return (
     <div className="lunmi-voice-input">
       <div className="lunmi-voice-input-row">
+        {held && <VoiceLevelMeter onLevel={api.onLevel} />}
         <button
           type="button"
           data-testid="voice-input-toggle"
           data-state={stateName}
+          data-held={held || undefined}
           className="lunmi-mic-round"
           aria-label={stateAria}
-          aria-pressed={isActive}
-          disabled={unavailable || busy || isActive}
-          title={unavailable ? (state?.message || "Ditado indisponível.") : "Ditar; o texto entra como rascunho para rever"}
-          onClick={onStart}
+          aria-pressed={held || isActive}
+          disabled={unavailable || (!held && (busy || isActive))}
+          title={unavailable ? (state?.message || "Ditado indisponível.")
+            : hold ? "Mantém premido para falar · solta para enviar"
+            : "Ditar; o texto entra como rascunho para rever"}
+          {...holdHandlers}
         >
           <Mic size={18} aria-hidden="true" />
           <span className="lunmi-sr-only" role="status" data-testid="voice-input-state">
             {STATE_LABEL[stateName] ?? stateName}
           </span>
         </button>
-        {isActive && (
+        {isActive && !held && (
           <button
             type="button"
             data-testid="voice-input-cancel"

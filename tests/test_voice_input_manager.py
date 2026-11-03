@@ -641,3 +641,40 @@ def test_hold_manual_turns_reject_finish_and_cap_cancels_auto_send(tmp_path: Pat
         assert cap_manager.finish(generation)["accepted"] is False
     finally:
         cap_manager.close()
+
+
+LEVEL_WORKER = """\
+import json, sys
+print(json.dumps({"type": "ready"}), flush=True)
+for line in sys.stdin:
+    try:
+        data = json.loads(line)
+    except Exception:
+        continue
+    generation = data.get("generation")
+    if data.get("type") == "start":
+        print(json.dumps({"type": "level", "generation": generation, "level": 0.9}), flush=True)
+        print(json.dumps({"type": "state", "generation": generation, "state": "listening"}), flush=True)
+        print(json.dumps({"type": "level", "generation": generation, "level": 0.6}), flush=True)
+        print(json.dumps({"type": "level", "generation": generation + 1, "level": 0.7}), flush=True)
+        print(json.dumps({"type": "level", "generation": generation, "level": True}), flush=True)
+        print(json.dumps({"type": "level", "generation": generation, "level": 4}), flush=True)
+    elif data.get("type") == "shutdown":
+        break
+"""
+
+
+def test_microphone_level_reaches_the_meter_only_while_listening_and_only_as_a_number(tmp_path: Path) -> None:
+    worker = _script(tmp_path, "level_worker.py", LEVEL_WORKER)
+    levels: list[dict[str, Any]] = []
+    manager, events = _manager(tmp_path, worker, emit_level=levels.append)
+    try:
+        manager.start()
+        assert _wait_for(lambda: len(levels) >= 2)
+        generation = manager.snapshot()["generation"]
+        # Before `listening`, another generation and a non-number are dropped; out of range is clamped.
+        assert levels == [{"session_id": "sess-input", "generation": generation, "level": 0.6},
+                          {"session_id": "sess-input", "generation": generation, "level": 1.0}]
+        assert all("level" not in event for event in events)
+    finally:
+        manager.close()

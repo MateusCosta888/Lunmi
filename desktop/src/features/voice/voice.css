@@ -35,7 +35,7 @@
   width: 44px; height: 44px; min-width: 44px; min-height: 44px; box-sizing: border-box; padding: 0;
   border: 1px solid var(--lunmi-border-subtle); border-radius: 50%; background: transparent;
   color: var(--lunmi-text-secondary); cursor: pointer;
-  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease; }
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, transform 120ms ease; }
 .lunmi-mic-round:hover:not(:disabled) { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
 .lunmi-mic-round:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: 2px; }
 .lunmi-mic-round:disabled { opacity: .5; cursor: not-allowed; }
@@ -67,3 +67,31 @@
    ganhava dos botões do cartão de voz. Duas classes no seletor = 0‑2‑1 vence sem `!important`
    e só alcança o cartão de voz em Definições; global/Node/Gmail intocados. */
 .lunmi-main .lunmi-voice-settings-card.lunmi-voice-settings-card button { min-height: 44px; box-sizing: border-box; }
+
+/* Premir-e-falar (compositor): o botão fica preenchido como o Enviar premido e o medidor de
+   áudio sai dele para a esquerda — barras com o nível real do microfone, a mais recente junto
+   ao botão. Só tokens do tema; cartão e borda iguais aos do preview de ditado. */
+.lunmi-main .lunmi-mic-round.lunmi-mic-round[data-held] { background: var(--lunmi-accent);
+  border-color: var(--lunmi-accent); color: var(--lunmi-on-accent); box-shadow: var(--lunmi-depth-pressed);
+  transform: scale(.96); touch-action: none; }
+.lunmi-main .lunmi-mic-round.lunmi-mic-round { touch-action: none; user-select: none; }
+.lunmi-voice-meter { position: absolute; z-index: 30; right: calc(100% + 8px); top: 50%; translate: 0 -50%;
+  display: flex; align-items: center; justify-content: flex-end; gap: 3px;
+  width: min(200px, 42vw); height: 36px; padding: 0 12px; box-sizing: border-box;
+  background: var(--lunmi-bg-card); border: 1px solid var(--lunmi-border-subtle); border-radius: 999px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--lunmi-bg-window, #000) 45%, transparent);
+  transform-origin: right center; animation: lunmi-voice-meter-in 180ms cubic-bezier(.2, .8, .2, 1); pointer-events: none; }
+/* O desvanecimento é só das barras (o histórico a sair), nunca da pílula, que fica opaca. */
+.lunmi-voice-meter-bars { display: flex; align-items: center; justify-content: flex-end; gap: 3px;
+  width: 100%; height: 100%;
+  -webkit-mask-image: linear-gradient(to left, #000 70%, transparent);
+  mask-image: linear-gradient(to left, #000 70%, transparent); }
+.lunmi-voice-meter span { flex: 1 1 0; min-width: 2px; max-width: 4px; height: calc(var(--level) * 22px);
+  border-radius: 2px; background: var(--lunmi-accent); opacity: calc(.45 + var(--level) * .55);
+  transition: height 90ms linear; }
+@keyframes lunmi-voice-meter-in { from { opacity: 0; transform: scaleX(.25); } to { opacity: 1; transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .lunmi-voice-meter { animation: none; }
+  .lunmi-voice-meter span { transition: none; }
+  .lunmi-main .lunmi-mic-round.lunmi-mic-round[data-held] { transform: none; }
+}

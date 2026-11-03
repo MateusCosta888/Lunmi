@@ -26,6 +26,7 @@ import { WebSources } from "../web/WebSources";
 import { useWebState } from "../web/useWebState";
 import { VoiceInputControls } from "../voice/VoiceInputControls";
 import type { VoiceInputApi } from "../voice/useVoiceInput";
+import type { HoldButton } from "../voice/useHoldController";
 import { deriveOrbMode } from "./orb/orbState";
 import { useBentoSurface } from "../../shared/bento";
 import "./chat-layout.css";
@@ -36,7 +37,7 @@ export interface ChatPanelProps {
   draft?: string;
   setDraft?: React.Dispatch<React.SetStateAction<string>>;
   /** VOICE REFINEMENTS V2: instância única do ditado (montada no App) + aviso do hold. */
-  voiceInput?: { api: VoiceInputApi; holdNotice?: string };
+  voiceInput?: { api: VoiceInputApi; holdNotice?: string; hold?: HoldButton };
   /** Reporta o modo atual do compositor ao controlador de hold (mesmo `chat.send`, modo normal). */
   reportVoiceMode?: (mode: ChatMode) => void;
   modelPicker?: React.ReactNode;
@@ -457,11 +458,8 @@ export function ChatPanel({
               </label>;
             })}
           </div>}
-          <span className="lunmi-composer-counter" data-testid="composer-counter" data-near-limit={text.length >= MAX_COMPOSER_CHARS * .9} aria-label={`${text.length} de ${MAX_COMPOSER_CHARS} caracteres`}>{text.length}/{MAX_COMPOSER_CHARS}</span>
-          {chat.busy ? <button type="button" data-testid="stop-task" className="lunmi-send lunmi-stop" aria-label="Parar tarefa" title="Parar tarefa" onClick={() => void chat.stop()}><Icon name="stop" size={16} /><span>Parar</span></button>
-            : <button type="submit" data-testid="send-task" className="lunmi-send" aria-label="Enviar mensagem" title="Enviar · Enter" disabled={!canSend}><span>{mode === "execute" ? "Executar" : "Enviar"}</span><Icon name="enter" size={16} /></button>}
-          {/* VOICE/NODE V3: microfone redondo só com ícone, imediatamente à direita de
-              Enviar/Parar tarefa; estados normais saíram do texto visível (aria/title/sr-only). */}
+          {/* Microfone de premir-e-falar à esquerda de Enviar/Parar: o medidor de áudio abre-se
+              para a esquerda, sobre a barra, sem empurrar o botão de envio. */}
           {voiceInput && (
             <VoiceInputControls
               api={voiceInput.api}
@@ -469,8 +467,11 @@ export function ChatPanel({
               draft={text}
               setDraft={setText}
               holdNotice={voiceInput.holdNotice}
+              hold={voiceInput.hold}
             />
           )}
+          {chat.busy ? <button type="button" data-testid="stop-task" className="lunmi-send lunmi-stop" aria-label="Parar tarefa" title="Parar tarefa" onClick={() => void chat.stop()}><Icon name="stop" size={16} /><span>Parar</span></button>
+            : <button type="submit" data-testid="send-task" className="lunmi-send" aria-label="Enviar mensagem" title="Enviar · Enter" disabled={!canSend}><span>{mode === "execute" ? "Executar" : "Enviar"}</span><Icon name="enter" size={16} /></button>}
           <VoiceControls sessionId={session?.session_id} />
             </div>
           </div>

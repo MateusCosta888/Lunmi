@@ -48,11 +48,11 @@ it("lista só os modelos do provedor atual e troca sem apagar rascunho ou enviar
   expect(api.sendCommand.mock.calls.some(([type]) => type === "chat.send")).toBe(false);
 });
 
-it("contador usa o limite real e o rótulo do envio acompanha o modo sem enviar sozinho", async () => {
+it("sem contador visível, o limite real fica no campo e o rótulo do envio acompanha o modo sem enviar sozinho", async () => {
   const { api } = setup(); await screen.findByTestId("composer");
-  expect(screen.getByTestId("composer-counter").textContent).toBe("0/4000");
+  expect(screen.queryByTestId("composer-counter")).toBeNull();
+  expect((screen.getByTestId("composer") as HTMLTextAreaElement).maxLength).toBe(4000);
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "Uma ideia" } });
-  expect(screen.getByTestId("composer-counter").textContent).toBe("9/4000");
   expect(screen.getByTestId("send-task").textContent).toBe("Executar");
   fireEvent.click(screen.getByTestId("mode-converse"));
   expect(screen.getByTestId("send-task").textContent).toBe("Enviar");

@@ -14,6 +14,7 @@ Contrato: `.agents/VOICE-INPUT-V1-CONTRACT.md` §8. Protocolo JSONL (stdin/stdou
            {"type":"shutdown"}
   saída    {"type":"ready"}
            {"type":"state","generation":N,"state":"listening|transcribing"}
+           {"type":"level","generation":N,"level":0..1}   (só a escutar; um número, nunca áudio)
            {"type":"result","generation":N,"text":"...","truncated":bool}
            {"type":"no_speech","generation":N,"reason":"silence|empty_transcript"}
            {"type":"stopped","generation":N}
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import threading
@@ -438,6 +440,13 @@ def load_silero(path: str | Path) -> SileroVad:
     return SileroVad(session)
 
 
+def level_from_rms(rms: float) -> float:
+    """Loudness of one block on 0..1 (log scale): silence 0, normal speech ≈ 0.5–0.8."""
+    if not rms > 1e-6:
+        return 0.0
+    return round(min(1.0, max(0.0, (20 * math.log10(rms) + 60) / 50)), 3)
+
+
 def open_microphone(sample_rate: int = INPUT_SAMPLE_RATE,
                     block_ms: int = DEFAULT_BLOCK_MS) -> Any:
     import sounddevice as sd
@@ -629,6 +638,10 @@ class InputWorker:
     def _emit_state(self, generation: int, state: str) -> None:
         self.emit({"type": "state", "generation": generation, "state": state})
 
+    def _emit_level(self, generation: int, rms: float) -> None:
+        # One scalar per block for the composer's meter: -60 dBFS → 0, -10 dBFS → 1.
+        self.emit({"type": "level", "generation": generation, "level": level_from_rms(rms)})
+
     def _run_turn(self, generation: int) -> None:
         try:
             samples, cancelled, failure, reason = self._capture(generation)
@@ -727,6 +740,7 @@ class InputWorker:
                 block = block.reshape(-1)
                 if not block.size:
                     continue
+                self._emit_level(generation, float(np.sqrt(np.mean(block * block))))
                 raw16 = resampler.process(block)
                 filtered = highpass.process(raw16)
                 for frame in frames.push(raw16):

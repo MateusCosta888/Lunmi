@@ -22,10 +22,18 @@ import { getBridgeApi } from "../../shared/ipc/client";
 import type { VoiceInputApi } from "./useVoiceInput";
 import type { ChatMode, VoiceInputHoldPhaseDto } from "../../shared/types";
 
+/** Push-to-talk from the composer button: same gesture, finish and auto-send as the shortcut. */
+export interface HoldButton {
+  press: () => void;
+  release: () => void;
+  cancel: () => void;
+}
+
 export interface HoldControllerApi {
   /** `false` quando a ponte não expõe `voiceInputShortcut.onHold` — nada de hold inventado. */
   holdAvailable: boolean;
   notice: string;
+  button: HoldButton;
 }
 
 export interface HoldControllerDeps {
@@ -82,9 +90,56 @@ export function useHoldController({ api, sessionId, send, getMode }: HoldControl
     gesture.finished = true;
     // O gesto concluído liberta a sua slot: um próximo `pressed` pode começar turno novo;
     // a autorização de envio passa a viver no token da geração finalizada.
-    tokenRef.current = { pressId: gesture.pressId, generation: gesture.generation, sessionId: gesture.sessionId };
+    const generation = gesture.generation;
+    tokenRef.current = { pressId: gesture.pressId, generation, sessionId: gesture.sessionId };
     if (gestureRef.current === gesture) gestureRef.current = null;
-    void apiRef.current.finish(gesture.generation);
+    void apiRef.current.finish(generation).then(ack => {
+      // `not_active`: the turn already ended on its own (cap/no speech). Anything else left the
+      // microphone open with nothing to close it, so it is cancelled and said, never left running.
+      if (ack?.accepted || ack?.reason === "not_active") return;
+      if (tokenRef.current?.generation === generation) tokenRef.current = null;
+      setNotice("O ditado não terminou como esperado; tenta outra vez.");
+      void apiRef.current.cancel();
+    });
+  };
+
+  // One gesture for both sources: the global shortcut (main's press ids, > 0) and the
+  // composer's push-to-talk button (local ids, < 0, so the two never collide).
+  const press = (pressId: number) => {
+    if (gestureRef.current) return; // grito repetido/prefixo: uma só captura
+    const gesture: Gesture = {
+      pressId, sessionId: sessionIdRef.current,
+      generation: null, released: false, cancelled: false, finished: false,
+    };
+    gestureRef.current = gesture;
+    setNotice("");
+    void apiRef.current.start("hold").then(ack => {
+      // Validar identidade/época/sessão ANTES de aceitar o ACK (gate Root 2 e 4).
+      if (gestureRef.current !== gesture) return; // cancelado, substituído ou nova sessão
+      if (gesture.cancelled || gesture.sessionId !== sessionIdRef.current) { gestureRef.current = null; return; }
+      if (!ack || !ack.accepted) { gestureRef.current = null; return; }
+      gesture.generation = ack.generation;
+      if (gesture.released) finishOnce(gesture); // release chegou antes do ACK: finalizar agora
+    });
+  };
+
+  const release = (pressId: number) => {
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.pressId !== pressId) return;
+    gesture.released = true;
+    if (gesture.generation !== null) finishOnce(gesture);
+    else if (gesture.cancelled) gestureRef.current = null;
+  };
+
+  // cancelled: nunca é release. Invalida o gesto E a autorização pendente, mesmo antes do ACK.
+  const cancelGesture = (pressId: number): boolean => {
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.pressId !== pressId) return false;
+    gesture.cancelled = true;
+    gesture.generation = null;
+    gestureRef.current = null;
+    tokenRef.current = null;
+    return true;
   };
 
   useEffect(() => {
@@ -93,44 +148,32 @@ export function useHoldController({ api, sessionId, send, getMode }: HoldControl
       if (phase.session_id && phase.session_id !== sessionIdRef.current) return;
       if (phase.phase === "pressed") {
         if (phase.press_id <= lastPressIdRef.current) return; // press_id antigo não reabre turno
-        if (gestureRef.current) return; // grito repetido/prefixo: uma só captura
+        if (gestureRef.current) return;
         lastPressIdRef.current = phase.press_id;
-        const gesture: Gesture = {
-          pressId: phase.press_id, sessionId: sessionIdRef.current,
-          generation: null, released: false, cancelled: false, finished: false,
-        };
-        gestureRef.current = gesture;
-        void apiRef.current.start("hold").then(ack => {
-          // Validar identidade/época/sessão ANTES de aceitar o ACK (gate Root 2 e 4).
-          if (gestureRef.current !== gesture) return; // cancelado, substituído ou nova sessão
-          if (gesture.cancelled || gesture.sessionId !== sessionIdRef.current) { gestureRef.current = null; return; }
-          if (!ack || !ack.accepted) { gestureRef.current = null; return; }
-          gesture.generation = ack.generation;
-          if (gesture.released) finishOnce(gesture); // release chegou antes do ACK: finalizar agora
-        });
+        press(phase.press_id);
         return;
       }
-      if (phase.phase === "released") {
-        const gesture = gestureRef.current;
-        if (!gesture || gesture.pressId !== phase.press_id) return;
-        lastPressIdRef.current = Math.max(lastPressIdRef.current, phase.press_id);
-        gesture.released = true;
-        if (gesture.generation !== null) finishOnce(gesture);
-        else if (gesture.cancelled) gestureRef.current = null;
-        return;
-      }
-      // cancelled: nunca é release. Invalida o gesto E a autorização pendente, mesmo antes do ACK.
-      const gesture = gestureRef.current;
-      if (gesture && gesture.pressId === phase.press_id) {
-        lastPressIdRef.current = Math.max(lastPressIdRef.current, phase.press_id);
-        gesture.cancelled = true;
-        gesture.generation = null;
-        gestureRef.current = null;
-        tokenRef.current = null;
-      }
+      lastPressIdRef.current = Math.max(lastPressIdRef.current, phase.press_id);
+      // The main cancels the capture itself for a shortcut gesture; only the gesture dies here.
+      if (phase.phase === "released") release(phase.press_id);
+      else cancelGesture(phase.press_id);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shortcut?.onHold]);
+
+  const buttonPressRef = useRef(0);
+  const button: HoldButton = {
+    press: () => {
+      if (gestureRef.current) return;
+      buttonPressRef.current -= 1;
+      press(buttonPressRef.current);
+    },
+    release: () => release(buttonPressRef.current),
+    cancel: () => {
+      // Unlike the shortcut, nobody else closes the microphone for the button.
+      if (cancelGesture(buttonPressRef.current)) void apiRef.current.cancel();
+    },
+  };
 
   const transcript = api.transcript;
   useEffect(() => {
@@ -173,5 +216,5 @@ export function useHoldController({ api, sessionId, send, getMode }: HoldControl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcript]);
 
-  return { holdAvailable, notice };
+  return { holdAvailable, notice, button };
 }

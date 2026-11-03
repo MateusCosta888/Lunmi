@@ -381,7 +381,7 @@ export function App(): React.ReactElement {
                   before: chat.history?.before }).catch(err => setShellError(String(err.message ?? 'Não foi possível carregar mensagens.')))}>Carregar mensagens anteriores</button>}
               <ChatPanel chat={chat} session={session.session} draft={draft} setDraft={setDraft} modelChanging={modelBusy}
                 showTaskResults={preferences?.show_task_results === true}
-                voiceInput={{ api: voiceApi, holdNotice: hold.notice }} reportVoiceMode={reportVoiceMode}
+                voiceInput={{ api: voiceApi, holdNotice: hold.notice, hold: hold.button }} reportVoiceMode={reportVoiceMode}
                 autoApprove={{ ready: Boolean(approval), enabled: approval?.auto_approve ?? false, busy: policyBusy || modelBusy, onToggle: next => void changePolicy(next) }}
                 attachments={attachments.items}
                 attachmentPayload={() => attachments.items.map(item => ({ name: item.name, text: attachments.contents.get(item.id) ?? "", size_bytes: item.size }))}

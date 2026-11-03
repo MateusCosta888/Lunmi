@@ -45,6 +45,7 @@ class VoiceBridge:
             session_id=self.session_id,
             on_speech_interrupt=self.voice.stop,
             on_active_changed=self.voice.set_input_active,
+            emit_level=self._emit_voice_input_level,
         )
         # Warmup de introdução: só prepara recursos; não fala nem abre microfone. O renderer
         # pede explicitamente `voice.warmup` no loading e espera `voice.readiness`/timeout.
@@ -77,6 +78,12 @@ class VoiceBridge:
         if self._closed:
             return
         self._emit("voice.input.state", dict(payload))
+
+    def _emit_voice_input_level(self, payload: dict[str, Any]) -> None:
+        # Só {session_id, generation, level}: o medidor do microfone, nunca áudio.
+        if self._closed:
+            return
+        self._emit("voice.input.level", dict(payload))
 
     def _emit_voice_models(self, payload: dict[str, Any]) -> None:
         if self._closed:

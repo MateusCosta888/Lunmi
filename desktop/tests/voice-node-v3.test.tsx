@@ -32,6 +32,7 @@ function setupApp() {
     if (type === "voice.input.get") return { available: true, state: "idle", generation: 0, message: "" };
     if (type === "voice.input.start") return { accepted: true, generation: 1, state: "starting", reason: "" };
     if (type === "voice.input.cancel") return { accepted: true, generation: 2, state: "idle", reason: "" };
+    if (type === "voice.input.finish") return { accepted: true, generation: 1, state: "listening", reason: "" };
     return {};
   });
   const api = {
@@ -56,11 +57,13 @@ describe("Compositor V3 — mic redondo à direita de Enviar, sem texto normal",
     const mic = screen.getByTestId("voice-input-toggle");
     const send = await screen.findByTestId("send-task");
     expect(mic.closest(".lunmi-composer-actions")).not.toBeNull();
-    expect(send.compareDocumentPosition(mic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // imediatamente a seguir: o bloco do mic é o irmão seguinte do botão Enviar dentro das ações
-    expect(mic.closest(".lunmi-voice-input")?.previousElementSibling).toBe(send);
+    expect(send.compareDocumentPosition(mic) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    // imediatamente antes: o bloco do mic é o irmão anterior do botão Enviar dentro das ações
+    expect(mic.closest(".lunmi-voice-input")?.nextElementSibling).toBe(send);
     expect(mic.className).toContain("lunmi-mic-round");
-    expect(mic.getAttribute("aria-label")).toContain("Gravar ditado");
+    expect(mic.getAttribute("aria-label")).toContain("Manter premido para falar");
+    // o contador de caracteres saiu do compositor
+    expect(screen.queryByTestId("composer-counter")).toBeNull();
     // só ícone + estado sr-only: nenhum span de texto visível dentro do botão
     const visibleTexts = [...mic.querySelectorAll("span")].filter(node => !node.classList.contains("lunmi-sr-only"));
     expect(visibleTexts).toHaveLength(0);
@@ -68,13 +71,67 @@ describe("Compositor V3 — mic redondo à direita de Enviar, sem texto normal",
     expect(screen.getByTestId("voice-state-label").classList.contains("lunmi-sr-only")).toBe(true);
   });
 
-  it("clique no mic inicia ditado MANUAL com payload {} (sem autoenvio, sem segundo hook)", async () => {
+  it("premir o mic escuta em modo hold com medidor; soltar termina a captura uma vez", async () => {
     const { sendCommand } = setupApp();
     await screen.findByTestId("composer");
-    fireEvent.click(screen.getByTestId("voice-input-toggle"));
-    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.start", {}));
-    expect(sendCommand.mock.calls.some(([type]) => type === "chat.send")).toBe(false);
-    expect(await screen.findByTestId("voice-input-cancel")).not.toBeNull();
+    const mic = screen.getByTestId("voice-input-toggle");
+    fireEvent.pointerDown(mic, { button: 0, pointerId: 1 });
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.start", { mode: "hold" }));
+    expect(screen.getByTestId("voice-level-meter")).not.toBeNull();
+    expect(mic.getAttribute("aria-pressed")).toBe("true");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    fireEvent.pointerUp(mic, { button: 0, pointerId: 1 });
+    fireEvent(mic, new Event("lostpointercapture"));
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.finish", { generation: 1 }));
+    expect(sendCommand.mock.calls.filter(([type]) => type === "voice.input.finish")).toHaveLength(1);
+    expect(screen.queryByTestId("voice-level-meter")).toBeNull();
+    expect(sendCommand.mock.calls.some(([type]) => type === "voice.input.cancel")).toBe(false);
+  });
+
+  it("um toque curto não envia nada: cancela a captura e explica como usar", async () => {
+    const { sendCommand } = setupApp();
+    await screen.findByTestId("composer");
+    const mic = screen.getByTestId("voice-input-toggle");
+    fireEvent.pointerDown(mic, { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(mic, { button: 0, pointerId: 1 });
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.cancel", {}));
+    expect(sendCommand.mock.calls.some(([type]) => type === "voice.input.finish")).toBe(false);
+    expect((await screen.findByTestId("voice-input-notice")).textContent).toContain("Mantém o botão premido");
+  });
+
+  it("teclado: Espaço premido escuta e Esc cancela sem enviar", async () => {
+    const { sendCommand } = setupApp();
+    await screen.findByTestId("composer");
+    const mic = screen.getByTestId("voice-input-toggle");
+    fireEvent.keyDown(mic, { key: " " });
+    fireEvent.keyDown(mic, { key: " ", repeat: true });
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.start", { mode: "hold" }));
+    expect(sendCommand.mock.calls.filter(([type]) => type === "voice.input.start")).toHaveLength(1);
+    fireEvent.keyDown(mic, { key: "Escape" });
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.cancel", {}));
+    expect(sendCommand.mock.calls.some(([type]) => type === "voice.input.finish")).toBe(false);
+  });
+
+  it("cancelar enquanto o start ainda não respondeu espera a vez em vez de se perder", async () => {
+    const { sendCommand } = setupApp();
+    await screen.findByTestId("composer");
+    let releaseStart: () => void = () => undefined;
+    const base = sendCommand.getMockImplementation()!;
+    sendCommand.mockImplementation(async (type: string) => {
+      if (type === "voice.input.start") {
+        await new Promise<void>(resolve => { releaseStart = resolve; });
+        return { accepted: true, generation: 1, state: "starting", reason: "" };
+      }
+      return base(type);
+    });
+    const mic = screen.getByTestId("voice-input-toggle");
+    fireEvent.keyDown(mic, { key: " " });
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.start", { mode: "hold" }));
+    fireEvent.keyDown(mic, { key: "Escape" });
+    expect(sendCommand.mock.calls.some(([type]) => type === "voice.input.cancel")).toBe(false);
+    releaseStart();
+    // Measured: a command sent while another was in flight was dropped, leaving the mic open.
+    await waitFor(() => expect(sendCommand).toHaveBeenCalledWith("voice.input.cancel", {}));
   });
 
   it("Parar voz é acessível só com fala e mantém-se distinto de Parar tarefa", async () => {

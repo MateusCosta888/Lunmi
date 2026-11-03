@@ -216,6 +216,8 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "voice.models",
     # VOICE INPUT V1: estado do ditado; nunca carrega transcrição, áudio ou device.
     "voice.input.state",
+    # Nível do microfone enquanto escuta (0..1) para o medidor do compositor; nunca áudio.
+    "voice.input.level",
     # SPOTIFY INTEGRAÇÃO V1 (aditivo): estado público do Spotify; payload fechado `{spotify}`.
     "spotify.changed",
     # WEB-SEARCH-V1: estado público da pesquisa web; payload `WebStateDto` exato.

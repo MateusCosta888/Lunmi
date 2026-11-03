@@ -157,6 +157,8 @@ export const EVENT_TYPES = [
   "voice.models",
   /** VOICE INPUT V1: estado público do ditado; nunca carrega transcrição/áudio. */
   "voice.input.state",
+  /** Nível do microfone enquanto escuta (0..1), para o medidor do compositor; nunca áudio. */
+  "voice.input.level",
   /** SPOTIFY INTEGRAÇÃO V1 (aditivo): payload fechado `{spotify}`; ver `shared/spotify.ts`. */
   "spotify.changed",
   /** WEB-SEARCH-V1: payload `WebStateDto` exato, com `session_id` e `revision`. */
