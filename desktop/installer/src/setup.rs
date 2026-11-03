@@ -119,9 +119,12 @@ pub fn install(payload: &Payload, layout: &Layout, desktop: bool, start_menu: bo
     if old.as_ref().is_some_and(|c| c.version == version && c.healthy) { current.healthy = true; current.previous = old.and_then(|c| c.previous); }
     layout.write_current(&current)?;
     progress(0.98, "shortcuts");
-    let launcher = layout.root.join("Lunmi.exe");
-    shortcuts(&launcher, desktop, start_menu);
-    register(&layout.root, &version, need);
+    // Com LUNMI_ROOT (testes, CI) a árvore é descartável: sem atalhos nem entrada no registo.
+    if std::env::var_os("LUNMI_ROOT").is_none() {
+        let launcher = layout.root.join("Lunmi.exe");
+        shortcuts(&launcher, desktop, start_menu);
+        register(&layout.root, &version, need);
+    }
     log(&format!("installed {version} at {}", layout.root.display()));
     Ok(())
 }
