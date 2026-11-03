@@ -82,16 +82,15 @@ export function commandTimeoutMs(type: string): number {
 }
 
 /**
- * Componentes pesados do pacote (Python, voz). O instalador extrai-os ao lado da instalação, em
- * `<pasta>-runtime/<nome>-<chave>`, e só quando o conteúdo muda; `lunmi-components.json` diz a
- * chave desta versão. Sem manifesto (pacotes até ao Alpha 5) ficam em `resources/<nome>`.
+ * Componentes imutáveis da beta: `ROOT/store/<nome>-<chave>`, três níveis acima de resources.
+ * Sem manifesto, mantém o layout de desenvolvimento em `resources/<nome>`.
  */
 export function componentDir(resourcesRoot: string, name: "python" | "voice"): string {
   try {
     const keys = JSON.parse(fs.readFileSync(path.join(resourcesRoot, "lunmi-components.json"), "utf8")) as Record<string, unknown>;
     const key = keys[name];
     if (typeof key === "string" && /^[0-9a-f]{16}$/.test(key)) {
-      return path.join(`${path.dirname(resourcesRoot)}-runtime`, `${name}-${key}`);
+      return path.resolve(resourcesRoot, "..", "..", "..", "store", `${name}-${key}`);
     }
   } catch {
     // sem manifesto: layout anterior dentro de resources/

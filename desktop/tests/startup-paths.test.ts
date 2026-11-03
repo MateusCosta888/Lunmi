@@ -3,6 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 vi.mock("fs", { spy: true });
 import { componentDir, resolvePythonExecutable } from "../electron/backend";
+import { installedUpdateLauncher } from "../electron/updates";
 
 const runtime = vi.hoisted(() => ({
   isPackaged: true,
@@ -35,6 +36,21 @@ function launch(defaultApp: boolean | undefined) {
 }
 
 describe("startup paths for branded development and installed builds", () => {
+  it.runIf(process.platform === "win32" && process.arch === "x64")("uses only the fixed launcher and never enables updates from development", () => {
+    const executable = path.resolve("isolated-appdata", "Programs", "Lunmi", "Lunmi.exe");
+    vi.stubEnv("LUNMI_LAUNCHER", executable);
+    vi.mocked(fs.lstatSync).mockReturnValue({ isFile: () => true, isSymbolicLink: () => false } as ReturnType<typeof fs.lstatSync>);
+    expect(installedUpdateLauncher(true)).toBe(executable);
+    vi.mocked(fs.lstatSync).mockClear();
+    expect(installedUpdateLauncher(false)).toBeNull();
+    expect(fs.lstatSync).not.toHaveBeenCalled();
+    vi.stubEnv("LUNMI_LAUNCHER", "");
+    expect(installedUpdateLauncher(true)).toBe(path.resolve(process.execPath, "..", "..", "..", "Lunmi.exe"));
+    vi.mocked(fs.lstatSync).mockImplementation(() => { throw new Error("ENOENT"); });
+    expect(installedUpdateLauncher(true)).toBeNull();
+    vi.mocked(fs.lstatSync).mockReturnValue({ isFile: () => true, isSymbolicLink: () => true } as ReturnType<typeof fs.lstatSync>);
+    expect(installedUpdateLauncher(true)).toBeNull();
+  });
   it("uses the checkout and venv for run.bat even when renamed Electron reports isPackaged", () => {
     launch(true);
     // Vitest imports the source main; the real boot check uses dist-electron/electron/main.js.
@@ -59,7 +75,7 @@ describe("startup paths for branded development and installed builds", () => {
     expect(getUserDataRoot()).toBe(path.resolve("tester-data", "Lunmi"));
   });
 
-  it("runs Python and voice from the component folder beside the installation", () => {
+  it("runs Python and voice from the beta store above versions", () => {
     launch(undefined);
     const resources = process.resourcesPath;
     const manifest = path.join(resources, "lunmi-components.json");
@@ -68,7 +84,7 @@ describe("startup paths for branded development and installed builds", () => {
       if (file === manifest) return JSON.stringify(keys);
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     }) as typeof fs.readFileSync);
-    const runtimeRoot = `${path.dirname(resources)}-runtime`;
+    const runtimeRoot = path.resolve(resources, "..", "..", "..", "store");
     expect(resolvePythonExecutable(getRepoRoot(), resources))
       .toBe(path.join(runtimeRoot, `python-${keys.python}`, "python.exe"));
     expect(componentDir(resources, "voice")).toBe(path.join(runtimeRoot, `voice-${keys.voice}`));

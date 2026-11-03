@@ -5,8 +5,8 @@ import type { UpdateState } from "../src/shared/updates";
 import type { LunmiBridgeApi } from "../src/shared/ipc/client";
 
 afterEach(() => { delete window.lunmi; });
-function bridge(phase: UpdateState["phase"]) {
-  const state: UpdateState = { phase, currentVersion: "0.1.0-alpha.4", version: "0.1.0-alpha.5", percent: 32, notes: "Instalador novo" };
+function bridge(phase: UpdateState["phase"], error?: UpdateState["error"]) {
+  const state: UpdateState = { phase, currentVersion: "1.0.0-beta.1", version: "1.0.0-beta.2", percent: 32, notes: "Instalador novo", error };
   const api = { get: vi.fn(async () => state), check: vi.fn(async () => state), install: vi.fn(async () => state), onState: vi.fn(() => vi.fn()) };
   window.lunmi = { updates: api } as unknown as LunmiBridgeApi;
   return api;
@@ -40,9 +40,9 @@ describe("update presentation", () => {
   it("offers the new version with its notes and installs only on request", async () => {
     const api = bridge("available"); render(<UpdateModal />);
     expect(await screen.findByText("Instalador novo")).toBeTruthy();
-    expect(screen.getByRole("dialog").textContent).toContain("0.1.0-alpha.5");
+    expect(screen.getByRole("dialog").textContent).toContain("1.0.0-beta.2");
     expect(api.install).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Instalar agora" }));
+    fireEvent.click(screen.getByRole("button", { name: "Descarregar agora" }));
     await waitFor(() => expect(api.install).toHaveBeenCalledTimes(1));
   });
   it("closes on Later without installing", async () => {
@@ -50,6 +50,22 @@ describe("update presentation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Mais tarde" }));
     expect(screen.queryByTestId("update-modal")).toBeNull();
     expect(api.install).not.toHaveBeenCalled();
+  });
+  it("keeps a finished download open with an explicit restart button and a Later choice", async () => {
+    const api = bridge("available");
+    api.install.mockResolvedValueOnce({ phase: "ready", currentVersion: "1.0.0-beta.1", version: "1.0.0-beta.2" });
+    render(<UpdateModal />);
+    fireEvent.click(await screen.findByRole("button", { name: "Descarregar agora" }));
+    expect(await screen.findByRole("button", { name: "Reiniciar e atualizar" })).toBeTruthy();
+    expect(api.install).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Mais tarde" }));
+    expect(screen.queryByTestId("update-modal")).toBeNull();
+    expect(api.install).toHaveBeenCalledTimes(1);
+  });
+  it.each(["offline", "source", "signature", "hash", "space", "locked", "extract", "busy", "internal"] as const)("explains the launcher error %s", async code => {
+    bridge("error", code); render(<UpdatesCard />);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent!.length).toBeGreaterThan(20);
   });
   it("stays hidden when there is nothing new", async () => {
     bridge("idle"); render(<UpdateModal />);

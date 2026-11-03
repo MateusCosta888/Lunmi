@@ -7,7 +7,8 @@ export interface UpdateState {
   percent?: number;
   /** Plain-text release notes ("what's new"), only while an update is offered. */
   notes?: string;
-  error?: "unavailable" | "verification" | "busy" | "cancelled";
+  error?: "unavailable" | "verification" | "busy" | "cancelled" |
+    "offline" | "source" | "signature" | "hash" | "space" | "locked" | "extract" | "internal";
 }
 
 export interface UpdatesApi {

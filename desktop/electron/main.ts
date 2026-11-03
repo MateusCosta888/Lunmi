@@ -117,8 +117,7 @@ import {
 } from "./voice-shortcut";
 import { VoiceHoldCoordinator, VoiceHotkeyObserver } from "./voice-hotkey";
 import { createWebSourceOpenHandler, WebSourceOpener } from "./web-source-open";
-import { LunmiUpdates } from "./updates";
-import updateTrust from "./update-public-key.json";
+import { installedUpdateLauncher, LunmiUpdates } from "./updates";
 
 export { resolvePythonExecutable };
 
@@ -1428,36 +1427,14 @@ function updateRestartBlocked(): boolean {
 }
 
 function setupUpdates(): void {
-  const installed = process.platform === "win32" && process.arch === "x64" && app.isPackaged && !process.defaultApp;
-  // Lazy load: development and IPC fixtures never initialize electron-updater or access a feed.
-  const updater = installed ? new (require("electron-updater").NsisUpdater)({
-    provider: "github", owner: "MateusCosta888", repo: "Lunmi",
-  }) as import("electron-updater").NsisUpdater : null;
-  // Local diagnosis for failed updates; the renderer still only receives phase/error codes.
-  // shortcut: no rotation, a few lines per six-hour check; rotate if it ever grows.
-  const updateLog = path.join(getUserDataRoot(), "logs", "updater.log");
-  const log = (level: string) => (message?: unknown) => {
-    try {
-      fs.mkdirSync(path.dirname(updateLog), { recursive: true });
-      fs.appendFileSync(updateLog, `${new Date().toISOString()} ${level} ${String(message)}\n`);
-    } catch { /* diagnóstico opcional; nunca bloqueia a atualização */ }
-  };
-  if (updater) { updater.logger = { info: log("info"), warn: log("warn"), error: log("error") }; updater.disableWebInstaller = true; }
+  const launcher = installedUpdateLauncher(app.isPackaged && !process.defaultApp);
   updates = new LunmiUpdates({
-    version: app.getVersion(), updater, publicKey: updateTrust.publicKey,
+    version: app.getVersion(), launcher,
     publish: state => {
-      if (updater) log("state")(JSON.stringify(state));
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lunmi:updates-state", state);
     },
     blocked: updateRestartBlocked,
-    // The renderer modal ("O que há de novo") is the confirmation; no second native dialog.
-    finish: () => requestQuit(() => {
-      updater!.once("error", () => {
-        dialog.showErrorBox("Atualização não iniciada", "Não foi possível iniciar o instalador. Abre novamente a Lunmi para continuar na versão atual e tentar de novo.");
-        app.quit();
-      });
-      updater!.quitAndInstall(true, true);
-    }),
+    finish: () => requestQuit(),
   });
   for (const action of ["get", "check", "install"] as const) {
     ipcMain.handle(`lunmi:updates-${action}`, event => {
@@ -2044,6 +2021,7 @@ function bootstrap(): void {
         integrationConnecting = ["connecting", "composio_connected", "gmail_connecting"].includes(gmail?.state ?? "");
       }
       if (envelope.type === "session.ready") {
+        updates?.markHealthy();
         const payload = envelope.payload as unknown as SessionReadyPayload;
         const newSession = lastSession?.session_id !== payload.session_id;
         lastSession = payload;
