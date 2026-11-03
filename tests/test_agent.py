@@ -1020,7 +1020,10 @@ def test_a_close_the_ui_reports_as_failed_does_not_wait_for_the_budget(monkeypat
     started = clock.perf_counter()
     with pytest.raises(Exception):
         asyncio.run(scenario())
-    assert (clock.perf_counter() - started) * 1000 < 500.0
+    # The defect is waiting out the close budget (3 s). Measured against that budget, not a fixed
+    # 500 ms: the FastMCP call alone crossed 500 ms under a loaded full run. waits_ms is the exact check.
+    budget_ms = windows_tools.VERIFY_BUDGET_DEFAULT["transition"] * 1000
+    assert (clock.perf_counter() - started) * 1000 < budget_ms
     assert tools.waits_ms == 0.0                 # nothing was waited for
     assert tools.verify_failfast_saved_ms == 0.0
     assert tools.evidence == []
