@@ -223,6 +223,8 @@ const gb = b => b == null ? '?' : (b / 1073741824).toLocaleString('pt-PT', { max
 const STEP_TEXT = { prepare: UPDATE ? 'A preparar a atualização' : 'A preparar o instalador', python: 'A preparar o Python', voice: 'A preparar a voz local', app: UPDATE ? 'A instalar a nova versão' : 'A copiar a aplicação', shortcuts: 'A concluir' };
 const ORDER = ['prepare', 'python', 'voice', 'app', 'shortcuts'];
 
+// A pasta é fixa (%LOCALAPPDATA%\Programs\Lunmi): sem escolha, sem Documentos nem caminhos longos.
+if (INIT.fixed) $$('[data-act="pick"]').forEach(e => e.remove());
 if (UPDATE) { win.classList.add('compact'); $('#wintitle').textContent = 'Atualização da Lunmi'; $$('.install-only').forEach(e => e.remove()); }
 $$('.version').forEach(e => e.textContent = INIT.version);
 
@@ -281,7 +283,7 @@ window.lunmi = {
     }
     if (msg.type === 'error') {
       finished(msg.code > 0 ? msg.code : 1);
-      $('#errText').textContent = msg.code === -1
+      $('#errText').textContent = msg.text ? msg.text : msg.code === -1
         ? `Não foi possível preparar o instalador${msg.detail ? ' (' + msg.detail + ')' : ''}. Confirma o espaço livre no disco do sistema e volta a tentar.`
         : msg.code === -2
           ? 'Não foi possível acompanhar a instalação até ao fim. Ela pode ainda estar a decorrer: espera alguns minutos antes de abrir a Lunmi ou de tentar de novo.'
