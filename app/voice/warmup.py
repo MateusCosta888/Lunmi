@@ -7,6 +7,7 @@ ficar bloqueada à espera de um runtime ausente.
 """
 from __future__ import annotations
 
+import ctypes
 import threading
 import time
 from typing import Any, Callable
@@ -19,6 +20,26 @@ MESSAGE_WARMUP_FAILED = "A preparação da voz falhou."
 MESSAGE_WARMUP_TIMEOUT = "A preparação da voz demorou demasiado."
 
 _TERMINAL = frozenset({"ready", "unavailable", "error"})
+LOW_MEMORY_GB = 12.0
+
+
+class _MemoryStatus(ctypes.Structure):
+    _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), *(
+        (name, ctypes.c_ulonglong) for name in (
+            "total", "available", "page_total", "page_available", "virtual_total",
+            "virtual_available", "extended"))]
+
+
+def low_memory_pc() -> bool:
+    """Num PC de 8 GB, os modelos de voz pré-carregados levavam 1,45 GB sem serem usados."""
+    status = _MemoryStatus()
+    status.length = ctypes.sizeof(status)
+    try:
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+            return False
+    except (AttributeError, OSError):
+        return False
+    return status.total / 2**30 < LOW_MEMORY_GB
 
 
 class VoiceWarmup:
@@ -29,7 +50,9 @@ class VoiceWarmup:
         stt: Any,
         emit: Callable[[dict[str, Any]], None] | None = None,
         timeout_s: float = WARMUP_TIMEOUT_SECONDS,
+        skip: Callable[[str], bool] = lambda name: False,
     ) -> None:
+        self._skip = skip
         self._tts = tts
         self._stt = stt
         self._emit_external = emit
@@ -108,6 +131,10 @@ class VoiceWarmup:
         ]
         threads: list[threading.Thread] = []
         for name, manager in legs:
+            if self._skip(name):
+                # Nada a preparar agora: a perna carrega no primeiro uso, sem prender o loading.
+                self._set_leg(name, "ready", "")
+                continue
             method = getattr(manager, "warm_up" if name == "tts" else "prepare", None)
             if method is None:
                 self._set_leg(name, "error", MESSAGE_WARMUP_FAILED)

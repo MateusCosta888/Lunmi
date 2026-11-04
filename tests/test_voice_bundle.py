@@ -93,7 +93,7 @@ def test_cpu_worker_loads_int8_without_silent_device_fallback(monkeypatch):
     monkeypatch.setattr(input_worker, 'load_whisper', lambda *args, **kwargs: called.append(kwargs))
     worker = input_worker.InputWorker(model_dir='model', vad_path='vad', device='cpu')
     worker._load_model()
-    assert called == [dict(device='cpu', compute_type='int8_float32', language='pt', beam_size=5)]
+    assert called == [dict(device='cpu', compute_type='int8_float32', language='pt', beam_size=1)]
 
 
 def test_cpu_transcription_budget_covers_long_capture_and_explicit_override(tmp_path, monkeypatch):

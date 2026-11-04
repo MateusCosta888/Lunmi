@@ -191,6 +191,7 @@ def test_bridge_exposes_warmup_dto_and_readiness_event(tmp_path: Path) -> None:
         voice=voice,
         voice_input=voice_input,
     )
+    service.voice_warmup._skip = lambda name: False  # a regra de saltar tem teste próprio
     try:
         first = service.dispatch(protocol.Envelope(
             v=1, id="cmd-warmup", type="voice.warmup", payload={}))

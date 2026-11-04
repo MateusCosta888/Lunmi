@@ -16,7 +16,7 @@ from app.voice.manager import VoiceError, VoiceManager
 from app.voice.models import GROUPS as VOICE_MODEL_GROUPS
 from app.voice.models import ModelsError, VoiceModels, manifest_for, models_root, older_voice_components
 from app.voice.runtime import voice_home
-from app.voice.warmup import VoiceWarmup
+from app.voice.warmup import VoiceWarmup, low_memory_pc
 
 
 class VoiceBridge:
@@ -53,6 +53,7 @@ class VoiceBridge:
             tts=self.voice,
             stt=self.voice_input,
             emit=self._emit_voice_warmup,
+            skip=self._skip_voice_warmup,
         )
         # Voice models are downloaded after install, on the user's request (01/11).
         self.voice_models = VoiceModels(
@@ -169,6 +170,10 @@ class VoiceBridge:
     def _handle_voice_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._voice_empty_payload(payload)
         return self.voice.stop()
+
+    def _skip_voice_warmup(self, leg: str) -> bool:
+        """A fala desligada não carrega nada; num PC fraco, o ditado espera pelo primeiro uso."""
+        return not self.voice.snapshot()['enabled'] if leg == 'tts' else low_memory_pc()
 
     def _handle_voice_warmup(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._voice_empty_payload(payload)
