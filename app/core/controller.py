@@ -57,6 +57,7 @@ from app.core.automatic import (AUTO_PROMPT, WRITE_DOCUMENT_PROMPT, EMAIL_PROMPT
                                 parse_decision, parse_web_decision, web_forbidden, web_requested)
 from app.integrations.web_policy import WebBlocked, public_url
 from app.integrations.web_quality import (
+    attribute_evidence_problem,
     constraints as web_constraints,
     requires_original_study,
     requires_page_evidence,
@@ -1858,10 +1859,14 @@ class TaskController(SpotifyFlow):
             read_observed = any(bool(item.get('read')) and policy.accepts(item) and policy.dated(item)
                                 for item in result.web_sources)
             admitted = web_answer_admits_insufficiency(text)
-            attribute_ok = supports_requested_attribute(
-                self._request_check_text(instruction), text)
+            check_text = self._request_check_text(instruction)
+            attribute_ok = supports_requested_attribute(check_text, text)
+            # O DTO nativo não traz a página: título e excerto observados só podem rebaixar.
+            evidence_problem = attribute_evidence_problem(check_text, [
+                {**item, 'content': item.get('snippet') or ''}
+                for item in result.web_sources if item.get('read')])
             if (public_text and result.web_sources and not unverified_action_claim(text)
-                    and not admitted and attribute_ok and not invalid
+                    and not admitted and attribute_ok and not invalid and not evidence_problem
                     and not (need_read and not read_observed)):
                 result.status = 'SUCCESS'
                 result.message = public_text
