@@ -28,7 +28,9 @@ AUTO_PROMPT = (
     'get_desktop_app_info() observes desktop windows; launch_application(target,expected="",aumid="",'
     'fresh_document=false) opens a known target; open_settings_page(page) opens a requested settings page; '
     'filesystem(operation,path,destination="",text="",pattern="*") supports mkdir/create_file/list/search/'
-    'copy/move/rename/delete/exists/metadata/read. Paths must come from the user or observed data, never guess. '
+    'copy/move/rename/delete/exists/metadata/read. Desktop, Documents and Downloads are valid path roots '
+    '(Desktop/Name): use them directly and never ask the user for those paths. Any other path must come '
+    'from the user or observed data, never guess. '
     'For a configured Spotify link use only spotify(operation,query="",ref="",level=0.0): state, search, '
     'play, pause, resume, volume, next, previous, activate_local. search returns opaque refs; play takes '
     'one current ref or a user query, never a URI/path/URL. Never use UI tools as a Spotify fallback and '
@@ -609,6 +611,7 @@ def allows_actions(instruction: str) -> bool:
     if re.search(r'\b(?:somente leitura|leitura apenas|sem executar|nao executes?|nao execute|nao altere)\b', text):
         return False
     text = re.sub(r'^(?:por favor[, ]+|please[, ]+)', '', text)
+    text = re.sub(r'^me\s+', '', text)
     text = re.sub(r'^(?:(?:eu )?(?:quero|queria|gostaria de)|(?:podes|pode|consegues|voce pode|can you|could you))\s+', '', text)
     text = re.sub(r'^(?:que\s+)', '', text)
     place = _LEADING_PLACE.match(text)

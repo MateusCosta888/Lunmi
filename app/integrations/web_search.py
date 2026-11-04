@@ -87,7 +87,8 @@ PER_ATTEMPT_HTTP = 15.0
 AUTO_BATCH_HTTP = 8.0   # fetch_batch espera pela página mais lenta e não tem timeout próprio
 OPEN_TIMEOUT = 30.0
 RESEARCH_TIMEOUT = 25.0
-INIT_TIMEOUT = 20.0
+# Medido num i3 com 8 GB: 26,5 s na primeira importação a frio, 3,5 s depois.
+INIT_TIMEOUT = 60.0
 IDLE_SECONDS = 120.0
 CANCEL_GRACE = 2.0
 
@@ -853,6 +854,9 @@ class WebSearchManager:
                 self._emit_state("starting", MESSAGES["starting"])
             started = _monotonic()
             try:
+                # O arranque a frio não gasta o orçamento da pesquisa.
+                await self._ensure_client(env)
+                started = _monotonic()
                 if tool == "web.open":
                     result = await self._open(env, arguments, started, first)
                 elif tool == "web.search":

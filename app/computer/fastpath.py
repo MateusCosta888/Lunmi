@@ -494,6 +494,8 @@ def _folder_shape(tokens: list[Token], instruction: str,
 def _mkdir_shape(tokens: list[Token], instruction: str,
                  apps: AppIndex | None = None) -> FastPlan | None:
     """"Crie uma pasta X na Área de Trabalho": one exact target, one exact place."""
+    if tokens and tokens[0].folded == "me":
+        tokens = tokens[1:]
     if not _starts_with(tokens, MKDIR_VERBS):
         return None
     index = _skip(tokens, 1, frozenset({"uma", "um", "a", "o"}))
@@ -504,9 +506,8 @@ def _mkdir_shape(tokens: list[Token], instruction: str,
         words = phrase.split()
         if [token.folded for token in tokens[-len(words):]] != words:
             continue
-        name = _name(tokens, index, len(tokens) - len(words))
-        if not name:
-            return None
+        # Sem nome, o mesmo que o Windows faria; quem pediu a pasta não deve ter de voltar a pedir.
+        name = _name(tokens, index, len(tokens) - len(words)) or "Nova pasta"
         return FastPlan("filesystem", f"pasta {name}", operation="mkdir",
                         paths=(f"{alias}/{name}",))
     return None
