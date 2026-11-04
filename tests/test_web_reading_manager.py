@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from app.integrations import web_search as web_search_module
+from app.integrations.web_quality import WebConstraints
 from app.integrations.web_search import WebSearchError, WebSearchManager
 from app.integrations.web_state import WebPreferences
 from test_web_search_v1 import _ManagerHarness, _batch, _environment, _useful_snippets
@@ -279,3 +280,91 @@ def test_page_cap_keeps_the_paper_tail_available_for_selection():
     assert 12000 < len(text) <= MAX_PAGE_CHARS
     assert tail in document['content']
     assert int(_WORKER_POLICY['SEARCH_MCP_MAX_CONTENT_CHARS']) >= len(text)
+
+
+def test_google_news_publisher_url_preserves_the_read_document(tmp_path):
+    original = 'https://news.google.com/rss/articles/CBMiAUDIT'
+    final = 'https://publisher.example/news/article'
+    content = 'A substantive report with observed evidence. ' * 12
+    harness = _ManagerHarness(tmp_path)
+    harness.client.answers['search'] = {'results': [
+        {'url': original, 'title': 'Public report', 'snippet': content[:200]}]}
+    harness.client.answers['fetch_batch'] = {'result': [
+        {'url': final, 'content': content}]}
+
+    async def scenario():
+        try:
+            result = await harness.manager.run('web.search', {'query': 'o que é asyncio'})
+            assert len(result.documents) == 1
+            assert result.documents[0]['content'] == content
+            assert result.documents[0]['url'] == final
+            assert result.sources[0]['url'] == final
+            assert result.sources[0]['id'] == web_search_module.source_id(final)
+            assert result.sources[0]['read'] is True
+            assert result.evidence_status == 'suff'
+            assert [args['urls'] for tool, args in harness.client.calls
+                    if tool == 'fetch_batch'] == [[original]]
+        finally:
+            await harness.manager.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('case', ['private', 'outside_domain', 'duplicate', 'two_results', 'lookalike'])
+def test_google_news_rejects_untrusted_or_ambiguous_publisher_urls(tmp_path, case):
+    original = ('https://news.google.com.attacker.test/article' if case == 'lookalike'
+                else 'https://news.google.com/rss/articles/CBMiAUDIT')
+    final = 'http://127.0.0.1/private' if case == 'private' else 'https://publisher.example/article'
+    harness = _ManagerHarness(tmp_path)
+    sources = [web_search_module._source_from_result(
+        {'url': url, 'title': 'Public report', 'snippet': 'Public article. ' * 10},
+        retrieved_at='2026-11-04T12:00:00Z')
+        for url in ([original, final] if case == 'duplicate' else [original])]
+    payload = _batch([final])
+    if case == 'two_results':
+        payload['result'].extend(_batch(['https://another.example/article'])['result'])
+    harness.client.answers['fetch_batch'] = payload
+    policy = WebConstraints(domains=('allowed.example',)) if case == 'outside_domain' else WebConstraints()
+
+    async def scenario():
+        try:
+            documents, _, _ = await harness.manager._read_pages(
+                harness.client, sources, policy, 'public report', 1, True,
+                10.0, web_search_module._monotonic())
+            assert documents == []
+            assert sources[0]['url'] == original
+            assert sources[0]['read'] is False
+            assert [args['urls'] for tool, args in harness.client.calls
+                    if tool == 'fetch_batch'] == [[original]]
+        finally:
+            await harness.manager.close()
+
+    asyncio.run(scenario())
+
+
+def test_google_news_is_read_alone_inside_an_otherwise_batched_read(tmp_path):
+    original = 'https://news.google.com/rss/articles/CBMiAUDIT'
+    final = 'https://publisher.example/article'
+    urls = ['https://example.test/first', 'https://example.test/second', original,
+            'https://example.test/fourth', 'https://example.test/fifth']
+    sources = [web_search_module._source_from_result(
+        {'url': url, 'title': 'Public report', 'snippet': 'Public article. ' * 10},
+        retrieved_at='2026-11-04T12:00:00Z') for url in urls]
+    harness = _ManagerHarness(tmp_path)
+    harness.client.answers['fetch_batch'] = lambda args: _batch(
+        [final if url == original else url for url in args['urls']])
+
+    async def scenario():
+        try:
+            documents, _, _ = await harness.manager._read_pages(
+                harness.client, sources, WebConstraints(), 'public report', 5, True,
+                10.0, web_search_module._monotonic())
+            assert [args['urls'] for tool, args in harness.client.calls
+                    if tool == 'fetch_batch'] == [urls[:2], [original], urls[3:]]
+            assert len(documents) == 5
+            assert [document['url'] for document in documents] == [*urls[:2], final, *urls[3:]]
+            assert len({source['id'] for source in sources}) == 5
+        finally:
+            await harness.manager.close()
+
+    asyncio.run(scenario())

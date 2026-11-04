@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from app.integrations.web_policy import WebBlocked, public_url, query_text
 from app.integrations.web_quality import (
@@ -968,6 +969,13 @@ class WebSearchManager:
         index = 0
         while index < len(candidates):
             batch = candidates[index:index + step]
+            google_news = False
+            for offset, candidate in enumerate(batch):
+                if (urlsplit(candidate['url']).hostname or '').casefold().rstrip('.') == 'news.google.com':
+                    # A single requested URL makes a publisher redirect unambiguous.
+                    google_news = offset == 0
+                    batch = batch[:offset] if offset else batch[:1]
+                    break
             try:
                 attempt_timeout = min(PER_ATTEMPT_HTTP, _remaining(timeout, started))
             except WebSearchError:
@@ -988,9 +996,25 @@ class WebSearchManager:
                 step = 1
                 continue
             read_before = len(documents)
-            documents.extend(_merge_documents(sources, payload, quote=policy.quote))
-            # PMC may return only a cookie shell; Europe PMC publishes a separate, public OA copy.
             items = payload.get('result', []) if isinstance(payload, dict) else []
+            if google_news:
+                if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict):
+                    candidate = batch[0]
+                    try:
+                        final_url = public_url(str(items[0].get('url') or ''))
+                    except WebBlocked:
+                        final_url = ''
+                    if final_url and not any(source is not candidate and source['url'] == final_url
+                                             for source in sources):
+                        copy_source = {**candidate, 'url': final_url, 'id': source_id(final_url)}
+                        if policy.accepts(copy_source):
+                            copies = _merge_documents([copy_source], payload, quote=policy.quote)
+                            if copies:
+                                candidate.update(copy_source)
+                                documents.extend(copies)
+            else:
+                documents.extend(_merge_documents(sources, payload, quote=policy.quote))
+            # PMC may return only a cookie shell; Europe PMC publishes a separate, public OA copy.
             for candidate in batch:
                 match = re.fullmatch(r'https?://pmc\.ncbi\.nlm\.nih\.gov/articles/'
                                      r'(PMC\d{1,12})/?', candidate['url'], re.IGNORECASE)
