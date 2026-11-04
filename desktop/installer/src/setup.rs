@@ -199,6 +199,15 @@ fn register(root: &Path, version: &str, bytes: u64) {
     unsafe { RegCloseKey(key) };
 }
 
+/// Mantém "Aplicações instaladas" certo depois de ativar ou de voltar atrás.
+pub fn record_version(version: &str) {
+    use windows_sys::Win32::System::Registry::*;
+    if std::env::var_os("LUNMI_ROOT").is_some() { return; }
+    let v = wide(version);
+    let rc = unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, wide(UNINSTALL_KEY).as_ptr(), wide("DisplayVersion").as_ptr(), REG_SZ, v.as_ptr().cast(), (v.len() * 2) as u32) };
+    if rc != 0 { log(&format!("version not recorded rc={rc}")); }
+}
+
 pub fn unregister() {
     use windows_sys::Win32::System::Registry::{RegDeleteKeyW, HKEY_CURRENT_USER};
     unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, wide(UNINSTALL_KEY).as_ptr()) };

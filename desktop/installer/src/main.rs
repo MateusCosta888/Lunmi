@@ -103,7 +103,10 @@ fn launch(layout: &Layout, args: &[String]) -> Res<ExitCode> {
     let mut cur = cur;
     if !cur.healthy && healthy_marker(layout, &cur.version).is_file() { cur.healthy = true; cur.attempts = 0; }
     let (next, rolled_back) = if lock.is_some() { on_launch(&cur) } else { (cur.clone(), false) };
-    if rolled_back { log(&format!("rollback {} -> {} (não confirmou em 2 arranques)", cur.version, next.version)); }
+    if rolled_back {
+        log(&format!("rollback {} -> {} (não confirmou em 2 arranques)", cur.version, next.version));
+        setup::record_version(&next.version);
+    }
     if !layout.app_exe(&next.version).is_file() {
         // A pasta da versão desapareceu (limpeza manual, antivírus): remonta-a a partir do store.
         layout.assemble(&next.version, &next.packs)?;
@@ -144,6 +147,7 @@ fn activate(layout: &Layout, version: &str, wait: Option<u32>) -> Res<ExitCode> 
     let old = layout.read_current();
     layout.write_current(&activated(old.as_ref(), &staged))?;
     log(&format!("activated {version} (antes {:?})", old.map(|c| c.version)));
+    setup::record_version(version);
     drop(lock);
     launch(layout, &[])
 }
