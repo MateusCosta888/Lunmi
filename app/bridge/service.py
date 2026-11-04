@@ -1211,7 +1211,7 @@ class BridgeService(VoiceBridge):
                 'search_source': result.search_source, 'web_preference': result.web_preference,
                 'web_fallback': result.web_fallback, 'fallback_triggered': bool(result.fallback_triggered),
                 'evidence_status': result.evidence_status, 'request_status': result.request_status,
-            }, eligible=eligible)
+            }, eligible=eligible, private_context=result.private_context)
             self._history_changed('updated')
 
     def _release_chat_task(self, result: TaskResult) -> None:

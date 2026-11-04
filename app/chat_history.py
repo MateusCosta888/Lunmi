@@ -290,7 +290,8 @@ class ChatHistory:
                 self.error = NOT_SAVED
         self.pending[message['task_id']] = (saved, attachments)
 
-    def complete(self, message: dict[str, Any], *, eligible: bool) -> None:
+    def complete(self, message: dict[str, Any], *, eligible: bool,
+                 private_context: bool = False) -> None:
         saved, attachments = self.pending.pop(message['task_id'], (False, False))
         self.active['messages'].append(message)
         self.active['updated_at'] = message['created_at']
@@ -298,10 +299,11 @@ class ChatHistory:
             user = next((m for m in self.active['messages'] if m['task_id'] == message['task_id']
                          and m['role'] == 'user'), None)
             safe_user = bool(user and public_text(user['text']) != PRIVATE)
-            # Só uma resposta web (feita de páginas públicas, sem perfil de memória) usa o filtro
-            # leve; uma resposta normal pode repetir dados pessoais do perfil ou da pergunta.
+            # Uma resposta web usa o filtro leve: "saúde" numa página pública não é dado do
+            # utilizador. Se o modelo recebeu contexto sensível, o texto pode ecoá-lo e leva o
+            # filtro completo; títulos e URLs das fontes continuam a vir só das páginas.
             check = public_reply if safe_user and message.get('sources') else public_text
-            text = PRIVATE if attachments else check(message['text'])
+            text = PRIVATE if attachments else (public_text if private_context else check)(message['text'])
             metadata = {**message, 'text': text}
             if attachments or text == PRIVATE:
                 metadata.pop('sources', None)

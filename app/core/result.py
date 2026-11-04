@@ -140,6 +140,8 @@ class TaskResult:
     memory_context_items: int = 0
     prompt_base_chars: int = 0
     memory_error: str = ""
+    # Interno: o modelo recebeu contexto sensível. Decide o filtro do arquivo; nunca sai no DTO.
+    private_context: bool = False
     # WEB-SEARCH-V1: fontes públicas do turno web (vazio fora dele) e desfecho da consulta.
     # Nunca é evidência de uma ação no desktop.
     web_sources: list[dict[str, Any]] = field(default_factory=list)
