@@ -47,8 +47,11 @@ it("recolhe ao sair do chat sem cancelar pedidos e preserva pendências/ditado",
   const h = presence({ surface: "chat" });
   render(<NodeSurface />);
   await waitFor(() => expect(screen.getByTestId("lunmi-node").getAttribute("data-surface")).toBe("chat"));
-  act(() => { window.dispatchEvent(new Event("blur")); });
-  expect(h.actions).toContain("node-close");
+  // O DOM pode assentar antes do efeito que liga o blur ao estado novo: repete até ligar.
+  await waitFor(() => {
+    act(() => { window.dispatchEvent(new Event("blur")); });
+    expect(h.actions).toContain("node-close");
+  });
   h.actions.length = 0;
   for (const status of ["working", "needs_confirm", "needs_input"] as const) {
     h.emitNode({ status });

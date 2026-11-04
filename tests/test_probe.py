@@ -60,8 +60,9 @@ def test_probe_spends_one_minimal_inference_and_measures_it() -> None:
 
     assert result.ok is True
     assert (result.provider, result.model) == ("fake", "fake-model")
-    # A latência é do relógio, não do provider: o piso é o sono medido.
-    assert result.latency_ms >= 50.0
+    # A latência é do relógio, não do provider: o piso é o sono medido, com a folga
+    # do temporizador do Windows (~15 ms), que acorda ligeiramente antes dos 50 ms.
+    assert result.latency_ms >= 35.0
     assert (result.input_tokens, result.output_tokens) == (12, 4)
     # Uma chamada, um pedido: nada de prompt de sistema nem de histórico.
     assert brain.prompts == [PROBE_MESSAGES]

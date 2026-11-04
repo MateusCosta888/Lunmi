@@ -62,6 +62,7 @@
 
 # Public docs; internal plans, reports, research and evidence remain local.
 /docs/*
+!/docs/UPDATE-SYSTEM.md
 !/docs/README.md
 !/docs/GETTING_STARTED.md
 !/docs/ARCHITECTURE.md
