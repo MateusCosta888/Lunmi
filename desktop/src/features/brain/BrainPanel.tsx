@@ -94,7 +94,7 @@ export function BrainPanel({ sendCommand, session, onConfigured }: BrainPanelPro
   const [baseUrl, setBaseUrl] = useState("");
   const [appProvider, setAppProvider] = useState("");
   const [appModel, setAppModel] = useState("");
-  const [remember, setRemember] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [mainSlot, setMainSlot] = useState<ListingSlot>(IDLE_SLOT);
   const [appSlot, setAppSlot] = useState<ListingSlot>(IDLE_SLOT);
   const [verifyResult, setVerifyResult] = useState<BrainVerifyDto | null>(null);

@@ -544,7 +544,8 @@ describe("BrainPanel — pílulas de provedor com marca real (redesign 2026-10-2
     expect(screen.getByTestId("base-url")).toBeTruthy();
     fireEvent.click(screen.getByTestId("provider-select-btn-openai"));
     expect((screen.getByTestId("api-key") as HTMLInputElement).value).toBe("");
-    expect(screen.getByTestId("remember-credentials")).toBeTruthy();
+    // Remembering is on by default (DPAPI, this Windows user); unticking it keeps the key for this session only.
+    expect((screen.getByTestId("remember-credentials") as HTMLInputElement).checked).toBe(true);
     expect(fake.calls.map(c => c.type)).toEqual(["brain.get"]);
   });
 

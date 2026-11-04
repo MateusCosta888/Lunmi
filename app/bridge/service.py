@@ -1451,7 +1451,10 @@ class BridgeService(VoiceBridge):
                 "nvidia": "NVIDIA_API_KEY",
                 "groq": "GROQ_API_KEY",
             }.get(provider, "LLM_API_KEY")
-            api_key = os.getenv(key_name, "")
+            # Back to a provider whose key the user already chose to remember.
+            api_key = os.getenv(key_name, "") or (
+                self._saved_credentials(provider)["api_key"]
+                if desc.requires_api_key and provider not in CLI_PROVIDERS else "")
 
         if not desc.requires_api_key or provider in CLI_PROVIDERS:
             api_key = ""
@@ -1773,6 +1776,12 @@ class BridgeService(VoiceBridge):
         return (str(main.get("provider") or "").strip().lower(), str(main.get("model") or "").strip(),
                 str(app.get("provider") or "").strip().lower(), str(app.get("model") or "").strip())
 
+    def _saved_credentials(self, provider: str) -> dict[str, str]:
+        if self.sandbox_dir is None:
+            return settings_module.saved_credentials(provider)
+        values = settings_module._read_provider_file(self.sandbox_dir / ".local" / "provider.dpapi")
+        return settings_module._stored_credentials(values, provider)
+
     def _persist_brain_selection(self, target: Settings, *, remember: bool) -> None:
         if self.sandbox_dir is not None:
             local_dir = self.sandbox_dir / ".local"
@@ -1790,17 +1799,8 @@ class BridgeService(VoiceBridge):
             elif app_file.exists():
                 app_file.unlink()
             if remember:
-                # Em sandbox, grava indicador protegido via DPAPI dentro do próprio sandbox
-                dpapi_file = local_dir / "provider.dpapi"
-                raw = json.dumps(
-                    {
-                        "provider": target.provider,
-                        "model": target.model,
-                        "api_key": "" if target.provider in CLI_PROVIDERS else target.api_key,
-                        "base_url": "" if target.provider in CLI_PROVIDERS else target.base_url,
-                    }
-                ).encode("utf-8")
-                dpapi_file.write_bytes(settings_module._protect(raw))
+                settings_module.save_provider(target.provider, target.model, target.api_key,
+                                              target.base_url, path=local_dir / "provider.dpapi")
         else:
             settings_module.save_selection(target.provider, target.model)
             settings_module.save_app_selection(target.app_provider, target.app_model)

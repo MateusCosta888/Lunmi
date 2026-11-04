@@ -382,3 +382,22 @@ def test_a_long_rate_limit_fails_at_once_with_a_clear_message(monkeypatch: pytes
         asyncio.run(brain.close())
     assert failure.value.kind is ErrorKind.RATE_LIMITED and calls["n"] == 1
     assert "limite de uso" in str(failure.value)
+
+
+def test_each_provider_keeps_its_remembered_key_across_switches_and_restarts(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reported: a Groq key was gone after switching brains and reopening the app."""
+    monkeypatch.setattr(settings_module, "ROOT", tmp_path)
+    for name in ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL", "GROQ_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    settings_module.save_provider("groq", "openai/gpt-oss-120b", "groq-test-key", "")
+    settings_module.save_provider("kiro", "auto", "", "")
+    settings_module.save_provider("openai", "gpt-test", "openai-test-key", "")
+    assert b"groq-test-key" not in (tmp_path / ".local/provider.dpapi").read_bytes()
+    settings_module.save_selection("groq", "openai/gpt-oss-120b")
+    assert Settings.load().api_key == "groq-test-key"
+    settings_module.save_selection("openai", "gpt-test")
+    assert Settings.load().api_key == "openai-test-key"
+    settings_module.save_selection("kiro", "auto")
+    assert Settings.load().api_key == ""
+    assert settings_module.saved_credentials("groq")["api_key"] == "groq-test-key"

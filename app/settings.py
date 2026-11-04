@@ -6,6 +6,7 @@ import os
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
@@ -184,13 +185,7 @@ class Settings:
             # Uma instalação pode ter um `.env` próprio por utilizador; o do checkout é a
             # base de desenvolvimento e não deve desaparecer do caminho.
             load_dotenv(ROOT / ".env", override=False)
-        values: dict[str, str] = {}
-        saved = _local_dir() / "provider.dpapi"
-        if saved.exists():
-            try:
-                values = json.loads(_protect(saved.read_bytes(), decrypt=True))
-            except (OSError, ValueError) as exc:
-                raise ConfigurationError("Configuração salva inválida; reconfigure a API.") from exc
+        values = _read_provider_file(_local_dir() / "provider.dpapi")
         approval = _load_approval()
         selection: dict[str, str] = {}
         selected = _local_dir() / "brain-selection.json"
@@ -235,15 +230,15 @@ class Settings:
                 app_model=app_model,
                 effort=os.getenv("BRAIN_EFFORT", "").strip(),
                 api_key="" if provider in CLI_PROVIDERS else os.getenv(
-                    key_name, values.get("api_key", "") if values.get("provider") == provider else ""),
+                    key_name, _stored_credentials(values, provider)["api_key"]),
                 base_url="" if provider in CLI_PROVIDERS else os.getenv(
-                    "LLM_BASE_URL", values.get("base_url", "") if values.get("provider") == provider else ""),
-                computer_write_macro=_env_flag("COMPUTER_WRITE_MACRO", True),
-                computer_direct_app=_env_flag("COMPUTER_DIRECT_APP", True),
+                    "LLM_BASE_URL", _stored_credentials(values, provider)["base_url"]),
                 max_steps=int(os.getenv("MAX_STEPS", "20")),
                 timeout_seconds=float(os.getenv("TASK_TIMEOUT_SECONDS", "300")),
                 verify_results=os.getenv("VERIFY_RESULTS", "true").lower() == "true",
                 fast_path=os.getenv("FAST_PATH", "true").lower() == "true",
+                computer_write_macro=_env_flag("COMPUTER_WRITE_MACRO", True),
+                computer_direct_app=_env_flag("COMPUTER_DIRECT_APP", True),
                 prewarm=os.getenv("PREWARM_DESKTOP", "true").lower() == "true",
                 auto_approve=_env_flag("AUTO_APPROVE", approval),
                 app_index=os.getenv("APP_INDEX", "true").lower() == "true",
@@ -344,23 +339,55 @@ def save_app_selection(provider: str, model: str) -> None:
     temporary.replace(path)
 
 
-def save_provider(provider: str, model: str, api_key: str, base_url: str) -> None:
+def _read_provider_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        values = json.loads(_protect(path.read_bytes(), decrypt=True))
+    except (OSError, ValueError) as exc:
+        raise ConfigurationError("Configuração salva inválida; reconfigure a API.") from exc
+    return values if isinstance(values, dict) else {}
+
+
+def _stored_credentials(values: dict[str, Any], provider: str) -> dict[str, str]:
+    """The consented key/URL of one provider; the older single-provider file still reads."""
+    saved = values.get("credentials")
+    entry = saved.get(provider) if isinstance(saved, dict) else None
+    if not isinstance(entry, dict) and values.get("provider") == provider:
+        entry = values
+    entry = entry if isinstance(entry, dict) else {}
+    return {"api_key": str(entry.get("api_key") or ""), "base_url": str(entry.get("base_url") or "")}
+
+
+def saved_credentials(provider: str) -> dict[str, str]:
+    return _stored_credentials(_read_provider_file(_local_dir() / "provider.dpapi"), provider)
+
+
+def save_provider(provider: str, model: str, api_key: str, base_url: str, *, path: Path | None = None) -> None:
+    """Remember the selection and this provider's key, keeping every other provider's key.
+
+    One DPAPI file holds a key per provider: switching from Groq to a CLI or to another API
+    used to overwrite it, so the user had to type the key again after every switch.
+    """
+    path = path or _local_dir() / "provider.dpapi"
     if provider in CLI_PROVIDERS:
         settings = Settings(provider=provider, model=model.strip())
-        settings.validate()
-        path = _local_dir() / "provider.dpapi"
-        path.parent.mkdir(exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        payload = json.dumps({"provider": provider, "model": settings.model, "api_key": "", "base_url": ""}).encode()
-        temporary.write_bytes(_protect(payload))
-        temporary.replace(path)
-        return
-    settings = Settings(provider=provider, model=model.strip(), api_key=api_key.strip(), base_url=base_url.strip())
+    else:
+        settings = Settings(provider=provider, model=model.strip(), api_key=api_key.strip(), base_url=base_url.strip())
     settings.validate()
-    path = _local_dir() / "provider.dpapi"
+    values = _read_provider_file(path)
+    credentials: dict[str, dict[str, str]] = {}
+    for name in SUPPORTED_PROVIDERS:
+        entry = _stored_credentials(values, name)
+        if entry["api_key"] or entry["base_url"]:
+            credentials[name] = entry
+    if provider not in CLI_PROVIDERS:
+        credentials[provider] = {"api_key": settings.api_key, "base_url": settings.base_url}
+    current = credentials.get(provider, {"api_key": "", "base_url": ""})
     path.parent.mkdir(exist_ok=True)
     temporary = path.with_suffix(".tmp")
     payload = json.dumps({"provider": settings.provider, "model": settings.model,
-                          "api_key": settings.api_key, "base_url": settings.base_url}).encode()
+                          "api_key": current["api_key"], "base_url": current["base_url"],
+                          "credentials": credentials}).encode()
     temporary.write_bytes(_protect(payload))
     temporary.replace(path)
