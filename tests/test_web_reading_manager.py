@@ -330,7 +330,7 @@ def test_google_news_rejects_untrusted_or_ambiguous_publisher_urls(tmp_path, cas
         try:
             documents, _, _ = await harness.manager._read_pages(
                 harness.client, sources, policy, 'public report', 1, True,
-                10.0, web_search_module._monotonic())
+                10.0, web_search_module._monotonic(), env=None)
             assert documents == []
             assert sources[0]['url'] == original
             assert sources[0]['read'] is False
@@ -358,7 +358,7 @@ def test_google_news_is_read_alone_inside_an_otherwise_batched_read(tmp_path):
         try:
             documents, _, _ = await harness.manager._read_pages(
                 harness.client, sources, WebConstraints(), 'public report', 5, True,
-                10.0, web_search_module._monotonic())
+                10.0, web_search_module._monotonic(), env=None)
             assert [args['urls'] for tool, args in harness.client.calls
                     if tool == 'fetch_batch'] == [urls[:2], [original], urls[3:]]
             assert len(documents) == 5

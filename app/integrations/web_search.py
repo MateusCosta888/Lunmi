@@ -911,7 +911,7 @@ class WebSearchManager:
             count = _read_candidates(policy, mode, query)
             documents, read_warnings, client_failed = await self._read_pages(
                 client, sources, policy, query, count, _reads_together(policy, mode, query),
-                budget, started)
+                budget, started, env=env)
             warnings.extend(read_warnings)
             if client_failed:
                 await self._close_client()
@@ -946,9 +946,19 @@ class WebSearchManager:
                          request_status={'suff': 'met', 'partial': 'partial',
                                          'insufficient': 'unmet'}[evidence])
 
+    async def _fresh_client(self, env: WebEnvironment, timeout: float, started: float
+                            ) -> MCPWebClient | None:
+        """Sessão nova depois de uma que morreu, dentro do mesmo prazo; None se não couber."""
+        try:
+            await self._close_client()
+            left = _remaining(timeout, started)
+            return await asyncio.wait_for(self._ensure_client(env), left)
+        except (WebSearchError, TimeoutError):
+            return None
+
     async def _read_pages(self, client: MCPWebClient, sources: list[dict[str, Any]],
                           policy: WebConstraints, query: str, count: int, multiple: bool,
-                          timeout: float, started: float
+                          timeout: float, started: float, *, env: WebEnvironment
                           ) -> tuple[list[dict[str, Any]], list[str], bool]:
         """Lê até `count` candidatos e preserva o que já foi lido se algo falhar.
 
@@ -956,6 +966,8 @@ class WebSearchManager:
         é tentado dentro do mesmo teto. Só `invalid_payload` e cancelamento
         interrompem a operação; os restantes limites ficam em avisos fechados.
         Cada tentativa usa `min(15 s, o que resta do orçamento da operação)`.
+        Um timeout mata a sessão, que é recriada só se ainda houver candidatos novos. O lote
+        expirado fica consumido: pode ter arrancado todos os pedidos, e não há replay.
         """
         # Deep/comparison requests need several sources read together; `verified`
         # is a maximum, read one at a time until the evidence supports the answer.
@@ -989,11 +1001,18 @@ class WebSearchManager:
             except WebSearchError as exc:
                 if exc.code == 'invalid_payload':
                     raise
-                client_failed = client_failed or exc.code in {'timeout', 'failed'}
+                dead = exc.code in {'timeout', 'failed'}
+                client_failed = client_failed or dead
                 _add_warning(warnings, _READ_ATTEMPT.get(
                     exc.code, 'a candidate page could not be read'))
-                index += 1
+                index += len(batch) if dead else 1
                 step = 1
+                if dead and index < len(candidates):
+                    fresh = await self._fresh_client(env, timeout, started)
+                    if fresh is None:
+                        _add_warning(warnings, _BUDGET_EXHAUSTED)
+                        break
+                    client, client_failed = fresh, False
                 continue
             read_before = len(documents)
             items = payload.get('result', []) if isinstance(payload, dict) else []
@@ -1033,8 +1052,13 @@ class WebSearchManager:
                 except WebSearchError as exc:
                     if exc.code == 'invalid_payload':
                         raise
-                    client_failed = client_failed or exc.code in {'timeout', 'failed'}
                     _add_warning(warnings, 'public open-access copy could not be read')
+                    if exc.code in {'timeout', 'failed'}:
+                        fresh = await self._fresh_client(env, timeout, started)
+                        if fresh is None:
+                            _add_warning(warnings, _BUDGET_EXHAUSTED)
+                            return documents, warnings, True
+                        client = fresh
                     continue
                 copy_source = {**candidate, 'url': alternative, 'id': source_id(alternative), 'engines': []}
                 copies = _merge_documents([copy_source], copy_payload, quote=policy.quote)
@@ -1075,7 +1099,7 @@ class WebSearchManager:
             self._emit_state("reading", MESSAGES["reading"])
             # `research` lê sempre até 3 páginas; só o orçamento muda com a profundidade.
             documents, read_warnings, client_failed = await self._read_pages(
-                client, sources, policy, query, DEEP_READS, True, budget, started)
+                client, sources, policy, query, DEEP_READS, True, budget, started, env=env)
             warnings.extend(read_warnings)
             if client_failed:
                 await self._close_client()
