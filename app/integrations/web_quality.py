@@ -86,6 +86,10 @@ _ATTRIBUTE_STOP = {
     'proximo', 'proxima', 'next', 'jogo', 'partida', 'fixture', 'match', 'qual',
     'quais', 'como',
 }
+_NAME_LEAD = {'o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'de', 'the', 'um', 'uma', 'e', 'of'}
+_CONTEXT_WORDS = {'em', 'no', 'na', 'nos', 'nas', 'in', 'on', 'at'}
+_NOT_NAME = _ATTRIBUTE_STOP | _UNIT_WORDS | {
+    'pesquisa', 'procura', 'internet', 'web', 'google', 'mercado', 'existem', 'sao', 'foram'}
 _NUMBER_WORDS = {
     'zero': 0, 'um': 1, 'uma': 1, 'dois': 2, 'duas': 2, 'tres': 3, 'quatro': 4, 'cinco': 5,
     'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9, 'dez': 10, 'onze': 11, 'doze': 12, 'treze': 13,
@@ -196,6 +200,36 @@ def _subject_terms(query: str) -> set[str]:
             if term not in _ATTRIBUTE_STOP and term not in _UNIT_WORDS}
 
 
+def _entity_tokens(query: str) -> list[str]:
+    """Nome pedido: o primeiro bloco significativo, sem plataforma nem local depois dele.
+
+    Conserva palavras curtas do nome (`of`, `us`), que distinguem The Last of Us de
+    The Last Kingdom. Um nome com preposição fica cortado: não há aqui classificador.
+    """
+    run: list[str] = []
+    for token in [*re.findall(r'[a-z0-9]+', normalized(query)), '']:
+        significant = any(len(word) > 2 and word not in _NAME_LEAD for word in run)
+        if not token or token in _NOT_NAME or (token in _CONTEXT_WORDS and significant):
+            if significant:
+                while run[0] in _NAME_LEAD:
+                    run.pop(0)
+                return run
+            run = []
+        else:
+            run.append(token)
+    return []
+
+
+def _subject_matches(query: str, text: str) -> bool:
+    """O texto nomeia a entidade pedida; uma palavra comum não chega (One Piece/One-Punch Man)."""
+    entity = set(_entity_tokens(query))
+    if not entity:
+        subject = _subject_terms(query)
+        return not subject or bool(subject & _terms(text))
+    found = entity & set(re.findall(r'[a-z0-9]+', normalized(text)))
+    return len(found) >= (1 if len(entity) == 1 else -(-2 * len(entity) // 3))
+
+
 def _number_value(raw: str) -> int | None:
     value = normalized(raw).strip()
     if value.isdigit():
@@ -265,8 +299,7 @@ def _supports_count(query: str, text: str) -> bool:
     unit = _count_unit(query_text)
     if not unit:
         return False
-    subject = _subject_terms(query_text)
-    if subject and not subject & _terms(text):
+    if not _subject_matches(query_text, text):
         return False
     count = _stated_count(unit, text)
     if count is None:
@@ -284,7 +317,7 @@ def _supports_office(query: str, text: str) -> bool:
         normalized_sentence = normalized(sentence)
         if office.group(0) not in normalized_sentence:
             continue
-        if subject and not subject & _terms(normalized_sentence):
+        if not _subject_matches(query, normalized_sentence):
             continue
         if _ELECTION.search(normalized_sentence) and not _INCUMBENT.search(
                 normalized_sentence):
@@ -330,8 +363,7 @@ def _fixture_dates(text: str) -> list[date]:
 
 def _supports_fixture(query: str, text: str, *, today: date | None = None) -> bool:
     text = normalized(text)
-    subject = _subject_terms(query)
-    if subject and not subject & _terms(text):
+    if not _subject_matches(query, text):
         return False
     if not _DATE.search(text) or not _FIXTURE_MATCH.search(text):
         return False
@@ -351,7 +383,6 @@ def _supports_fixture(query: str, text: str, *, today: date | None = None) -> bo
 def _supports_price(query: str, text: str) -> bool:
     query_text = normalized(query)
     product = _product_model(query_text)
-    subject = _subject_terms(query)
     wanted = next((code for pattern, code in _REGION_CURRENCY
                    if pattern.search(query_text)), '')
     for sentence in _sentences(text):
@@ -371,7 +402,7 @@ def _supports_price(query: str, text: str) -> bool:
                 if not re.search(r'\b' + re.escape(variant) + r'\b', query_text))
             if unwanted:
                 continue
-        elif subject and not subject & _terms(normalized_sentence):
+        elif not _subject_matches(query, normalized_sentence):
             continue
         codes = _currencies(sentence)
         if wanted and codes and wanted not in codes:
@@ -386,12 +417,11 @@ def _product_model(query: str) -> tuple[str, str] | None:
 
 
 def _supports_valuation(query: str, text: str) -> bool:
-    subject = _subject_terms(query)
     for sentence in _sentences(text):
         normalized_sentence = normalized(sentence)
         if not _VALUATION.search(normalized_sentence):
             continue
-        if subject and not subject & _terms(normalized_sentence):
+        if not _subject_matches(query, normalized_sentence):
             continue
         if _CURRENCY_AMOUNT.search(normalized_sentence):
             return True
