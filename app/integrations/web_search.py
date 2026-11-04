@@ -375,6 +375,8 @@ def _attribute_warning(query: str, problem: str) -> str:
         return _ATTRIBUTE_MISSING.get(attribute, 'read pages do not state the requested fact')
     if problem == 'stale':
         return _ATTRIBUTE_STALE.get(attribute, 'dated pages do not confirm the current value')
+    if problem == 'date_unconfirmed':
+        return 'read pages do not tie this fact to the requested date'
     if problem == 'cached_only':
         return 'cached pages cannot confirm a current value'
     if problem == 'single_offer':
@@ -936,7 +938,8 @@ class WebSearchManager:
         problem = attribute_evidence_problem(query, documents)
         if problem:
             evidence = 'partial' if problem in {
-                'single_offer', 'stale', 'cached_only', 'mixed_valuation'} else 'insufficient'
+                'single_offer', 'stale', 'date_unconfirmed', 'cached_only', 'mixed_valuation',
+            } else 'insufficient'
             warnings.append(_attribute_warning(query, problem))
         if len(sources) > MAX_SOURCES:
             read_ids = {document['id'] for document in documents}
@@ -1116,7 +1119,8 @@ class WebSearchManager:
         problem = attribute_evidence_problem(query, documents)
         if problem:
             evidence = 'partial' if problem in {
-                'single_offer', 'stale', 'cached_only', 'mixed_valuation'} else 'insufficient'
+                'single_offer', 'stale', 'date_unconfirmed', 'cached_only', 'mixed_valuation',
+            } else 'insufficient'
             warnings.append(_attribute_warning(query, problem))
         return WebResult(tool="web.research", sources=sources, documents=documents,
                          warnings=warnings, limited=evidence != 'suff', evidence_status=evidence,

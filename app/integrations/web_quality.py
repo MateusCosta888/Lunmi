@@ -144,6 +144,16 @@ _EN_FIXTURE_DATE = re.compile(
 _ISO_FIXTURE_DATE = re.compile(r'\b(20\d{2})-(\d{2})-(\d{2})\b')
 _SLASH_FIXTURE_DATE = re.compile(r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b')
 _FIXTURE_MATCH = re.compile(r'\b(?:vs|contra|x|enfrenta|defronta|recebe|visita)\b')
+_FULL_DATE = '(?:' + '|'.join(pattern.pattern for pattern in (
+    _PT_FIXTURE_DATE, _EN_FIXTURE_DATE, _ISO_FIXTURE_DATE, _SLASH_FIXTURE_DATE)) + ')'
+# A data de atualização da página nunca é a data do jogo.
+_UPDATE_DATE = re.compile(r'\b(?:atualizad\w*|publicad\w*|modificad\w*|updated|published)\b'
+                          r'[^.\n]{0,20}?' + _FULL_DATE)
+_DATE_HEADING = re.compile(
+    r'\W*(?:(?:segunda|terca|quarta|quinta|sexta)(?:-feira)?|sabado|domingo|monday|tuesday|'
+    r'wednesday|thursday|friday|saturday|sunday)?\W*' + _FULL_DATE + r'\W*')
+_PAST_PERIOD = re.compile(r'\b(?:em|in|no ano de)\s+((?:19|20)\d{2})\b')
+_YEAR = re.compile(r'(?<!\d)((?:19|20)\d{2})(?!\d)')
 _VARIANTS = ('pro max', 'pro', 'max', 'plus', 'ultra', 'air', 'mini', 'lite', 'se', 'fe')
 _REGION_CURRENCY = (
     (re.compile(r'\b(?:portugal|portugues[ae]?|lisboa|pt-pt)\b'), 'EUR'),
@@ -361,23 +371,25 @@ def _fixture_dates(text: str) -> list[date]:
     return found
 
 
+def _event_dates(text: str) -> list[date]:
+    """Data do confronto: na própria frase, ou numa linha anterior que seja só data."""
+    found: list[date] = []
+    heading: list[date] = []
+    for line in normalized(text).split('\n'):
+        for sentence in _sentences(line):
+            if _FIXTURE_MATCH.search(sentence):
+                found.extend(_fixture_dates(_UPDATE_DATE.sub(' ', sentence)) or heading)
+        heading = _fixture_dates(line) if _DATE_HEADING.fullmatch(line.strip()) else []
+    return found
+
+
 def _supports_fixture(query: str, text: str, *, today: date | None = None) -> bool:
     text = normalized(text)
     if not _subject_matches(query, text):
         return False
     if not _DATE.search(text) or not _FIXTURE_MATCH.search(text):
         return False
-    if today is not None:
-        event_dates: list[date] = []
-        for sentence in _sentences(text):
-            if _FIXTURE_MATCH.search(normalized(sentence)):
-                event_dates.extend(_fixture_dates(sentence))
-        # Datas explícitas na própria frase do confronto; uma data de atualização
-        # noutra frase não transforma um evento passado no próximo jogo.
-        dates = event_dates or _fixture_dates(text)
-        if dates and not any(event >= today for event in dates):
-            return False
-    return True
+    return today is None or any(event >= today for event in _event_dates(text))
 
 
 def _supports_price(query: str, text: str) -> bool:
@@ -431,7 +443,7 @@ def _supports_valuation(query: str, text: str) -> bool:
 def supports_requested_attribute(query: str, text: str, *, today: date | None = None) -> bool:
     """Texto contém o sujeito e o atributo finito pedido.
 
-    `today` só afeta fixture: uma data completa passada não sustenta o próximo jogo.
+    `today` só afeta fixture: o próximo jogo precisa de uma data de evento completa e futura.
     """
     attribute = requested_attribute(query)
     if not attribute:
@@ -491,6 +503,24 @@ def _offer_hosts(documents: list[dict[str, Any]]) -> set[str]:
     return hosts
 
 
+def _requested_past_year(query: str, today: date) -> int | None:
+    """Ano pedido com preposição temporal; «modelo de 2020» continua a ser uma pergunta atual."""
+    years = {int(year) for year in _PAST_PERIOD.findall(normalized(query))}
+    year = years.pop() if len(years) == 1 else None
+    return year if year is not None and year < today.year else None
+
+
+def _states_fact_in_year(query: str, document: dict[str, Any], year: int) -> bool:
+    """O ano acompanha a frase do facto; rodapés e outras frases não datam o valor."""
+    published = str(document.get('published_at') or '')[:4]
+    for sentence in _sentences(str(document.get('content') or '')):
+        if supports_requested_attribute(query, str(document.get('title') or '') + '\n' + sentence):
+            years = {int(value) for value in _YEAR.findall(sentence)}
+            if year in years or (not years and published == str(year)):
+                return True
+    return False
+
+
 def attribute_evidence_problem(
     query: str,
     documents: list[dict[str, Any]],
@@ -499,22 +529,32 @@ def attribute_evidence_problem(
 ) -> str:
     """'' quando há suporte atual; senão um código fechado de limitação.
 
-    Códigos: missing, stale, cached_only, single_offer, mixed_valuation. A data de
-    publicação e o estado de cache fazem parte do suporte: texto útil não é prova de
-    atualidade. Prices de comparação precisam de dois vendedores independentes.
+    Códigos: missing, stale, date_unconfirmed, cached_only, single_offer, mixed_valuation.
+    A data de publicação e o estado de cache fazem parte do suporte: texto útil não é prova
+    de atualidade. Prices de comparação precisam de dois vendedores independentes. Num ano
+    passado pedido, a atualidade não se aplica: o que conta é o facto estar ligado a esse ano.
     """
     attribute = requested_attribute(query)
     if not attribute:
         return ''
     current = today or datetime.now().date()
+    year = _requested_past_year(query, current) if attribute != 'fixture' else None
+    if year is not None:
+        if not any(supports_requested_attribute(query, _document_text(document))
+                   for document in documents):
+            return 'missing'
+        return '' if any(_states_fact_in_year(query, document, year)
+                         for document in documents) else 'date_unconfirmed'
     supported = [document for document in documents
                  if supports_requested_attribute(query, _document_text(document),
                                                  today=current)]
     if not supported:
-        if attribute == 'fixture' and any(
-                supports_requested_attribute(query, _document_text(document))
-                for document in documents):
-            return 'stale'
+        if attribute == 'fixture':
+            named = [document for document in documents
+                     if supports_requested_attribute(query, _document_text(document))]
+            if named:
+                return 'stale' if any(_event_dates(_document_text(document))
+                                      for document in named) else 'date_unconfirmed'
         return 'missing'
     fresh = [document for document in supported if _is_current(document, current)]
     if fresh:
