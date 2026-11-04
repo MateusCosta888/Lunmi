@@ -352,9 +352,9 @@ def test_explicit_web_request_uses_one_tool_then_answer_only_and_keeps_the_turn_
         assert web.calls == [("web.search", {"query": "python asyncio"})]
         assert len(controller.brain.calls) == 1  # type: ignore[attr-defined]
         # O ledger/publicação mantém a fonte, mas o ID opaco não entra na RAM nem no chat.
-        assert result.message == "Resposta ."
+        assert result.message == "Resposta."
         assert controller.turns.pairs(controller.session_id) == [
-            ("Pesquisa na internet sobre python asyncio.", "Resposta .")]
+            ("Pesquisa na internet sobre python asyncio.", "Resposta.")]
         assert "FONTES EXTERNAS" in controller.brain.calls[-1][-1]["content"]  # type: ignore[attr-defined]
         assert "READ BODY" in controller.brain.calls[-1][-1]["content"]  # type: ignore[attr-defined]
         await controller.close()

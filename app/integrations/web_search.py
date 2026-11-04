@@ -29,11 +29,16 @@ from app.integrations.web_quality import (
     WebConstraints,
     attribute_evidence_problem,
     constraints,
+    focused_query,
+    localized_query,
+    on_topic,
     has_quote_value,
     publication_hint,
     rank_sources,
     requested_attribute,
     search_query,
+    structured_lookup,
+    subject_query,
     useful_content,
 )
 from app.integrations.web_state import (
@@ -56,6 +61,7 @@ MAX_SNIPPET = 600
 # os seus orçamentos; aqui só se garante que a página não perde o fim na leitura.
 MAX_PAGE_CHARS = 48000
 QUICK_READS = 2          # quick explícito e atributos finitos
+AUTO_QUICK_READS = 3     # pergunta simples em auto: a primeira página pode ser só a antevisão
 VERIFIED_READS = 3       # leitura automática de uma pergunta que exige fonte
 DEEP_READS = 3           # modo deep explícito e ferramenta research (inalterado)
 AUTO_DEEP_READS = 4      # modo automático numa pergunta de profundidade deep
@@ -71,9 +77,13 @@ SNIPPET_MIN_TOTAL = 200
 # renovado a meio da operação, e o cancelamento/deadline global da Task continua a
 # mandar por cima.
 SEARCH_TIMEOUT = 10.0
+# Medido: arranque 2 s + primeira pesquisa 8 s; 10 s no total não deixavam ler nenhuma página.
+AUTO_TIMEOUT = 25.0
+SECOND_LOOK_MIN = 8.0
 VERIFIED_TIMEOUT = 45.0
 DEEP_TIMEOUT = 60.0
 PER_ATTEMPT_HTTP = 15.0
+AUTO_BATCH_HTTP = 8.0   # fetch_batch espera pela página mais lenta e não tem timeout próprio
 OPEN_TIMEOUT = 30.0
 RESEARCH_TIMEOUT = 25.0
 INIT_TIMEOUT = 20.0
@@ -104,8 +114,8 @@ _WORKER_POLICY: dict[str, str] = {
     "SEARCH_MCP_CACHE_MAX_MB": "128",
     "SEARCH_MCP_MAX_CONTENT_CHARS": "48000",
     "SEARCH_MCP_DEFAULT_ENGINES": json.dumps(["duckduckgo", "bing", "anysearch"]),
-    "SEARCH_MCP_RESERVE_ENGINES": json.dumps(["searx"]),
-    "SEARCH_MCP_RESCUE_ENGINES": json.dumps(["searx"]),
+    "SEARCH_MCP_RESERVE_ENGINES": json.dumps(["wikipedia", "googlenews"]),
+    "SEARCH_MCP_RESCUE_ENGINES": json.dumps(["wikipedia", "googlenews"]),
     "SEARCH_MCP_FRESH_ENGINES": json.dumps(["googlenews"]),
     "SEARCH_MCP_LOCALE_ENGINES": json.dumps({}),
     "SEARCH_MCP_AUTO_ROUTE_ENABLED": "false",
@@ -300,8 +310,8 @@ def _reading_level(policy: WebConstraints, mode: str) -> str:
 
 
 def _operation_budget(policy: WebConstraints, mode: str, *, floor: float) -> float:
-    """Orçamento total da operação: quick 10 s, verified 45 s, deep 60 s."""
-    budget = {'quick': SEARCH_TIMEOUT, 'verified': VERIFIED_TIMEOUT,
+    """Orçamento total: quick escolhido 10 s, quick em auto 25 s, verified 45 s, deep 60 s."""
+    budget = {'quick': SEARCH_TIMEOUT if mode == 'quick' else AUTO_TIMEOUT, 'verified': VERIFIED_TIMEOUT,
               'deep': DEEP_TIMEOUT}[_reading_level(policy, mode)]
     return max(budget, floor)
 
@@ -327,12 +337,13 @@ def _read_candidates(policy: WebConstraints, mode: str, query: str) -> int:
         return AUTO_DEEP_READS
     if mode == 'deep' or policy.depth == 'verified':
         return VERIFIED_READS
-    return QUICK_READS
+    return AUTO_QUICK_READS
 
 
 def _reads_together(policy: WebConstraints, mode: str, query: str) -> bool:
     """`deep` e comparações leem os candidatos em lote; `verified` lê um a um."""
     return (_reading_level(policy, mode) == 'deep'
+            or (mode == 'auto' and policy.depth == 'quick')
             or requested_attribute(query) == 'valuation'
             or bool(re.search(
                 r'\b(?:compara\w*|compar\w*|várias fontes|varias fontes|duas fontes|'
@@ -357,6 +368,7 @@ _ATTRIBUTE_MISSING = {
     'count': 'read pages do not state the requested count',
     'office': 'read pages do not name the current office holder',
     'fixture': 'read pages do not state a dated next fixture',
+    'release': 'read pages do not state a release date still to come',
     'price': 'read pages do not show a comparable price for the requested model and region',
     'valuation': 'read pages do not state a dated valuation amount',
 }
@@ -364,6 +376,7 @@ _ATTRIBUTE_STALE = {
     'count': 'dated pages do not confirm the current count',
     'office': 'dated pages do not confirm the current office holder',
     'fixture': 'dated pages do not confirm the next fixture',
+    'release': 'dated pages do not confirm the release date',
     'price': 'dated pages do not confirm a current comparable price',
     'valuation': 'dated pages do not confirm a current valuation',
 }
@@ -734,8 +747,10 @@ class WebSearchManager:
 
     def __init__(self, *, emit: Callable[[dict[str, Any]], None], state_root: str | Path,
                  session_id: str, environment: WebEnvironment | None = None,
-                 client_factory: Callable[[WebEnvironment], MCPWebClient] | None = None) -> None:
+                 client_factory: Callable[[WebEnvironment], MCPWebClient] | None = None,
+                 country: str = '') -> None:
         self._emit = emit
+        self._country = country
         self._state_root = Path(state_root)
         self._environment = environment
         self._client_factory = client_factory or (
@@ -886,19 +901,41 @@ class WebSearchManager:
     async def _search(self, env: WebEnvironment, arguments: dict[str, Any],
                       started: float, first: bool, *,
                       context_budget: int | None, mode: str) -> WebResult:
-        query = _query(arguments)
+        query = localized_query(_query(arguments), self._country)
         policy = constraints(query)
         budget = _operation_budget(policy, mode, floor=SEARCH_TIMEOUT)
         candidate_limit = 15 if policy.read_required or mode == 'deep' else MAX_SOURCES
         self._emit_state("searching", MESSAGES["searching"])
         client = await self._ensure_client(env)
-        payload = await client.call("search", {
+        lookup = structured_lookup(_query(arguments), self._country)
+        if lookup is not None:
+            data = await self._structured(client, *lookup, budget, started)
+            if data is not None:
+                return data
+            client = await self._ensure_client(env)
+        request = {
             "query": search_query(query, policy), "format": "json",
             "max_results": candidate_limit, "use_cache": True, **policy.parameters(),
-        }, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
+        }
+        try:
+            payload = await client.call(
+                "search", request, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
+        except WebSearchError as exc:
+            # Um timeout mata a sessão; se o orçamento ainda couber, a pesquisa repete uma vez.
+            fresh = await self._fresh_client(env, budget, started) if exc.code == 'timeout' else None
+            if fresh is None:
+                raise
+            client = fresh
+            payload = await client.call(
+                "search", request, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
         sources, _ = _search_sources(payload, limit=candidate_limit)
         sources = rank_sources(query, sources, policy)
         warnings = _warnings(payload if isinstance(payload, dict) else {})
+        # Sem fontes, ou só páginas-isco do Bing: é o caso em que os motores habituais falharam.
+        if not sources or (all(source.get('engines') == ['bing'] for source in sources)
+                           and not any(on_topic(query, source) for source in sources)):
+            sources = await self._reserve_sources(
+                client, query, policy, candidate_limit, budget, started) or sources
         documents: list[dict[str, Any]] = []
         # O atalho de excertos é só para o modo rápido escolhido pelo utilizador; em `auto`
         # um resumo de motor de busca não basta para afirmar um facto, por isso lê páginas.
@@ -917,6 +954,10 @@ class WebSearchManager:
             warnings.extend(read_warnings)
             if client_failed:
                 await self._close_client()
+            if (not client_failed and requested_attribute(query)
+                    and attribute_evidence_problem(query, documents)):
+                await self._second_look(client, query, policy, mode, sources, documents,
+                                        warnings, budget, started, env)
         evidence = 'suff' if documents or snippets_only else 'insufficient'
         if policy.freshness:
             dated = [source for source in sources if policy.dated(source)]
@@ -926,6 +967,9 @@ class WebSearchManager:
             if not dated:
                 evidence = 'insufficient'
                 warnings.append('publication date not verified for requested time window')
+            elif not documents and policy.freshness in {'day', 'week'} and len(dated) >= 3:
+                # Os links do Google News não abrem por HTTP; um resumo do dia cabe nos excertos.
+                evidence = 'suff'
         if policy.official and not documents:
             evidence = 'partial' if sources else 'insufficient'
             warnings.append('official pages were not read')
@@ -948,6 +992,69 @@ class WebSearchManager:
                          warnings=warnings, limited=evidence != 'suff', evidence_status=evidence,
                          request_status={'suff': 'met', 'partial': 'partial',
                                          'insufficient': 'unmet'}[evidence])
+
+    async def _reserve_sources(self, client: MCPWebClient, query: str, policy: WebConstraints,
+                               limit: int, budget: float, started: float) -> list[dict[str, Any]]:
+        """Motores sem limite por IP, para quando os habituais falham ou devolvem lixo."""
+        try:
+            payload = await client.call("search", {
+                "query": subject_query(query), "engines": ["wikipedia", "googlenews"],
+                "format": "json", "max_results": limit, "use_cache": True,
+            }, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
+        except WebSearchError:
+            return []
+        found, _ = _search_sources(payload, limit=limit)
+        return rank_sources(query, found, policy)
+
+    async def _structured(self, client: MCPWebClient, engine: str, query: str,
+                          budget: float, started: float) -> WebResult | None:
+        """Dados de uma API pública (tempo, feriados, câmbio): o excerto já é o documento."""
+        try:
+            payload = await client.call("search", {
+                "query": query, "engines": [engine], "format": "json", "max_results": 3,
+                "use_cache": False,
+            }, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
+        except WebSearchError:
+            return None
+        found, _ = _search_sources(payload, limit=3)
+        sources = [source for source in found if engine in source.get('engines', ())]
+        if not sources:
+            return None
+        for source in sources:
+            source['read'] = True
+            source['published_at'] = source.get('published_at') or _utc_now()[:10]
+        return WebResult(tool="web.search", sources=sources, warnings=['answered via ' + engine],
+                         documents=[{**source, 'content': source['snippet'], 'structured': True}
+                                    for source in sources])
+
+    async def _second_look(self, client: MCPWebClient, query: str, policy: WebConstraints,
+                           mode: str, sources: list[dict[str, Any]],
+                           documents: list[dict[str, Any]], warnings: list[str],
+                           budget: float, started: float, env: WebEnvironment) -> None:
+        """Uma consulta focada acrescenta fontes novas; falhar não estraga a primeira leitura."""
+        try:
+            left = min(SEARCH_TIMEOUT, _remaining(budget, started))
+            if left < SECOND_LOOK_MIN:
+                return
+            payload = await client.call("search", {
+                "query": focused_query(query), "format": "json", "max_results": 15,
+                "use_cache": True, **policy.parameters(),
+            }, timeout=left)
+            known = {source['id'] for source in sources}
+            found, _ = _search_sources(payload, limit=15)
+            fresh = rank_sources(query, [item for item in found if item['id'] not in known], policy)
+            if not fresh:
+                return
+            sources[:0] = fresh  # primeiro: as lidas têm de sobreviver ao corte de fontes
+            more, read_warnings, failed = await self._read_pages(
+                client, fresh, policy, query, _read_candidates(policy, mode, query),
+                False, budget, started, env=env)
+        except WebSearchError:
+            return
+        documents.extend(more)
+        warnings.extend(read_warnings)
+        if failed:
+            await self._close_client()
 
     async def _fresh_client(self, env: WebEnvironment, timeout: float, started: float
                             ) -> MCPWebClient | None:
@@ -979,7 +1086,9 @@ class WebSearchManager:
         warnings: list[str] = []
         client_failed = False
         # Failed candidates are not useful evidence; scan the finite pool under the same operation deadline.
-        candidates = sources if policy.read_required and count > QUICK_READS else sources[:count]
+        candidates = (sources if count > QUICK_READS and (policy.read_required or multiple)
+                      else sources[:count])
+        patience = AUTO_BATCH_HTTP if timeout == AUTO_TIMEOUT else PER_ATTEMPT_HTTP
         step = count if multiple else 1
         index = 0
         while index < len(candidates):
@@ -992,7 +1101,7 @@ class WebSearchManager:
                     batch = batch[:offset] if offset else batch[:1]
                     break
             try:
-                attempt_timeout = min(PER_ATTEMPT_HTTP, _remaining(timeout, started))
+                attempt_timeout = min(patience, _remaining(timeout, started))
             except WebSearchError:
                 _add_warning(warnings, _BUDGET_EXHAUSTED)
                 break

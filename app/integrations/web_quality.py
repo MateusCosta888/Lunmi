@@ -33,6 +33,7 @@ def currency_quote_question(text: str) -> bool:
 # recente e não apenas texto útil. 183 dias é o limite fechado para esta política;
 # não é um timeout nem um prazo de rede.
 CURRENT_EVIDENCE_MAX_AGE_DAYS = 183
+OFFICE_EVIDENCE_MAX_AGE_DAYS = 365
 
 _DEFINITION = re.compile(
     r'^(?:o que (?:e|sao|significa)|what (?:is|are)|'
@@ -89,7 +90,15 @@ _ATTRIBUTE_STOP = {
 _NAME_LEAD = {'o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'de', 'the', 'um', 'uma', 'e', 'of'}
 _CONTEXT_WORDS = {'em', 'no', 'na', 'nos', 'nas', 'in', 'on', 'at'}
 _NOT_NAME = _ATTRIBUTE_STOP | _UNIT_WORDS | {
-    'pesquisa', 'procura', 'internet', 'web', 'google', 'mercado', 'existem', 'sao', 'foram'}
+    'pesquisa', 'procura', 'internet', 'web', 'google', 'mercado', 'existem', 'sao', 'foram',
+    'ai', 'pesquise', 'pesquisar', 'procure', 'procurar', 'busca', 'busque', 'buscar', 'mim',
+    'pra', 'para',
+    # A consulta escrita pelo modelo acrescenta contexto ("jogo do Flamengo futebol data").
+    'futebol', 'data', 'dia', 'adversario', 'horario', 'quando', 'que', 'vai', 'ser', 'sai',
+    'sair', 'lancar', 'lanca', 'lancamento', 'estreia', 'release', 'date', 'filme', 'nova',
+    'novo', 'temporada', 'oficial', 'official', 'confirmada', 'confirmado', 'comeca', 'comecam',
+    'inicia', 'inicio', 'acontece', 'sera'}
+_ROMAN = {'2': 'ii', '3': 'iii', '4': 'iv', '5': 'v', '6': 'vi', '7': 'vii', '8': 'viii', '9': 'ix'}
 _NUMBER_WORDS = {
     'zero': 0, 'um': 1, 'uma': 1, 'dois': 2, 'duas': 2, 'tres': 3, 'quatro': 4, 'cinco': 5,
     'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9, 'dez': 10, 'onze': 11, 'doze': 12, 'treze': 13,
@@ -137,6 +146,7 @@ _DATE = re.compile(
     r'\b20\d{2}-\d{2}-\d{2}\b')
 _MONTH_NUMBERS = {name: index + 1 for index, name in enumerate(_MONTHS[:12])}
 _MONTH_NUMBERS.update({name: index + 1 for index, name in enumerate(_MONTHS[12:])})
+_MONTH_YEAR = re.compile(r'\b(' + '|'.join(_MONTHS) + r')(?:\s+de)?\s+(20\d{2})\b')
 _PT_FIXTURE_DATE = re.compile(
     r'\b(\d{1,2})\s+de\s+(' + '|'.join(_MONTHS[:12]) + r')\s+de\s+(\d{4})\b')
 _EN_FIXTURE_DATE = re.compile(
@@ -177,8 +187,15 @@ _CURRENCY_AMOUNT = re.compile(
     + r'|(?:us\$|r\$|€|\$|£|\busd\b|\beur\b|\bbrl\b|\bgbp\b)\s*\d[\d.,]*)')
 
 
+_RELEASE_DATE = re.compile(
+    r'\b(?:quando|data|dia|release date)\b.{0,60}\b(?:lanca\w*|lancamento|estreia\w*|sai|sair)\b|'
+    r'\b(?:lancamento|estreia)\b.{0,60}\b(?:quando|data|dia)\b|\brelease date\b|'
+    r'\b(?:quando|data)\b.{0,40}\bproxim[oa]\b|\bproxim[oa]\b.{0,60}\b(?:quando|data)\b')
+_RELEASE_PAST = re.compile(r'\b(?:foi|era|lancou|lancado|lancada|estreou|saiu)\b')
+
+
 def requested_attribute(query: str) -> str:
-    """Atributo finito pedido: '', count, office, fixture, price ou valuation."""
+    """Atributo finito pedido: '', count, office, fixture, release, price ou valuation."""
     text = normalized(query).strip()
     if not text or _DEFINITION.match(text):
         return ''
@@ -186,6 +203,8 @@ def requested_attribute(query: str) -> str:
         return 'office'
     if _FIXTURE.search(text):
         return 'fixture'
+    if _RELEASE_DATE.search(text) and not _RELEASE_PAST.search(text):
+        return 'release'
     if _VALUATION.search(text):
         return 'valuation'
     if _PRICE.search(text):
@@ -236,7 +255,8 @@ def _subject_matches(query: str, text: str) -> bool:
     if not entity:
         subject = _subject_terms(query)
         return not subject or bool(subject & _terms(text))
-    found = entity & set(re.findall(r'[a-z0-9]+', normalized(text)))
+    words = set(re.findall(r'[a-z0-9]+', normalized(text)))
+    found = {token for token in entity if token in words or _ROMAN.get(token) in words}
     return len(found) >= (1 if len(entity) == 1 else -(-2 * len(entity) // 3))
 
 
@@ -325,7 +345,7 @@ def _supports_office(query: str, text: str) -> bool:
     subject = _subject_terms(query)
     for sentence in _sentences(text):
         normalized_sentence = normalized(sentence)
-        if office.group(0) not in normalized_sentence:
+        if office.group(0).replace('-', ' ') not in normalized_sentence.replace('-', ' '):
             continue
         if not _subject_matches(query, normalized_sentence):
             continue
@@ -334,7 +354,8 @@ def _supports_office(query: str, text: str) -> bool:
             continue
         capitals = _NAME.findall(sentence)
         first = sentence.split()[0] if sentence.split() else ''
-        if capitals and capitals[0] == first:
+        # Maiúscula de início de frase não é nome, salvo "Lula é o presidente".
+        if capitals and capitals[0] == first and not re.match(r'\S+\s+(?:é|is)\b', sentence):
             capitals = capitals[1:]
         capitals = [word for word in capitals
                     if normalized(word) not in subject | _ATTRIBUTE_STOP]
@@ -390,6 +411,20 @@ def _supports_fixture(query: str, text: str, *, today: date | None = None) -> bo
     if not _DATE.search(text) or not _FIXTURE_MATCH.search(text):
         return False
     return today is None or any(event >= today for event in _event_dates(text))
+
+
+def _supports_release(query: str, text: str, *, today: date | None = None) -> bool:
+    """Uma data ainda por vir: "26 de maio de 2026" já passada é um adiamento por notar."""
+    text = normalized(text)
+    if not _subject_matches(query, text):
+        return False
+    current = today or datetime.now().date()
+    if any(event >= current for event in _event_dates(text)):
+        return True
+    if any(int(year) > current.year for year in _YEAR.findall(text)):
+        return True
+    return any((int(year), _MONTH_NUMBERS[month]) >= (current.year, current.month)
+               for month, year in _MONTH_YEAR.findall(text))
 
 
 def _supports_price(query: str, text: str) -> bool:
@@ -454,6 +489,8 @@ def supports_requested_attribute(query: str, text: str, *, today: date | None = 
         return _supports_office(query, text)
     if attribute == 'fixture':
         return _supports_fixture(query, text, today=today)
+    if attribute == 'release':
+        return _supports_release(query, text, today=today)
     if attribute == 'price':
         return _supports_price(query, text)
     return _supports_valuation(query, text)
@@ -481,9 +518,17 @@ def _document_text(document: dict[str, Any]) -> str:
     return str(document.get('title') or '') + '\n' + str(document.get('content') or '')
 
 
-def _is_current(document: dict[str, Any], today: date) -> bool:
+def _live_page(document: dict[str, Any]) -> bool:
+    host = (urlsplit(str(document.get('url') or '')).hostname or '').casefold()
+    return host == 'wikipedia.org' or host.endswith('.wikipedia.org')
+
+
+def _is_current(document: dict[str, Any], today: date,
+                max_age: int = CURRENT_EVIDENCE_MAX_AGE_DAYS) -> bool:
     if document.get('cached'):
         return False
+    if _live_page(document):
+        return True
     value = document.get('published_at')
     if not value:
         return False
@@ -491,7 +536,7 @@ def _is_current(document: dict[str, Any], today: date) -> bool:
         published = date.fromisoformat(str(value)[:10])
     except ValueError:
         return False
-    return 0 <= (today - published).days <= CURRENT_EVIDENCE_MAX_AGE_DAYS
+    return 0 <= (today - published).days <= max_age
 
 
 def _offer_hosts(documents: list[dict[str, Any]]) -> set[str]:
@@ -535,8 +580,8 @@ def attribute_evidence_problem(
     passado pedido, a atualidade não se aplica: o que conta é o facto estar ligado a esse ano.
     """
     attribute = requested_attribute(query)
-    if not attribute:
-        return ''
+    if not attribute or any(document.get('structured') for document in documents):
+        return ''  # uma API de dados responde em inglês e sem o vocabulário da pergunta
     current = today or datetime.now().date()
     year = _requested_past_year(query, current) if attribute != 'fixture' else None
     if year is not None:
@@ -556,13 +601,18 @@ def attribute_evidence_problem(
                 return 'stale' if any(_event_dates(_document_text(document))
                                       for document in named) else 'date_unconfirmed'
         return 'missing'
-    fresh = [document for document in supported if _is_current(document, current)]
+    max_age = OFFICE_EVIDENCE_MAX_AGE_DAYS if attribute == 'office' else CURRENT_EVIDENCE_MAX_AGE_DAYS
+    fresh = [document for document in supported if _is_current(document, current, max_age)]
     if fresh:
         if attribute == 'valuation' and valuation_conflict(fresh):
             return 'mixed_valuation'
         if attribute == 'price' and _COMPARISON.search(normalized(query)):
             if len(_offer_hosts(fresh)) < 2:
                 return 'single_offer'
+        return ''
+    if attribute == 'release' and sum(
+            _is_current(document, current, OFFICE_EVIDENCE_MAX_AGE_DAYS)
+            for document in supported) >= 2:
         return ''
     if any(document.get('cached') for document in supported):
         return 'cached_only'
@@ -627,7 +677,8 @@ class WebConstraints:
 _AI_TOPIC = re.compile(r'\b(?:inteligencia artificial|artificial intelligence|ia|ai)\b')
 _PT_AI_FILLER = re.compile(
     r'\bai\b(?=\s*(?:[,;:—-]\s*)?(?:quando|quanto|quantos|quantas|onde|como|qual|quais|quem|'
-    r'porque|por que|se|que)\b)')
+    r'porque|por que|se|que|pra mim|para mim|sobre|o|a|os|as|de|do|da|'
+    r'pesquis\w*|procur\w*|busc\w*)\b)')
 
 
 def _topic(text: str, raw: str) -> str:
@@ -789,7 +840,7 @@ def rank_sources(query: str, sources: list[dict[str, Any]],
         if attribute:
             attribute_bonus += 8 * supports_requested_attribute(query, text, today=today)
             published = source.get('published_at')
-            if published:
+            if published and not _live_page(source):
                 try:
                     age = (today - date.fromisoformat(str(published)[:10])).days
                 except ValueError:
@@ -941,9 +992,95 @@ def search_query(query: str, policy: WebConstraints, *, today: date | None = Non
         return query + ' JavaScript biblioteca'
     # "o atual papa", "os 8 últimos papas": sem ano, os motores devolvem listas antigas que
     # terminam antes da mudança. O ano corrente puxa as páginas atualizadas.
-    if present_or_latest(query) and not re.search(r'(?<!\d)(?:19|20)\d{2}(?!\d)', query):
-        return f"{query} {(today or datetime.now().date()).year}"
+    if ((present_or_latest(query) or requested_attribute(query))
+            and not re.search(r'(?<!\d)(?:19|20)\d{2}(?!\d)', query)):
+        current = today or datetime.now().date()
+        return f"{query} {current:%d/%m/%Y}" if policy.quote else f"{query} {current.year}"
     return query
+
+
+_LOCAL_QUESTION = re.compile(
+    r'\b(?:preco|precos|custa|custam|banco|bancos|feriado|feriados|tempo|clima|chover|chuva|'
+    r'salario minimo|imposto|impostos|gasolina|operadora|operadoras|dolar)\b')
+_BARE_OFFICE = re.compile(r'\bprimeir[oa][ -]ministr[oa]$')
+_PLACE_NAMED = re.compile(r'\b(?:em|no|na|nos|nas|in)\s+[a-z]{3,}')
+
+
+def localized_query(query: str, country: str) -> str:
+    """Uma pergunta local sem lugar é sobre o país do utilizador, não o das páginas em português."""
+    text = normalized(query).strip(' ?!.')
+    local = _LOCAL_QUESTION.search(text) or _BARE_OFFICE.search(text)
+    if not country or not local or _PLACE_NAMED.search(text) or normalized(country) in text:
+        return query
+    return f"{query.rstrip(' ?!.')} em {country}"
+
+
+_WEATHER = re.compile(r'\b(?:chover|chuva|previsao do tempo|temperatura|o tempo|weather|'
+                      r'faz(?:er)? (?:sol|frio|calor))\b')
+_WEATHER_PLACE = re.compile(r'\b(?:em|no|na|in)\s+([a-z][a-z -]{2,40})')
+_WEATHER_TIME = re.compile(r'\b(?:hoje|amanha|agora|depois|esta semana|today|tomorrow)\b.*$')
+# shortcut: "lisboa" sozinho geocodifica para Moçambique; juntar cidades se aparecerem outras.
+_CITY_ENGLISH = {'lisboa': 'Lisbon', 'londres': 'London', 'nova iorque': 'New York',
+                 'nova york': 'New York', 'roma': 'Rome'}
+_HOLIDAY = re.compile(r'\bferiados?\b')
+_CRYPTO = re.compile(r'\b(bitcoin|btc|ethereum|eth|solana|dogecoin)\b')
+_CRYPTO_ASK = re.compile(r'\b(?:quanto|preco|valor|vale|cotacao|price)\b')
+_FX_CODES = {'dolar': 'USD', 'dolares': 'USD', 'usd': 'USD', 'euro': 'EUR', 'euros': 'EUR',
+             'eur': 'EUR', 'libra': 'GBP', 'libras': 'GBP', 'gbp': 'GBP', 'real': 'BRL',
+             'reais': 'BRL', 'brl': 'BRL', 'iene': 'JPY', 'ienes': 'JPY', 'jpy': 'JPY'}
+# shortcut: só os países testados; o resto usa o euro, até haver utilizadores noutros países.
+_HOME_CURRENCY = {'brasil': 'BRL', 'brazil': 'BRL'}
+_ENGLISH_COUNTRY = {'brasil': 'Brazil', 'alemanha': 'Germany', 'espanha': 'Spain',
+                    'franca': 'France', 'estados unidos': 'United States', 'reino unido': 'United Kingdom'}
+
+
+def structured_lookup(query: str, country: str, *, today: date | None = None) -> tuple[str, str] | None:
+    """(motor, consulta) de uma fonte de dados, ou None: estas fontes só entendem inglês simples."""
+    text = normalized(query).strip(' ?!.')
+    current = today or datetime.now().date()
+    home = normalized(country)
+    if _WEATHER.search(text):
+        place = _WEATHER_PLACE.search(text)
+        name = _WEATHER_TIME.sub('', place[1]).strip() if place else ''
+        return ('openmeteo', f'weather {_CITY_ENGLISH.get(name, name)}') if name else None
+    if _HOLIDAY.search(text):
+        named = next((name for name in (*_ENGLISH_COUNTRY, 'portugal') if name in text), home)
+        years = _YEAR.findall(text)
+        return (('holidays', f'public holidays {_ENGLISH_COUNTRY.get(named, named)} '
+                             f'{years[0] if years else current.year}') if named else None)
+    crypto = _CRYPTO.search(text)
+    if crypto and _CRYPTO_ASK.search(text):
+        return 'coingecko', f'{crypto[1]} price'
+    if currency_quote_question(text):
+        codes = list(dict.fromkeys(_FX_CODES[word] for word in re.findall(r'[a-z]+', text)
+                                   if word in _FX_CODES))
+        if len(codes) == 1:
+            local = _HOME_CURRENCY.get(home, 'EUR')
+            codes.append(local if local != codes[0] else 'USD')
+        return ('frankfurter', f'{codes[0]} to {codes[1]}') if len(codes) >= 2 else None
+    return None
+
+
+_QUESTION_LEAD = re.compile(
+    r'^(?:quem|qual|quais|quando|quanto|quantos|quantas|onde|como|who|what|when)\b'
+    r'(?:\s+(?:e|é|eh|sao|são|foi|vai ser|o|a|os|as|um|uma|is|the))*\s+', re.IGNORECASE)
+
+
+def on_topic(query: str, source: dict[str, Any]) -> bool:
+    """Metade dos termos pedidos aparece na fonte: o Bing devolve páginas-isco sem relação."""
+    wanted = _terms(query)
+    text = normalized(str(source.get('title', '')) + ' ' + str(source.get('snippet', '')))
+    return not wanted or 2 * len(wanted & _terms(text)) >= len(wanted)
+
+
+def subject_query(query: str) -> str:
+    return _QUESTION_LEAD.sub('', query.strip(' \t\r\n?!.'))
+
+
+def focused_query(query: str, *, today: date | None = None) -> str:
+    """A pergunta sem o início interrogativo, com mês e ano: traz páginas diferentes da crua."""
+    current = today or datetime.now().date()
+    return f"{subject_query(query)} {_MONTHS[current.month - 1]} {current.year}"
 
 
 def publication_hint(item: dict[str, Any], retrieved_at: str) -> str | None:

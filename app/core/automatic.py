@@ -13,6 +13,7 @@ from app.integrations.web_quality import (
     currency_quote_question as _currency_quote_question,
     requested_attribute as _requested_attribute,
     requires_page_evidence as _requires_page_evidence,
+    structured_lookup,
 )
 from app.memory.conversation import CONVERSATION_PROMPT, parse_response
 
@@ -148,7 +149,10 @@ WEB_SYNTHESIS_PROMPT = (
     'full-page reading. '
     'Return the public answer as plain text, or as the JSON object above; if you choose JSON '
     'it MUST be valid (escape quotes and Unicode), because an invalid object is a failed '
-    'answer. Write in the user language and be proportional to the request: an '
+    'answer. When sources differ slightly (a live quote, a date per region), give the values '
+    'and what each refers to; do not open by saying it cannot be confirmed. Write in the '
+    'language the question was asked in, whatever the language of the sources or of these '
+    'labels, and be proportional to the request: an '
     'introductory or simple question gets a short answer (about 600 characters, no extra '
     'sections and no unrequested recommendations); only a comparison or an explicitly deep '
     'request may use up to 1200 characters. Requested code samples, tutorials, reports '
@@ -236,7 +240,7 @@ def cancels_email_send(instruction: str) -> bool:
 
 _URL_IN_TEXT = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
 _WEB_SEARCH_START = re.compile(
-    r'^(?:por favor[, ]+|please[, ]+)?(?:pesquisa|pesquise|pesquisar|procura|procure|procurar|'
+    r'^(?:ai[, ]+)?(?:por favor[, ]+|please[, ]+)?(?:pesquisa|pesquise|pesquisar|procura|procure|procurar|'
     r'busca|busque|buscar|search|googla|google)\b')
 _LOCAL_TARGET = re.compile(
     r'\b(?:ficheiro|arquivo|pasta|diretorio|desktop|computador|'
@@ -258,7 +262,7 @@ _MUTABLE_REPAIRS = (
     (re.compile(r'\bcapitolos\b', re.IGNORECASE), 'capitulos'),
     (re.compile(r'\bcapitolo\b', re.IGNORECASE), 'capitulo'),
 )
-_LEADING_FILLER = re.compile(r'^(?:e|agora|ok|bem|bom)[,;:\s]+', re.IGNORECASE)
+_LEADING_FILLER = re.compile(r'^(?:e|agora|ok|bem|bom|a[ií])[,;:\s]+', re.IGNORECASE)
 
 
 def _repair_mutable_terms(instruction: str) -> str:
@@ -299,6 +303,8 @@ def _fresh_web_question(instruction: str) -> bool:
     text = _normalized(_repair_mutable_terms(instruction))
     if _LOCAL_TARGET.search(text):
         return False
+    if structured_lookup(text, 'portugal') is not None:  # o país real só decide no manager
+        return True
     # Atributo finito pedido (contagem, cargo, fixture, preço, valuation): um facto
     # mutável chega ao manager antes de uma resposta livre. Definições, matemática,
     # Saitama e calendário estável ficam de fora pela própria classificação/guarda.
@@ -363,7 +369,7 @@ def web_requested(instruction: str) -> bool:
 
 def _direct_web_command(instruction: str) -> re.Match[str] | None:
     return re.match(
-        r'^(?:lunmi[\s,!.:-]+)?(?:por favor[, ]+|please[, ]+)?'
+        r'^(?:lunmi[\s,!.:-]+)?(?:a[ií][,\s]+)?(?:por favor[, ]+|please[, ]+)?'
         r'(?:pesquisa|pesquise|pesquisar|procura|procure|procurar|busca|busque|buscar|'
         r'search|googla|google)\b',
         instruction, re.IGNORECASE)
@@ -371,6 +377,12 @@ def _direct_web_command(instruction: str) -> re.Match[str] | None:
 
 def _direct_web_query(instruction: str, command: re.Match[str]) -> str | None:
     query = instruction[command.end():].strip()
+    # "pesquisa ai qual..." é conversa; "pesquisa ai generativa" é o assunto.
+    query = re.sub(r'^(?:aí\b[\s,]*|ai[\s,]+(?=(?:pra|para|qual|quais|quem|quando|onde|como|'
+                   r'quanto|quantos|quantas|o|a|os|as|se|sobre)\b))', '', query, flags=re.IGNORECASE)
+    query = re.sub(r'^(?:pra|para)\s+mim\b[\s,]*', '', query, flags=re.IGNORECASE)
+    query = re.sub(r'\s+e\s+(?:me\s+)?(?:faz|faça|faca|fazer|dá|da|diz|diga|explica|explique|'
+                   r'resume|resuma|analisa|analise)\b.*$', '', query, flags=re.IGNORECASE)
     query = re.sub(r'^(?:(?:na|no|en|on|pela|the)\s+)?(?:internet|web|net|online|google)\b\s*',
                    '', query, flags=re.IGNORECASE)
     query = re.sub(r'^(?:sobre|about|for|por|de|do|da)\b\s*', '', query, flags=re.IGNORECASE)
@@ -404,14 +416,8 @@ def direct_web_operation(instruction: str, *, context: str = '') -> dict[str, An
         before = text[:address.start()].strip(' \t,.;:!?')
         if _LOCAL_TARGET.search(_normalized(before)):
             return None
-        command = _direct_web_command(before) if before else None
-        access = re.match(r'^(?:abre|abrir|open|le|leia|ler|read|acede|aceder|visita|visite|'
-                          r'visitar|resume|resuma|resumir|analisa|analise|analisar)\b',
-                          _normalized(before))
-        remainder = text[address.end():].strip(' \t,.;:!?')
-        summary = re.match(r'^(?:e\s+)?(?:explica\w*|resume|resuma|resumir|sintetiza\w*|analisa\w*)\b',
-                           _normalized(remainder))
-        if (before and not (command or access)) or (remainder and not summary):
+        # Dois links pedem uma comparação: quem decide é o Brain.
+        if len(_URL_IN_TEXT.findall(text)) > 1:
             return None
         return {'name': 'web.open', 'args': {'url': public_url(url)}, 'finish': False}
     if _LOCAL_TARGET.search(lowered):
@@ -730,6 +736,10 @@ def _parse_decision(raw: str, allowed: dict[str, set[str]]) -> tuple[str | None,
         if value.get('kind') != 'tool' or set(value) - {'kind', 'operation', 'finish'}:
             raise ValueError('shape')
         operation = value['operation']
+        if isinstance(operation, dict) and 'finish' in operation and 'finish' not in value:
+            # Medido no Codex: a decisão vem certa, só com `finish` um nível abaixo.
+            value = {**value, 'finish': operation['finish']}
+            operation = {key: item for key, item in operation.items() if key != 'finish'}
         if not isinstance(operation, dict) or set(operation) != {'name', 'args'}:
             raise ValueError('tool')
         name, args = operation['name'], operation['args']
@@ -808,5 +818,8 @@ def _parse_decision(raw: str, allowed: dict[str, set[str]]) -> tuple[str | None,
         if type(finish) is not bool:
             raise ValueError('finish')
         return None, [], {**operation, 'finish': finish}
-    except (ValueError, TypeError, KeyError, RecursionError):
-        raise BrainError(ErrorKind.MALFORMED_RESPONSE, 'O cérebro não devolveu uma resposta ou ferramenta válida; nenhuma ação iniciada.') from None
+    except (ValueError, TypeError, KeyError, RecursionError) as error:
+        # Só o código fechado do parser ou o tipo do erro: nunca o texto do modelo.
+        reason = str(error) if type(error) is ValueError else type(error).__name__
+        raise BrainError(ErrorKind.MALFORMED_RESPONSE, 'O cérebro não devolveu uma resposta ou ferramenta válida; nenhuma ação iniciada.',
+                         detail=reason[:40]) from None

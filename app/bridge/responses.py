@@ -58,6 +58,11 @@ def _public_text(prefix: str, text: str) -> str:
     return f'{prefix} {text}' if prefix and text else (prefix or text)
 
 
+def final_public_text(streamed: str, message: str) -> str:
+    """Texto final de um turno que já transmitiu `streamed`, sem repetir o que já lá está."""
+    return message if message.startswith(streamed) else streamed + '\n\n' + message
+
+
 class PublicResponse:
     def __init__(self, emit: Callable[[str, dict[str, Any]], None], session_id: str, task_id: str) -> None:
         self.emit = emit

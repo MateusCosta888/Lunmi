@@ -35,6 +35,14 @@ _SENSITIVE = re.compile(r"\b(cpf|rg|cart[aã]o de cr[eé]dito|diagn[oó]stico|sa
                         r"orienta[cç][aã]o sexual|endere[cç]o residencial)\b", re.I)
 
 
+# Um valor de segredo, não a palavra: "cookie" ou 'disse: "..."' são texto normal de uma página.
+_SECRET_VALUE = re.compile(
+    r"(?:senha|password|passwd|secret|token|api[ _-]?key)\s*[:=]\s*\S|"
+    r"\b(sk|ghp|gho|github_pat|xox[baprs])[-_][a-z0-9_-]{8,}|"
+    r"-----BEGIN .*PRIVATE KEY|\beyJ[a-z0-9_-]{12,}\.[a-z0-9_-]+\.[a-z0-9_-]+|"
+    r"[a-z][a-z0-9+.-]*://[^\s/]+:[^\s/]+@", re.I)
+
+
 class MemoryPolicyError(ValueError):
     def __init__(self) -> None:
         super().__init__("Memória recusada: conteúdo privado, sensível ou formato inválido.")
@@ -79,6 +87,13 @@ def safe_document(text: Any, *, maximum: int = 200_000) -> str:
     for candidate in (text, normalized(text)):
         if _SECRET.search(candidate) or _PRIVATE.search(candidate):
             raise MemoryPolicyError()
+    return text
+
+
+def safe_public_reply(text: Any, *, maximum: int = 32_000) -> str:
+    """Resposta a uma pergunta neutra, feita de páginas públicas: só valores de segredo a travam."""
+    if not isinstance(text, str) or len(text) > maximum or _SECRET_VALUE.search(text):
+        raise MemoryPolicyError()
     return text
 
 

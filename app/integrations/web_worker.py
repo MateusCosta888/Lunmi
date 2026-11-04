@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib.metadata
 import os
 import site
@@ -48,6 +49,14 @@ class PinnedFetchSession:
         return await client.get(url, **kwargs)
 
 
+def decline_google_consent(module: Any) -> None:
+    """Na UE, sem resposta ao consentimento, o Google News não entrega o artigo.
+
+    `SOCS=CAI` é a recusa de cookies, a mesma de quem carrega em "Rejeitar tudo".
+    """
+    module.AsyncSession = functools.partial(module.AsyncSession, cookies={'SOCS': 'CAI'})
+
+
 async def unsupported_asset(*args: Any, **kwargs: Any) -> Any:
     raise WebBlocked('unsupported_resource')
 
@@ -56,12 +65,13 @@ def main() -> None:
     sys.addaudithook(deny_process)
     if importlib.metadata.version('free-search-mcp') != '0.16.0':
         raise RuntimeError('unsupported_web_runtime')
-    from search_mcp import fetcher
+    from search_mcp import fetcher, gnews
     from search_mcp.config import settings
 
     assert settings.fetch_strategy == 'http' and not settings.prewarm
     assert settings.default_engines == ['duckduckgo', 'bing', 'anysearch']
-    assert settings.reserve_engines == ['searx'] and settings.rescue_engines == ['searx']
+    assert settings.reserve_engines == ['wikipedia', 'googlenews']
+    assert settings.rescue_engines == ['wikipedia', 'googlenews']
     assert settings.fresh_engines == ['googlenews'] and settings.locale_engines == {}
     assert not settings.auto_route_enabled and settings.category_engine_limit == 0
     assert settings.agent_backend == 'off' and not settings.download_enabled
@@ -72,6 +82,7 @@ def main() -> None:
     fetcher.AsyncSession = PinnedFetchSession
     fetcher._fetch_as_document = unsupported_asset
     fetcher._fetch_as_asset = unsupported_asset
+    decline_google_consent(gnews)
     from search_mcp.server import run
     run()
 

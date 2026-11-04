@@ -55,7 +55,7 @@ from app.core.automatic import (AUTO_PROMPT, WRITE_DOCUMENT_PROMPT, EMAIL_PROMPT
                                 cancels_email_send, confirms_email_send, continues_email_request,
                                 direct_web_operation, email_addresses, operation_mutates,
                                 parse_decision, parse_web_decision, web_forbidden, web_requested)
-from app.integrations.web_policy import WebBlocked, public_url
+from app.integrations.web_policy import WebBlocked, public_url, windows_country
 from app.integrations.web_quality import (
     attribute_evidence_problem,
     constraints as web_constraints,
@@ -92,11 +92,14 @@ _NATIVE_WEB_PROMPT = (
     'answering: a result snippet alone is not reading the page; if the profile exposes no '
     'page-read tool, say the answer is based only on search excerpts. Do not force a page '
     'read for a simple question that needs no current facts. '
-    'Answer the original question in the user language, in plain text (no JSON), '
+    'Answer the original question in the language it was asked in, whatever the language '
+    'of the sources or of these labels, in plain text (no JSON), '
     'proportionally: a simple or introductory question gets a short answer (about 600 '
     'characters, no sections and no unrequested recommendations); a comparison or an '
     'explicitly deep question may use up to 1200 characters; a requested code sample, '
     'tutorial or report may be longer, with no fixed character cap. '
+    'When sources differ slightly (a live quote, a date per region), give the values and '
+    'what each refers to; do not open by saying it cannot be confirmed. '
     'Cite the source title or URL actually observed for each factual claim; never invent '
     'titles, URLs, dates or figures. For a price, rate or quote, retrieved_at is when the '
     'page was read, not when the price was observed, and published_at is not necessarily '
@@ -145,8 +148,13 @@ def _backend_clock_line() -> str:
     linha é o único relógio autoritativo; não altera modelo, memória nem configuração.
     """
     moment = datetime.now(timezone.utc)
+    country = windows_country()
+    place = (f"The user's Windows region is {country}. For a local question that names no "
+             f'place (a price, bank, holiday, weather, currency, law), answer for {country}; '
+             'never infer the country from the language. If the sources only cover another '
+             'country, say so instead of answering for that country. ') if country else ''
     return (
-        f'Backend current date/time (UTC): {moment:%Y-%m-%d %H:%M}. '
+        place + f'Backend current date/time (UTC): {moment:%Y-%m-%d %H:%M}. '
         "This is the authoritative 'today' for the answer; never take the current date "
         'from training data, memory, or the wording of a source. '
         'Training data is outdated: for current office holders, the latest items of a list or '
@@ -1010,6 +1018,9 @@ class TaskController(SpotifyFlow):
         projeto original é fixado pela âncora do domínio oficial, não por "microsoft".
         """
         policy = web_constraints(instruction)
+        if not policy.official:
+            query = ' '.join(re.sub(r'\b(?:oficial|oficiais|official)\b', ' ', query,
+                                    flags=re.IGNORECASE).split())
         dates = cls._WEB_EXPLICIT_DATE.findall(instruction)
         study_required = requires_original_study(instruction)
         if not (policy.official or policy.freshness or policy.topic or dates
@@ -2435,7 +2446,19 @@ class TaskController(SpotifyFlow):
                     ensure_deadline()
                     chat_call.update(ok=True, input_tokens=response.input_tokens, output_tokens=response.output_tokens)
                     if automatic:
-                        answer, candidates, initial_operation = parse_decision(response.text)
+                        try:
+                            answer, candidates, initial_operation = parse_decision(response.text)
+                        except BrainError as error:
+                            if source_decision or result.first_public_text_ms is not None:
+                                raise
+                            # Nada foi mostrado nem executado, por isso pedir de novo é seguro.
+                            result.decision_error = error.detail
+                            chat_call['attempts'] = 2
+                            result.llm_calls += 1
+                            with timed(result, 'llm_time_ms'), self._provider_metrics(result, self.brain, 'host'):
+                                response = await self._public_completion(chat_messages, result, automatic=automatic)
+                            ensure_deadline()
+                            answer, candidates, initial_operation = parse_decision(response.text)
                         if (initial_operation and initial_operation['name'] == 'write_document'
                                 and not self.settings.computer_write_macro):
                             raise BrainError(ErrorKind.MALFORMED_RESPONSE, 'A escrita direta não está ativada.')

@@ -104,6 +104,7 @@ class TaskResult:
     # wait for a window to appear", not to be added to a total.
     waits_ms: float = 0
     failure_kind: str = ""
+    decision_error: str = ""
     false_success: bool = False        # SUCCESS reported with no evidence attached
     # FASE 8: how this task was planned — "" for engine-only/test runs, "deterministic"
     # when a table resolved it and not one inference happened, "llm" for the agent path,

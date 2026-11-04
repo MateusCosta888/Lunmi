@@ -1,6 +1,8 @@
 """Small shared boundary for public-web requests; no provider or browser access."""
 from __future__ import annotations
 
+import ctypes
+import functools
 import ipaddress
 import re
 import socket
@@ -14,6 +16,18 @@ SECRET = re.compile(r'(?i)(?:(?:authorization|password|passwd|api[_ -]?key|acces
 
 class WebBlocked(ValueError):
     pass
+
+
+@functools.cache
+def windows_country() -> str:
+    """País definido no Windows (Região), na língua do sistema; vazio se não houver."""
+    try:
+        kernel = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        name = ctypes.create_unicode_buffer(128)
+        # GEOCLASS_NATION = 16, GEO_FRIENDLYNAME = 8
+        return name.value if kernel.GetGeoInfoW(kernel.GetUserGeoID(16), 8, name, 128, 0) else ''
+    except (AttributeError, OSError):
+        return ''
 
 
 def public_ip(value: str) -> None:

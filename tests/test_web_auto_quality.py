@@ -74,9 +74,11 @@ def test_manager_does_not_count_error_shell_and_reads_one_alternative(tmp_path):
     harness.client.answers['fetch_batch'] = pages
     result = asyncio.run(harness.manager.run('web.search', {'query': 'python asyncio'}))
     reads = [args['urls'] for tool, args in harness.client.calls if tool == 'fetch_batch']
-    assert reads == [['https://example.test/page0'], ['https://example.test/page1']]
+    assert reads[0] == ['https://example.test/page0', 'https://example.test/page1',
+                        'https://example.test/page2']
     assert not result.sources[0]['read'] and result.sources[1]['read']
-    assert len(result.documents) == 1 and result.documents[0]['id'] == result.sources[1]['id']
+    assert result.sources[0]['id'] not in {document['id'] for document in result.documents}
+    assert len(result.documents) >= 2
 
 
 def test_select_evidence_flags_selection_and_deduplicates_without_broken_fence():

@@ -24,7 +24,7 @@ def unverified_action_claim(text: str) -> bool:
 # continua a correr sobre o texto cru no controller; esta projeção só remove o token.
 _WEB_SOURCE_TOKEN = re.compile(r'\[[ \t]*src-[^\[\]\n]{1,80}?[ \t]*\]', re.IGNORECASE)
 _WEB_SOURCE_START = re.compile(r'\[[ \t]*src-', re.IGNORECASE)
-_WEB_SOURCE_ANY = re.compile(r'\[[ \t]*src-[^\]\n]{0,80}\]?', re.IGNORECASE)
+_WEB_SOURCE_ANY = re.compile(r'[ \t]*\[[ \t]*src-[^\]\n]{0,80}\]?', re.IGNORECASE)
 
 
 def web_public_text(text: str) -> str:
@@ -64,6 +64,7 @@ class WebCitationStream:
             self._out += text[self._pos:start]
             token = _WEB_SOURCE_TOKEN.match(text, start)
             if token is not None:
+                self._out = self._out.rstrip(' \t')
                 self._pos = token.end()
                 continue
             if _WEB_SOURCE_START.match(text, start):
@@ -71,6 +72,7 @@ class WebCitationStream:
                 newline = text.find('\n', start)
                 if close != -1 and (newline == -1 or close < newline) and close - start <= 90:
                     # Token malformado/curto: esconde-o inteiro em vez de expor parte.
+                    self._out = self._out.rstrip(' \t')
                     self._pos = close + 1
                     continue
                 if newline != -1:
@@ -84,14 +86,15 @@ class WebCitationStream:
                 break
             self._out += '['
             self._pos = start + 1
-        return self._out
+        # O espaço fica retido: pode ser o que antecede uma citação ainda por chegar.
+        return self._out.rstrip(' \t')
 
     def finish(self) -> str:
         tail = self._seen[self._pos:]
         if not _WEB_SOURCE_START.match(tail):
             self._out += tail
         self._pos = len(self._seen)
-        return self._out
+        return self._out.rstrip(' \t')
 
 
 def _could_start_citation(text: str, start: int) -> bool:
@@ -104,13 +107,14 @@ def _could_start_citation(text: str, start: int) -> bool:
 
 # Answer-level admissions: the public answer says the evidence cannot answer, summarise
 # or confirm. The guard downgrades status; it never retries or re-asks the model.
+_REFUSED_PT = ('resumir|responder|confirmar|concluir|determinar|analisar|avaliar|identificar|'
+               'encontrar|abrir|ler|aceder|acessar|fazer uma analise')
 _INSUFFICIENCY_PATTERNS = (
     r'\b(?:excertos?|trechos?|snippets?|fontes?|resultados?)\b[^.]{0,120}?'
     r'\bnao (?:contem|tem|trazem|incluem|fornecem|apresentam)\b[^.]{0,80}?'
     r'\b(?:detalhes?|informac\w*|dados|elementos|conteudo)\b[^.]{0,40}?\bsuficientes?\b',
-    r'\bnao (?:e|foi) possivel (?:resumir|responder|confirmar|concluir|determinar)\b',
-    r'\bnao (?:consigo|consegui|conseguimos|posso|podemos) '
-    r'(?:resumir|responder|confirmar|concluir|determinar)\b',
+    r'\bnao (?:e|foi) possivel (?:' + _REFUSED_PT + r')\b',
+    r'\bnao (?:consigo|consegui|conseguimos|posso|podemos) (?:' + _REFUSED_PT + r')\b',
     r'\b(?:informacao|informacoes|dados|detalhes|evidencia|fontes)\b[^.]{0,60}?'
     r'\b(?:insuficiente|insuficientes|limitad[ao]s?|nao (?:e|sao) suficientes?)\b',
     r'\bnao (?:ha|existe|existem|tenho|temos) '
@@ -135,7 +139,7 @@ _INSUFFICIENCY_PATTERNS = (
     r'\bnot enough (?:information|details|evidence|data)\b',
     r'\b(?:insufficient|incomplete) (?:information|details|evidence|data)\b',
     r"\b(?:cannot|can't|can not|could not|couldn't|unable to) "
-    r'(?:confirm|summari[sz]e|answer|determine)\b',
+    r'(?:confirm|summari[sz]e|answer|determine|analy[sz]e|identify|find|access|open)\b',
 )
 _INSUFFICIENCY = tuple(re.compile(pattern, re.IGNORECASE)
                        for pattern in _INSUFFICIENCY_PATTERNS)

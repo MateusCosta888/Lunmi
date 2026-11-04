@@ -230,13 +230,13 @@ def test_fragmented_citation_never_exposes_a_partial_token() -> None:
         seen += char
         projected = stream.feed(seen)
         assert "src-" not in projected
-    assert stream.finish() == "Resposta . Fim."
-    assert web_public_text(raw) == "Resposta . Fim."
+    assert stream.finish() == "Resposta. Fim."
+    assert web_public_text(raw) == "Resposta. Fim."
     assert web_public_text("Usa arr[0] e [nota].") == "Usa arr[0] e [nota]."
     normal = WebCitationStream()
-    assert normal.feed("Lista: [") == "Lista: "
+    assert normal.feed("Lista: [") == "Lista:"
     assert normal.finish() == "Lista: ["
     broken = WebCitationStream()
-    assert broken.feed("Resposta [src-") == "Resposta "
-    assert broken.finish() == "Resposta "
-    assert web_public_text("Resposta [src-") == "Resposta "
+    assert broken.feed("Resposta [src-") == "Resposta"
+    assert broken.finish() == "Resposta"
+    assert web_public_text("Resposta [src-") == "Resposta"

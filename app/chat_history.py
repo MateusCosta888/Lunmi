@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from app.memory.contracts import now
-from app.memory.policy import MemoryPolicyError, identifier, normalized, safe_chat_text, safe_document, safe_text
+from app.memory.policy import MemoryPolicyError, identifier, normalized, safe_chat_text, safe_public_reply, safe_text
 from app.memory.store import fts_query
 
 PAGE_SIZE = 50
@@ -36,8 +36,7 @@ def public_reply(text: str) -> str:
     saúde") não são dados do utilizador; o filtro sensível completo fica para as mensagens dele.
     """
     try:
-        safe_document(text, maximum=32000)
-        return text
+        return safe_public_reply(text)
     except MemoryPolicyError:
         return PRIVATE
 
@@ -309,6 +308,9 @@ class ChatHistory:
                 metadata.pop('sources', None)
             try:
                 # Validate all metadata too: a URL/title/filename can contain a secret.
+                if check(json.dumps(metadata, ensure_ascii=False)) == PRIVATE:
+                    # Uma fonte suspeita perde-se sozinha; a resposta já passou o seu filtro.
+                    metadata.pop('sources', None)
                 if check(json.dumps(metadata, ensure_ascii=False)) == PRIVATE:
                     metadata = {k: v for k, v in metadata.items() if k in
                                 {'message_id', 'conversation_id', 'task_id', 'role', 'created_at', 'state'}}

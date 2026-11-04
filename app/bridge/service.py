@@ -54,7 +54,8 @@ from app.chat_history import ChatHistory, NOT_SAVED, title_text
 from app.memory.contracts import now
 from app.memory.policy import identifier
 import sqlite3
-from app.bridge.responses import PublicResponse, verified_speech_prefix
+from app.bridge.responses import PublicResponse, final_public_text, verified_speech_prefix
+from app.integrations.web_policy import windows_country
 from app.memory import MemoryItem, MemoryManager, MemoryPolicyError
 from app.memory.profile import MemoryDisabled, NothingToUndo, ProfileTooLarge, StaleRevision
 from app.memory.contracts import PROFILE_KINDS
@@ -191,6 +192,7 @@ class BridgeService(VoiceBridge):
             emit=self._emit_web,
             state_root=self.settings.state_root,
             session_id=self.session_id,
+            country=windows_country(),
         )
 
         factory = controller_factory or TaskController
@@ -1156,8 +1158,7 @@ class BridgeService(VoiceBridge):
             # already streamed: no response.error, no verified_result and no SUCCESS. The
             # status/failure_kind stay in task.finished exactly as the controller reported.
             response.flush()
-            prefix = response.text
-            response.finish((prefix + '\n\n' if prefix else '') + res.message, res.status)
+            response.finish(final_public_text(response.text, res.message), res.status)
         else:
             response.fail(res.failure_kind or 'task_failed', cancelled=res.status == 'CANCELLED')
         if (res.scope in {'conversation', 'memory_command'}
