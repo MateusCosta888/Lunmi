@@ -69,6 +69,8 @@ export function WebSearchCard({ sessionId, supportedBySession }: WebSearchCardPr
   if (!supportedBySession || !supported || !web) return null;
   const chip = web.state === "error" ? (web.message || STATE_TEXT.error) : STATE_TEXT[web.state];
   const selectable = providerSelectable(web);
+  // `available` é só a Free Search; a pesquisa nativa do Brain também conta como pesquisa disponível.
+  const searchable = web.available || selectable;
   // WEB-SEARCH-AUTO-V1 §1/§2: `auto` só é escolha real quando há provedor — sem ele o plano
   // seria idêntico a `lunmi`, e uma opção sem alternativa não se oferece.
   const options = PREFERENCES.filter(option =>
@@ -84,8 +86,8 @@ export function WebSearchCard({ sessionId, supportedBySession }: WebSearchCardPr
         <input
           type="checkbox"
           data-testid="web-enabled"
-          checked={web.enabled}
-          disabled={busy}
+          checked={web.enabled && searchable}
+          disabled={busy || !searchable}
           onChange={() => void setWeb({ enabled: !web.enabled })}
         />
         <span>
@@ -147,7 +149,7 @@ export function WebSearchCard({ sessionId, supportedBySession }: WebSearchCardPr
           A Free Search não está disponível (runtime não instalado); a pesquisa web fica inativa até estar.
         </p>
       )}
-      <fieldset style={{ border: 0, margin: "12px 0 0", padding: 0 }} disabled={busy || !web.enabled}>
+      <fieldset style={{ border: 0, margin: "12px 0 0", padding: 0 }} disabled={busy || !web.enabled || !searchable}>
         <legend style={{ fontSize: "12px", color: "var(--lunmi-text-secondary)", marginBottom: "6px" }}>Profundidade</legend>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }} role="radiogroup" aria-label="Profundidade da pesquisa">
           {MODES.map(option => (
@@ -158,7 +160,7 @@ export function WebSearchCard({ sessionId, supportedBySession }: WebSearchCardPr
                 data-testid={`web-mode-${option.value}`}
                 value={option.value}
                 checked={web.mode === option.value}
-                disabled={busy || !web.enabled}
+                disabled={busy || !web.enabled || !searchable}
                 onChange={() => void setWeb({ mode: option.value })}
               />
               {option.label}

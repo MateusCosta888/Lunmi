@@ -11,6 +11,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { TOKENS } from "../../shared/theme";
+import type { VoiceStateName } from "../../shared/types";
 import { useVoice } from "./useVoice";
 import { KeyRecorder, shortcutErrorMessage, useVoiceShortcutApi } from "./KeyRecorder";
 import { VoiceModelsPanel } from "./VoiceModelsPanel";
@@ -26,6 +27,11 @@ const secondaryButtonStyle: React.CSSProperties = {
   background: TOKENS.bgCardSubtle, color: TOKENS.textSecondary, font: "inherit", fontSize: "13px", cursor: "pointer",
 };
 const errorStyle: React.CSSProperties = { margin: "8px 0 0", color: TOKENS.error, fontSize: "13px" };
+
+const STATE_TEXT: Record<VoiceStateName, string> = {
+  disabled: "Voz desligada.", loading: "A preparar a voz…", ready: "Voz pronta.",
+  synthesizing: "A preparar a fala…", playing: "A falar…", error: "A voz falhou.",
+};
 
 export interface VoiceSettingsCardProps {
   sessionId: string | undefined;
@@ -49,7 +55,7 @@ export function VoiceSettingsCard({ sessionId }: VoiceSettingsCardProps): React.
   const state = voice?.state ?? "disabled";
   const speaking = state === "synthesizing" || state === "playing" || state === "loading";
   const enabled = Boolean(voice?.enabled);
-  const statusText = error || voice?.message || `Estado: ${state}`;
+  const statusText = error || voice?.message || STATE_TEXT[state];
 
   const removeShortcut = async () => {
     if (!shortcutApi) return;

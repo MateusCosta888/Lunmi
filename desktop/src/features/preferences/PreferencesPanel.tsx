@@ -9,9 +9,10 @@
  * o backend recusa `path`/`file` em `ui.preferences.set` e a geometria da janela é do processo
  * principal, não da página.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNodePreferences, useResidentOption } from "../../shared/ipc/presence";
 import { VoiceSettingsCard } from "../voice/VoiceSettingsCard";
+import { KeyRecorder, useVoiceShortcutApi } from "../voice/KeyRecorder";
 import { HistorySettings } from '../chat/HistoryNavigation';
 import type { ChatHistorySnapshotDto } from '../../shared/types';
 import { WebSearchCard } from "../web/WebSearchCard";
@@ -34,6 +35,7 @@ export interface PreferencesPanelProps {
 export const MAX_ACTIONS = 8;
 export const LABEL_MAX = 40;
 export const DRAFT_MAX = 200;
+const STATUS_MS = 5000;
 
 /**
  * Opção residente do BACKGROUND V1 (`Continuar em segundo plano ao fechar`).
@@ -80,6 +82,8 @@ function ResidentCard(): React.ReactElement | null {
   );
 }
 
+const MODIFIERS = new Set(["Ctrl", "Alt", "Shift", "Super"]);
+
 const NODE_ERROR_TEXT: Record<string, string> = {
   invalid_payload: "Os valores enviados são inválidos; nada foi gravado e os valores anteriores mantêm-se.",
   io_error: "Não foi possível gravar no disco. Os valores anteriores mantêm-se.",
@@ -95,7 +99,18 @@ const NODE_ERROR_TEXT: Record<string, string> = {
 function NodeCard(): React.ReactElement | null {
   const { preferences, available, busy, error, setNodePreferences } = useNodePreferences();
   const { resident } = useResidentOption();
-  const [shortcutDraft, setShortcutDraft] = useState("");
+  const voiceShortcut = useVoiceShortcutApi();
+  const [shortcutError, setShortcutError] = useState("");
+  const recorderApi = useMemo(() => ({
+    // Pausa o detector do ditado durante a captura; o Electron exige modificadores antes da tecla final.
+    pause: voiceShortcut?.pause, resume: voiceShortcut?.resume,
+    set: async (accelerator: string | null) => {
+      const keys = accelerator?.split("+") ?? [];
+      const shortcut = [...keys.filter(key => MODIFIERS.has(key)), ...keys.filter(key => !MODIFIERS.has(key))].join("+");
+      const result = await setNodePreferences({ shortcut });
+      return { accelerator: result?.preferences.shortcut ?? null, error: "" as const };
+    },
+  }), [setNodePreferences, voiceShortcut]);
   if (!available || !preferences) return null;
   const apply = (patch: Partial<NodePreferencesDto>) => { void setNodePreferences(patch); };
   const semantics = !resident
@@ -161,29 +176,20 @@ function NodeCard(): React.ReactElement | null {
         </select>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
-        <label htmlFor="node-shortcut-input" style={{ fontSize: "12px", color: TOKENS.textMuted }}>Atalho</label>
-        <input
-          id="node-shortcut-input"
-          data-testid="node-shortcut-input"
-          type="text"
-          value={shortcutDraft || preferences.shortcut || ""}
-          placeholder="ex.: Ctrl+Alt+Space"
-          disabled={busy}
-          onChange={event => setShortcutDraft(event.target.value)}
-          style={{ ...controlStyle, width: "200px" }}
-        />
-        <button type="button" data-testid="node-shortcut-apply" className="lunmi-action-button lunmi-action-quiet" style={secondaryButtonStyle} disabled={busy || !shortcutDraft.trim()}
-          onClick={() => { apply({ shortcut: shortcutDraft.trim() }); setShortcutDraft(""); }}>
-          Definir atalho
-        </button>
+      <p style={{ margin: "12px 0 8px", fontSize: "13px" }} data-testid="node-shortcut-current">
+        {preferences.shortcut ? `Atalho do Node: ${preferences.shortcut}` : "Sem atalho do Node configurado."}
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <KeyRecorder api={recorderApi} disabled={busy} needsFinalKey testIdPrefix="node-shortcut-recorder"
+          onApplied={() => setShortcutError("")} onError={setShortcutError} />
         {preferences.shortcut && (
           <button type="button" data-testid="node-shortcut-clear" className="lunmi-action-button lunmi-action-quiet" style={secondaryButtonStyle} disabled={busy}
-            onClick={() => { setShortcutDraft(""); apply({ shortcut: null }); }}>
+            onClick={() => apply({ shortcut: null })}>
             Remover atalho
           </button>
         )}
       </div>
+      {shortcutError && <p role="alert" style={errorStyle} data-testid="node-shortcut-error">{shortcutError}</p>}
       <p style={{ margin: "6px 0 0", color: TOKENS.textMuted, fontSize: "12px" }}>
         O atalho abre e recolhe o chat do Node. Se outro programa já o usar, o teu atalho anterior fica intacto.
       </p>
@@ -204,6 +210,8 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
   const [theme, setTheme] = useState("celestial");
   const [reduceMotion, setReduceMotion] = useState(false);
   const [showTaskResults, setShowTaskResults] = useState(false);
+  const [actionsDirty, setActionsDirty] = useState(false);
+  const unsavedActions = useRef<QuickActionDto[] | null>(null);
 
   const sessionReady = Boolean(session);
 
@@ -234,6 +242,17 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
     };
   }, [sendCommand, session]);
 
+  useEffect(() => {
+    if (!statusMessage) return;
+    const timer = setTimeout(() => setStatusMessage(""), STATUS_MS);
+    return () => clearTimeout(timer);
+  }, [statusMessage]);
+
+  // shortcut: falha ao gravar à saída não tem onde ser mostrada; fechar a app com edições por gravar perde-as.
+  useEffect(() => () => {
+    if (unsavedActions.current) void sendCommand("ui.preferences.set", { actions: unsavedActions.current }).catch(() => undefined);
+  }, [sendCommand]);
+
   const changeTheme = async (id: string) => {
     if (!sessionReady || busy) return;
     setBusy(true); setError(null);
@@ -241,7 +260,7 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
       const saved = await sendCommand<UiPreferencesDto>("ui.preferences.set", { theme: id });
       const next = getTheme(saved.theme).id;
       setTheme(next); onThemeChanged?.(next);
-      setStatusMessage(`Tema ${getTheme(next).label} aplicado e salvo.`);
+      setStatusMessage(`Tema ${getTheme(next).label} aplicado e guardado.`);
     } catch (err) { setError(describeError(err)); }
     finally { setBusy(false); }
   };
@@ -301,7 +320,9 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
         actions: actions.map((action) => ({ label: action.label, draft: action.draft })),
       });
       setActions(saved.actions ?? []);
-      setStatusMessage("Preferências de tela salvas.");
+      unsavedActions.current = null;
+      setActionsDirty(false);
+      setStatusMessage("Atalhos guardados.");
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -309,21 +330,26 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
     }
   }, [actions, sendCommand, sessionReady]);
 
-  const updateAction = useCallback((index: number, patch: Partial<QuickActionDto>) => {
-    setActions((prev) =>
-      prev.map((action, i) => (i === index ? { ...action, ...patch } : action))
-    );
+  const editActions = useCallback((edit: (prev: QuickActionDto[]) => QuickActionDto[]) => {
+    setActions((prev) => {
+      const next = edit(prev);
+      unsavedActions.current = next.map(({ label, draft }) => ({ label, draft }));
+      return next;
+    });
+    setActionsDirty(true);
   }, []);
+
+  const updateAction = useCallback((index: number, patch: Partial<QuickActionDto>) => {
+    editActions((prev) => prev.map((action, i) => (i === index ? { ...action, ...patch } : action)));
+  }, [editActions]);
 
   const addAction = useCallback(() => {
-    setActions((prev) =>
-      prev.length >= MAX_ACTIONS ? prev : [...prev, { label: "Novo atalho", draft: "" }]
-    );
-  }, []);
+    editActions((prev) => (prev.length >= MAX_ACTIONS ? prev : [...prev, { label: "Novo atalho", draft: "" }]));
+  }, [editActions]);
 
   const removeAction = useCallback((index: number) => {
-    setActions((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+    editActions((prev) => prev.filter((_, i) => i !== index));
+  }, [editActions]);
 
   return (
     <section
@@ -335,76 +361,19 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
       <header className="lunmi-settings-heading">
         <h2 style={headingStyle}>Configurações</h2>
         <p>Personaliza o espaço, a voz e os controlos da Lunmi.</p>
-        {error && (
-          <p role="alert" data-testid="preferences-error" style={errorStyle}>
-            {error}
-          </p>
-        )}
-        {statusMessage && (
-          <p role="status" data-testid="preferences-status" style={statusStyle}>
-            {statusMessage}
-          </p>
-        )}
       </header>
-      <UpdatesCard />
-
-      <div className="lunmi-settings-card" style={cardStyle} data-testid="theme-card">
-        <h3 style={subHeadingStyle}><Icon name="palette" /> Aparência</h3>
-        <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Escolha o tema. A mudança é aplicada sem reiniciar.</p>
-        <div className="lunmi-theme-grid" role="group" aria-label="Tema da interface">
-          {Object.values(THEMES).map(item => <button type="button" key={item.id} data-testid={`theme-${item.id}`}
-            className="lunmi-theme-choice" aria-pressed={theme === item.id} disabled={!sessionReady || busy}
-            onClick={() => void changeTheme(item.id)}>
-            <span className="lunmi-theme-preview" aria-hidden="true" style={{ background: item.colors.bgWindow }}>
-              <span style={{ background: item.colors.bgSidebar }} /><i style={{ background: item.colors.bgCardSubtle, boxShadow: item.depth.raised }} />
-              <b style={{ background: item.colors.accent }} />
-            </span>
-            <span className="lunmi-theme-name">{item.label}{theme === item.id && <Icon name="check" size={16} />}</span>
-            <span className="lunmi-theme-description">{item.description}</span>
-          </button>)}
+      {(error || statusMessage) && (
+        <div className="lunmi-settings-feedback">
+          {error && <p role="alert" data-testid="preferences-error" style={{ ...errorStyle, margin: 0 }}>{error}</p>}
+          {statusMessage && <p role="status" data-testid="preferences-status" style={{ ...statusStyle, margin: 0 }}>{statusMessage}</p>}
         </div>
-        <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
-          <input type="checkbox" data-testid="reduce-motion" checked={reduceMotion} disabled={!sessionReady || busy}
-            onChange={() => void toggleReduceMotion()} />
-          Reduzir animações
-        </label>
-        <p style={{ ...statusStyle, color: TOKENS.textMuted }}>
-          Para o orb, o fundo e as transições. Não depende das animações do Windows; aplica-se ao reiniciar a Lunmi.
-        </p>
-        <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${TOKENS.borderHairline}` }}>
-          <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
-            <input type="checkbox" data-testid="show-task-results" checked={showTaskResults} disabled={!sessionReady || busy}
-              onChange={() => void toggleTaskResults()} />
-            Mostrar resultado da tarefa no chat
-          </label>
-          <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Resumo opcional com duração, passos e detalhes de execução.</p>
-        </div>
-      </div>
-
-      <section className="lunmi-settings-section" aria-label="Ambiente de trabalho">
-      <h3 className="lunmi-settings-section-title">Ambiente de trabalho</h3>
+      )}
+      <section className="lunmi-settings-section" aria-label="Segurança">
+      <h3 className="lunmi-settings-section-title">Segurança</h3>
       <div className="lunmi-settings-grid">
-      <ResidentCard />
-
-      <NodeCard />
-      </div>
-      </section>
-
-      <section className="lunmi-settings-section" aria-label="Voz e pesquisa">
-      <h3 className="lunmi-settings-section-title">Voz e pesquisa</h3>
-      <div className="lunmi-settings-grid">
-      <VoiceSettingsCard sessionId={session?.session_id} />
-      <WebSearchCard sessionId={session?.session_id} supportedBySession={session?.capabilities?.web_search === true} />
-      </div>
-      </section>
-
-      <section className="lunmi-settings-section" aria-label="Dados e controlo">
-      <h3 className="lunmi-settings-section-title">Dados e controlo</h3>
-      <div className="lunmi-settings-grid">
-      {history && <HistorySettings sendCommand={sendCommand} history={history} locked={historyLocked} />}
-
-      <div className="lunmi-settings-card" style={cardStyle} data-testid="approval-card">
-        <h3 style={subHeadingStyle}>Autoaprovação</h3>        <label
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="approval-card" data-active={approval?.auto_approve ? "true" : undefined}>
+        <h3 style={subHeadingStyle}>Autoaprovação</h3>
+        <label
           htmlFor="auto-approve"
           style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}
         >
@@ -420,22 +389,76 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
             Aprovar automaticamente as ações que pedem confirmação
             <br />
             <span style={{ color: TOKENS.textMuted, fontSize: "12px" }} data-testid="approval-scope">
-              Vale apenas para a próxima tarefa; depois dela o aplicativo volta ao modo manual.
+              Vale apenas para a próxima tarefa; depois dela a Lunmi volta ao modo manual.
             </span>
           </span>
         </label>
         <p style={{ margin: "10px 0 0", color: TOKENS.textSecondary, fontSize: "12px" }}>
-          Modo atual: <strong>{approval ? approval.label : "…"}</strong>
+          <strong>{approval ? approval.label : "…"}</strong>
         </p>
+        {approval?.auto_approve && (
+          <p className="lunmi-approval-warning" data-testid="approval-warning">
+            <span aria-hidden="true">⚠</span> A próxima tarefa vai executar ações de risco sem te perguntar.
+          </p>
+        )}
       </div>
-
       </div>
       </section>
 
+      <UpdatesCard place="pending" />
+
+      <section className="lunmi-settings-section" aria-label="Aparência">
+      <h3 className="lunmi-settings-section-title">Aparência</h3>
+      <div className="lunmi-settings-grid">
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="theme-card">
+        <p style={{ ...statusStyle, margin: 0, color: TOKENS.textMuted }}>Escolhe o tema. A mudança é aplicada sem reiniciar.</p>
+        <div className="lunmi-theme-grid" role="group" aria-label="Tema da interface">
+          {Object.values(THEMES).map(item => <button type="button" key={item.id} data-testid={`theme-${item.id}`}
+            className="lunmi-theme-choice" aria-pressed={theme === item.id} disabled={!sessionReady || busy}
+            onClick={() => void changeTheme(item.id)}>
+            <span className="lunmi-theme-preview" aria-hidden="true" style={{ background: item.colors.bgWindow }}>
+              <span style={{ background: item.colors.bgSidebar }} /><i style={{ background: item.colors.bgCardSubtle, boxShadow: item.depth.raised }} />
+              <b style={{ background: item.colors.accent }} />
+            </span>
+            <span className="lunmi-theme-name">{item.label}{theme === item.id && <Icon name="check" size={16} />}</span>
+            <span className="lunmi-theme-description">{item.description}</span>
+          </button>)}
+        </div>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px", marginTop: "16px" }}>
+          <input type="checkbox" data-testid="reduce-motion" checked={reduceMotion} disabled={!sessionReady || busy}
+            onChange={() => void toggleReduceMotion()} />
+          Reduzir animações
+        </label>
+        <p style={{ ...statusStyle, color: TOKENS.textMuted }}>
+          Para o orb, o fundo e as transições. Não depende das animações do Windows; aplica-se ao reiniciar a Lunmi.
+        </p>
+      </div>
+      </div>
+      </section>
+
+      <section className="lunmi-settings-section" aria-label="Voz e pesquisa">
+      <h3 className="lunmi-settings-section-title">Voz e pesquisa</h3>
+      <div className="lunmi-settings-grid">
+      <VoiceSettingsCard sessionId={session?.session_id} />
+      <WebSearchCard sessionId={session?.session_id} supportedBySession={session?.capabilities?.web_search === true} />
+      </div>
+      </section>
+
+      <section className="lunmi-settings-section" aria-label="Conversa">
+      <h3 className="lunmi-settings-section-title">Conversa</h3>
+      <div className="lunmi-settings-grid">
+      <div className="lunmi-settings-card" style={cardStyle} data-testid="chat-display-card">
+        <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px" }}>
+          <input type="checkbox" data-testid="show-task-results" checked={showTaskResults} disabled={!sessionReady || busy}
+            onChange={() => void toggleTaskResults()} />
+          Mostrar resultado da tarefa no chat
+        </label>
+        <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Resumo opcional com duração, passos e detalhes de execução.</p>
+      </div>
       <div className="lunmi-settings-card" style={cardStyle} data-testid="actions-card">
         <h3 style={subHeadingStyle}>Atalhos do painel</h3>
         <p style={{ margin: "0 0 10px", color: TOKENS.textMuted, fontSize: "12px" }}>
-          Até {MAX_ACTIONS} atalhos. O texto é o rascunho que o atalho coloca no campo de escrita.
+          Até {MAX_ACTIONS} atalhos. O texto é o rascunho que o atalho coloca no campo de escrita. Atalhos sem rascunho não são guardados.
         </p>
 
         <div data-testid="action-list" className="lunmi-shortcut-grid">
@@ -499,10 +522,34 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
             onClick={() => void savePreferences()}
             className="lunmi-action-button lunmi-action-primary" style={primaryButtonStyle}
           >
-            Salvar preferências
+            Guardar atalhos
           </button>
+          {actionsDirty && <span data-testid="actions-dirty" style={{ alignSelf: "center", color: TOKENS.textMuted, fontSize: "12px" }}>Por guardar. Também guardamos ao saíres desta página.</span>}
         </div>
       </div>
+      </div>
+      </section>
+
+      <section className="lunmi-settings-section" aria-label="Ambiente de trabalho">
+      <h3 className="lunmi-settings-section-title">Ambiente de trabalho</h3>
+      <div className="lunmi-settings-grid">
+      <ResidentCard />
+
+      <NodeCard />
+      </div>
+      </section>
+
+      {history && <section className="lunmi-settings-section" aria-label="Dados">
+      <h3 className="lunmi-settings-section-title">Dados</h3>
+      <div className="lunmi-settings-grid">
+      <HistorySettings sendCommand={sendCommand} history={history} locked={historyLocked} />
+      </div>
+      </section>}
+
+      <section className="lunmi-settings-section" aria-label="Sobre">
+      <h3 className="lunmi-settings-section-title">Sobre</h3>
+      <div className="lunmi-settings-grid">
+      <UpdatesCard place="settled" />
       <div className="lunmi-settings-card" style={cardStyle} data-testid="session-card">
         <h3 style={subHeadingStyle}>Sessão atual</h3>
         {session ? (
@@ -520,6 +567,8 @@ export function PreferencesPanel({ sendCommand, session, onThemeChanged, onTaskR
           <p style={{ ...statusStyle, color: TOKENS.textMuted }}>Nenhuma sessão ativa para detalhar.</p>
         )}
       </div>
+      </div>
+      </section>
 
       </div>
     </section>
@@ -532,9 +581,10 @@ const headingStyle: React.CSSProperties = {
   color: TOKENS.textPrimary,
 };
 const subHeadingStyle: React.CSSProperties = {
-  margin: "0 0 10px",
-  fontSize: "13px",
-  color: TOKENS.textSecondary,
+  margin: "0 0 12px",
+  fontSize: "15px",
+  fontWeight: 600,
+  color: TOKENS.textPrimary,
 };
 const labelStyle: React.CSSProperties = {
   display: "block",

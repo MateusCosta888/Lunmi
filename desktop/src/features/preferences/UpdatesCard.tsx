@@ -35,9 +35,12 @@ const ERRORS = {
   internal: "Não foi possível concluir a atualização. Consulta o registo install.log na pasta de dados da Lunmi.",
 };
 
-export function UpdatesCard(): React.ReactElement | null {
+/** `place`: com atualização em curso o cartão sobe na página, para «Ver atualização» o encontrar. */
+export function UpdatesCard({ place }: { place?: "pending" | "settled" }): React.ReactElement | null {
   const { state, failed, act } = useUpdates();
   if (!state && !failed) return null;
+  const pending = Boolean(state && (["available", "downloading", "ready", "installing"].includes(state.phase) || (state.phase === "error" && state.version)));
+  if (place && (place === "pending") !== pending) return null;
   const working = state && ["checking", "downloading", "installing"].includes(state.phase);
   return <section className="lunmi-settings-card" aria-labelledby="updates-heading" data-testid="updates-card">
     <h3 id="updates-heading">Atualizações</h3>

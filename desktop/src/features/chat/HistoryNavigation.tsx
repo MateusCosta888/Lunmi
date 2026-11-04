@@ -163,14 +163,14 @@ export function HistorySettings({ sendCommand, history, locked }: {
       onChange={event => void apply('chat.history.options.set', { startup: event.target.value })}>
       <option value="resume">Retomar a última conversa</option><option value="new">Começar uma nova</option>
     </select></label>
-    <button type="button" disabled={busy || locked} onClick={() => setConfirm(true)}>Limpar histórico</button>
-    {locked && <p>Conclua ou pare a tarefa antes de limpar o histórico.</p>}
+    <button type="button" className="lunmi-action-danger" disabled={busy || locked} onClick={() => setConfirm(true)}>Limpar histórico</button>
+    {locked && <p>Conclui ou para a tarefa antes de limpar o histórico.</p>}
     {error && <p role="alert">{error}</p>}
     {confirm && <HistoryDialog title="Limpar todo o histórico" onClose={() => { if (!busy) setConfirm(false); }}>
       <p>Apagar todas as conversas guardadas neste computador? Esta ação não apaga factos da memória pessoal.</p>
       {error && <p role="alert">{error}</p>}
       <footer><button type="button" disabled={busy} onClick={() => setConfirm(false)}>Cancelar</button>
-        <button type="button" disabled={busy || locked} onClick={() => void apply('chat.history.clear', { confirmed: true })}>Apagar todo o histórico</button></footer>
+        <button type="button" className="lunmi-action-danger" disabled={busy || locked} onClick={() => void apply('chat.history.clear', { confirmed: true })}>Apagar todo o histórico</button></footer>
     </HistoryDialog>}
   </section>;
 }

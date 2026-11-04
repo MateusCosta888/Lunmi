@@ -43,7 +43,7 @@ export const shortcutErrorMessage = (error: string): string => {
   if (error === "invalid_shortcut") return "Esse atalho é inválido; o atalho anterior conserva-se.";
   if (error === "shortcut_conflict") return "Esse atalho já está a ser usado; o atalho anterior conserva-se.";
   if (error === "io_error") return "Não foi possível guardar o atalho; o atalho anterior mantém-se.";
-  if (error === "hold_unavailable") return "O observador de teclas não está pronto; tente novamente mais tarde.";
+  if (error === "hold_unavailable") return "O observador de teclas não está pronto; tenta novamente mais tarde.";
   return "";
 };
 
@@ -53,13 +53,16 @@ export function useVoiceShortcutApi(): ShortcutApi | undefined {
 }
 
 export interface KeyRecorderProps {
-  api: ShortcutApi;
+  api: Pick<ShortcutApi, "set"> & Partial<Pick<ShortcutApi, "pause" | "resume">>;
   disabled?: boolean;
+  /** Atalhos do sistema (`globalShortcut`) não aceitam só modificadores. */
+  needsFinalKey?: boolean;
+  testIdPrefix?: string;
   onApplied: (accelerator: string | null) => void;
   onError: (message: string) => void;
 }
 
-export function KeyRecorder({ api, disabled = false, onApplied, onError }: KeyRecorderProps): React.ReactElement {
+export function KeyRecorder({ api, disabled = false, needsFinalKey = false, testIdPrefix = "key-recorder", onApplied, onError }: KeyRecorderProps): React.ReactElement {
   const [capturing, setCapturing] = useState(false);
   const [keys, setKeys] = useState<string[]>([]); // nomes lógicos na ordem física premida
   const pressedRef = useRef<Set<string>>(new Set()); // códigos em baixo agora (blur honesto)
@@ -94,12 +97,14 @@ export function KeyRecorder({ api, disabled = false, onApplied, onError }: KeyRe
     // (Ctrl, Alt, Shift, Super, final) é interna ao main/helper/parser — não da UI.
     let accelerator = "";
     const okGrammar =
-      (finals.length === 0 && mods.length >= 2) ||
+      (!needsFinalKey && finals.length === 0 && mods.length >= 2) ||
       (finals.length === 1 && mods.length >= 1 && finals.length + mods.length <= 5);
     if (!okGrammar) {
       onError(finals.length > 1
         ? "Só uma tecla final é permitida; nada foi alterado."
-        : "É preciso pelo menos um modificador com uma tecla final, ou dois modificadores; nada foi alterado.");
+        : needsFinalKey
+          ? "É preciso pelo menos um modificador com uma tecla final; nada foi alterado."
+          : "É preciso pelo menos um modificador com uma tecla final, ou dois modificadores; nada foi alterado.");
       return;
     }
     accelerator = seq.map(entry => MOD_LABEL[entry.name] ?? entry.name).join("+");
@@ -110,7 +115,7 @@ export function KeyRecorder({ api, disabled = false, onApplied, onError }: KeyRe
     } catch {
       onError("Não foi possível comunicar com o observador de atalhos; o atalho anterior mantém-se.");
     }
-  }, [api, onApplied, onError]);
+  }, [api, needsFinalKey, onApplied, onError]);
 
   const abandon = useCallback(() => {
     setCapturing(false);
@@ -238,18 +243,18 @@ export function KeyRecorder({ api, disabled = false, onApplied, onError }: KeyRe
   };
 
   return (
-    <span className="lunmi-keyrecorder" data-testid="key-recorder" data-capturing={capturing ? "true" : "false"}>
+    <span className="lunmi-keyrecorder" data-testid={testIdPrefix} data-capturing={capturing ? "true" : "false"}>
       {capturing ? (
-        <span className="lunmi-keyrecorder-live" data-testid="key-recorder-keys" role="status" aria-live="polite">
-          {keys.length ? keys.join(" + ") : "Premindo as teclas…"}
+        <span className="lunmi-keyrecorder-live" data-testid={`${testIdPrefix}-keys`} role="status" aria-live="polite">
+          {keys.length ? keys.join(" + ") : "Prime as teclas…"}
         </span>
       ) : (
-        <button type="button" data-testid="key-recorder-change" className="lunmi-voice-button" disabled={disabled} onClick={() => void begin()}>
+        <button type="button" data-testid={`${testIdPrefix}-change`} className="lunmi-voice-button" disabled={disabled} onClick={() => void begin()}>
           Alterar
         </button>
       )}
       {capturing && (
-        <button type="button" data-testid="key-recorder-cancel" className="lunmi-voice-button" onClick={cancel}>
+        <button type="button" data-testid={`${testIdPrefix}-cancel`} className="lunmi-voice-button" onClick={cancel}>
           Cancelar
         </button>
       )}

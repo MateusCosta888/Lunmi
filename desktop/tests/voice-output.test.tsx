@@ -148,10 +148,10 @@ describe("VoiceSettingsCard — contrato de comandos (em Configurações)", () =
       f.state.state = "playing";
       f.emit({ generation: 5, state: "playing" });
     });
-    await waitFor(() => expect(screen.getByTestId("voice-status").textContent).toContain("playing"));
+    await waitFor(() => expect(screen.getByTestId("voice-status").textContent).toContain("A falar"));
     act(() => { resolveGet?.({ ...f.state, state: "ready" }); }); // GET tardio diz "ready" gen5
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(screen.getByTestId("voice-status").textContent).toContain("playing");
+    expect(screen.getByTestId("voice-status").textContent).toContain("A falar");
     fireEvent.click(screen.getByTestId("voice-enabled"));
     await waitFor(() => expect((screen.getByTestId("voice-enabled") as HTMLInputElement).checked).toBe(false));
     // sem comandos de fala depois de desligar: apenas set

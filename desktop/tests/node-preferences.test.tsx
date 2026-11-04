@@ -88,6 +88,13 @@ afterEach(() => {
   delete (window as unknown as { lunmiPresence?: unknown }).lunmiPresence;
 });
 
+async function record(...keys: [string, string][]): Promise<void> {
+  await act(async () => { fireEvent.click(screen.getByTestId("node-shortcut-recorder-change")); });
+  await waitFor(() => expect(screen.getByTestId("node-shortcut-recorder").getAttribute("data-capturing")).toBe("true"));
+  for (const [code, key] of keys) fireEvent.keyDown(document, { code, key });
+  await act(async () => { for (const [code, key] of keys) fireEvent.keyUp(document, { code, key }); });
+}
+
 describe("Cartão Lunmi Node — visibilidade", () => {
   it("ponte antiga sem setNodePreferences: cartão não aparece", async () => {
     bridge({}, false);
@@ -114,7 +121,7 @@ describe("Cartão Lunmi Node — visibilidade", () => {
     expect(box("node-side-left").checked).toBe(false);
     expect(box("node-auto-dock").checked).toBe(true);
     expect(box("node-show-activity").checked).toBe(true);
-    expect(box("node-shortcut-input").value).toBe("");
+    expect(screen.getByTestId("node-shortcut-current").textContent).toContain("Sem atalho");
     expect(screen.queryByTestId("node-shortcut-clear")).toBeNull();
     expect(screen.queryByTestId("node-error")).toBeNull();
   });
@@ -163,22 +170,27 @@ describe("Cartão Lunmi Node — patches exatos", () => {
     expect(box("node-auto-dock").disabled).toBe(false);
   });
 
-  it("atalho: apply envia o valor aparado, clear envia null; apply sem rascunho está desativado", async () => {
+  it("atalho: grava as teclas com modificadores primeiro; clear envia null", async () => {
     const harness = bridge();
     panel();
     await screen.findByTestId("node-card");
-    const apply = screen.getByTestId("node-shortcut-apply") as HTMLButtonElement;
-    expect(apply.disabled).toBe(true);
 
-    fireEvent.change(screen.getByTestId("node-shortcut-input"), { target: { value: "  Control+Alt+Space  " } });
-    expect(apply.disabled).toBe(false);
-    fireEvent.click(apply);
-    await waitFor(() => expect(harness.patches.at(-1)).toEqual({ shortcut: "Control+Alt+Space" }));
-    expect(box("node-shortcut-input").value).toBe("Control+Alt+Space");
+    await record(["Space", " "], ["ControlLeft", "Control"], ["AltLeft", "Alt"]);
+    await waitFor(() => expect(harness.patches.at(-1)).toEqual({ shortcut: "Ctrl+Alt+Space" }));
+    await waitFor(() => expect(screen.getByTestId("node-shortcut-current").textContent).toContain("Ctrl+Alt+Space"));
 
     fireEvent.click(await screen.findByTestId("node-shortcut-clear"));
     await waitFor(() => expect(harness.patches.at(-1)).toEqual({ shortcut: null }));
-    expect(box("node-shortcut-input").value).toBe("");
+    await waitFor(() => expect(screen.getByTestId("node-shortcut-current").textContent).toContain("Sem atalho"));
+  });
+
+  it("atalho: só modificadores é recusado sem chegar ao main", async () => {
+    const harness = bridge();
+    panel();
+    await screen.findByTestId("node-card");
+    await record(["ControlLeft", "Control"], ["AltLeft", "Alt"]);
+    expect((await screen.findByTestId("node-shortcut-error")).textContent).toContain("tecla final");
+    expect(harness.patches).toHaveLength(0);
   });
 });
 
@@ -227,11 +239,10 @@ describe("Cartão Lunmi Node — sem estado otimista, falhas honestas", () => {
     harness.setNodePreferences.mockImplementationOnce(async () => ({
       ok: false, error: "shortcut_conflict" as const, preferences: nodePrefs({ shortcut: "Control+Shift+L" }),
     }));
-    fireEvent.change(screen.getByTestId("node-shortcut-input"), { target: { value: "Control+Alt+Space" } });
-    fireEvent.click(screen.getByTestId("node-shortcut-apply"));
+    await record(["ControlLeft", "Control"], ["AltLeft", "Alt"], ["Space", " "]);
     const alert = await screen.findByTestId("node-error");
     expect(alert.textContent).toContain("já está a ser usado");
-    expect(box("node-shortcut-input").value).toBe("Control+Shift+L");
+    expect(screen.getByTestId("node-shortcut-current").textContent).toContain("Control+Shift+L");
     expect(screen.queryByTestId("node-shortcut-clear")).not.toBeNull();
   });
 

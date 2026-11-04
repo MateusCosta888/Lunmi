@@ -85,8 +85,8 @@ function bridge(initial: Partial<WebStateDto> = {}) {
     let origin: WebStateDto["origin"] = "none";
     if (state.enabled) {
       if (state.preference === "lunmi") origin = state.available ? "lunmi" : "none";
-      else if (state.preference === "auto") origin = selectable && state.available ? "provider" : (state.available ? "lunmi" : "none");
-      else if (state.preference === "provider") origin = selectable && state.available ? "provider" : "none";
+      else if (state.preference === "auto") origin = selectable ? "provider" : (state.available ? "lunmi" : "none");
+      else if (state.preference === "provider") origin = selectable ? "provider" : "none";
     }
     state.origin = origin;
     state.web_fallback = state.enabled && state.preference === "provider" && origin !== "provider"
@@ -187,11 +187,26 @@ describe("useWebState via WebSearchCard", () => {
     expect((screen.getByTestId("web-mode-auto") as HTMLInputElement).checked).toBe(true);
   });
 
+  it("Free Search ausente com pesquisa nativa pronta: o interruptor continua ligado e editável", async () => {
+    const f = bridge({ available: false, native_web: { ...NATIVE_OK }, preference: "provider" });
+    render(<WebSearchCard sessionId="sess-w" supportedBySession />);
+    await screen.findByTestId("web-card");
+    expect(f.state.origin).toBe("provider");
+    const toggle = screen.getByTestId("web-enabled") as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(false);
+    expect((screen.getByTestId("web-mode-auto") as HTMLInputElement).disabled).toBe(false);
+  });
+
   it("runtime ausente: mensagem fixa do backend, sem fallback; chip searching no cartão", async () => {
     const f = bridge({ available: false, preference: "lunmi", message: "Pesquisa web indisponível: runtime não instalado." });
     render(<WebSearchCard sessionId="sess-w" supportedBySession />);
     await screen.findByTestId("web-card");
     expect(screen.getByText("Pesquisa web indisponível: runtime não instalado.")).toBeTruthy();
+    const toggle = screen.getByTestId("web-enabled") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(toggle.disabled).toBe(true);
+    expect((screen.getByTestId("web-mode-auto") as HTMLInputElement).disabled).toBe(true);
     f.emit({ revision: f.state.revision + 1, available: true, state: "searching" });
     await waitFor(() => expect(screen.getByTestId("web-state").textContent).toBe("A pesquisar na web…"));
   });
