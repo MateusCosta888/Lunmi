@@ -60,6 +60,7 @@ REASON_OUTSIDE_HOME = "runtime_outside_home"
 
 MESSAGES = {
     "unavailable": "Pesquisa web indisponível: runtime não instalado.",
+    "native_only": "Pesquisa do Brain pronta; a Free Search não está instalada.",
     "disabled": "Pesquisa web desligada.",
     "idle": "Pesquisa web pronta.",
     "starting": "A preparar a pesquisa web…",
@@ -435,7 +436,9 @@ class WebState:
         state = self._state
         message = self._message
         if not available:
-            state, message = "idle", MESSAGES["unavailable"]
+            # `available` é só o runtime Free Search: a origem nativa pode estar pronta sem ele.
+            state, message = "idle", MESSAGES[
+                "native_only" if self._origin_locked(available) == "provider" else "unavailable"]
         elif not self._enabled:
             state, message = "idle", MESSAGES["disabled"]
         return {
