@@ -32,6 +32,7 @@ from app.integrations.web_quality import (
     focused_query,
     localized_query,
     on_topic,
+    prefer_country,
     has_quote_value,
     publication_hint,
     rank_sources,
@@ -930,6 +931,8 @@ class WebSearchManager:
                 "search", request, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
         sources, _ = _search_sources(payload, limit=candidate_limit)
         sources = rank_sources(query, sources, policy)
+        if query != _query(arguments):
+            sources = prefer_country(sources, self._country)
         warnings = _warnings(payload if isinstance(payload, dict) else {})
         # Sem fontes, ou só páginas-isco do Bing: é o caso em que os motores habituais falharam.
         if not sources or (all(source.get('engines') == ['bing'] for source in sources)

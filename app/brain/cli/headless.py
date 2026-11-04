@@ -181,6 +181,8 @@ class HeadlessCliBrain:
                 settings, spec, executable,
                 cwd=settings.state_root / ".local" / "kiro-agents",
             )
+        from app.brain.cli_web import web_runtime
+        self._cli_web = web_runtime(spec.id, settings, executable)
 
     # -- argv -----------------------------------------------------------------
     def inference_argv(self) -> list[str]:
@@ -667,7 +669,7 @@ class HeadlessCliBrain:
     # special case.
     @property
     def native_web_capability(self) -> Callable[[], NativeWebCapability] | None:
-        runtime = self._kiro_web
+        runtime = self._kiro_web or self._cli_web
         if runtime is None or self._closed:
             raise AttributeError("native web is not available")
 
@@ -678,7 +680,7 @@ class HeadlessCliBrain:
 
     @property
     def complete_web(self) -> Callable[[list[dict[str, Any]]], Awaitable[NativeWebResult]]:
-        runtime = self._kiro_web
+        runtime = self._kiro_web or self._cli_web
         if runtime is None or self._closed:
             raise AttributeError("native web is not available")
         return runtime.complete
@@ -686,7 +688,7 @@ class HeadlessCliBrain:
     @property
     def cancel_web(self) -> Callable[[], Awaitable[bool]]:
         """C1's cleanup gate; absent on every CLI without the native web runtime."""
-        runtime = self._kiro_web
+        runtime = self._kiro_web or self._cli_web
         if runtime is None or self._closed:
             raise AttributeError("native web is not available")
         return runtime.cancel_web
@@ -695,6 +697,8 @@ class HeadlessCliBrain:
         self._closed = True
         if self._kiro_web is not None:
             await self._kiro_web.close()
+        if self._cli_web is not None:
+            await self._cli_web.close()
         handle, self._process = self._process, None
         if handle is not None:
             await handle.stop()

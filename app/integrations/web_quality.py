@@ -1001,7 +1001,9 @@ def search_query(query: str, policy: WebConstraints, *, today: date | None = Non
 
 _LOCAL_QUESTION = re.compile(
     r'\b(?:preco|precos|custa|custam|banco|bancos|feriado|feriados|tempo|clima|chover|chuva|'
-    r'salario minimo|imposto|impostos|gasolina|operadora|operadoras|dolar)\b')
+    r'salario minimo|imposto|impostos|gasolina|operadora|operadoras|dolar|noticias)\b')
+_GLOBAL_SCOPE = re.compile(r'\b(?:mundo|mundial|mundiais|global|globais|internacional|internacionais|'
+                           r'world|worldwide)\b')
 _BARE_OFFICE = re.compile(r'\bprimeir[oa][ -]ministr[oa]$')
 _PLACE_NAMED = re.compile(r'\b(?:em|no|na|nos|nas|in)\s+[a-z]{3,}')
 
@@ -1010,7 +1012,8 @@ def localized_query(query: str, country: str) -> str:
     """Uma pergunta local sem lugar é sobre o país do utilizador, não o das páginas em português."""
     text = normalized(query).strip(' ?!.')
     local = _LOCAL_QUESTION.search(text) or _BARE_OFFICE.search(text)
-    if not country or not local or _PLACE_NAMED.search(text) or normalized(country) in text:
+    if (not country or not local or _PLACE_NAMED.search(text) or _GLOBAL_SCOPE.search(text)
+            or normalized(country) in text):
         return query
     return f"{query.rstrip(' ?!.')} em {country}"
 
@@ -1071,6 +1074,19 @@ def on_topic(query: str, source: dict[str, Any]) -> bool:
     wanted = _terms(query)
     text = normalized(str(source.get('title', '')) + ' ' + str(source.get('snippet', '')))
     return not wanted or 2 * len(wanted & _terms(text)) >= len(wanted)
+
+
+# shortcut: só os países testados; juntar códigos quando houver utilizadores noutros países.
+_COUNTRY_DOMAIN = {'portugal': '.pt', 'brasil': '.br', 'brazil': '.br'}
+
+
+def prefer_country(sources: list[dict[str, Any]], country: str) -> list[dict[str, Any]]:
+    """Numa pergunta local, as páginas do país vêm primeiro; a ordem interna não muda."""
+    domain = _COUNTRY_DOMAIN.get(normalized(country))
+    if not domain:
+        return sources
+    return sorted(sources, key=lambda source: not (
+        urlsplit(str(source.get('url') or '')).hostname or '').endswith(domain))
 
 
 def subject_query(query: str) -> str:

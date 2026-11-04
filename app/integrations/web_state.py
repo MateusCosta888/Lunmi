@@ -36,7 +36,9 @@ from app.brain.web import (
     WebOrigin,
     WebOriginSnapshot,
     WebPreference,
+    NativeWebState,
     can_complete_web,
+    native_web_capability_of,
     plan_web_attempts,
 )
 
@@ -500,6 +502,9 @@ def resolve_task_origin(web: Any, *, brain: Any = None, forbidden: bool = False
         preference = DEFAULT_ORIGIN
         native = NativeWebCapability.unknown()
         enabled = bool(getattr(web, "enabled", False))
+    if brain is not None and preference == "auto" and native.state is NativeWebState.UNKNOWN:
+        # O estado só é ligado quando as definições o pedem; o Brain resolvido já sabe.
+        native = native_web_capability_of(brain)
     lunmi_available = bool(getattr(web, "available", False))
 
     if forbidden:

@@ -22,6 +22,7 @@ from app.brain.contracts import (
     ModelInfo,
     events_for,
 )
+from app.brain.cli_web import web_runtime
 from app.codex_app_server import CodexAppServer, CodexError, codex_executable
 from app.llm import Completion
 from app.settings import Settings
@@ -72,6 +73,8 @@ class CodexBrain:
         self.model = settings.model
         self._client = CodexAppServer()
         self.call_metrics = self._client.call_metrics
+        executable = codex_executable()
+        self._web = web_runtime('codex', settings, str(executable)) if executable else None
         # No SHELL/TOOL_CALLS/WORKING_DIRECTORY: in this mode the CLI must not act.
         self.capabilities = Capabilities.of(
             Capability.SYSTEM_PROMPTS,
@@ -83,6 +86,13 @@ class CodexBrain:
             Capability.CANCELLATION,
             Capability.STREAMING,
         )
+
+    def __getattr__(self, name: str) -> Any:
+        # A superfície nativa só existe com o executável: `can_complete_web` vê a ausência.
+        if name in {'native_web_capability', 'complete_web', 'cancel_web'} and self._web is not None:
+            return {'native_web_capability': self._web.capability, 'complete_web': self._web.complete,
+                    'cancel_web': self._web.cancel_web}[name]
+        raise AttributeError(name)
 
     async def complete(self, messages: list[dict[str, Any]]) -> Completion:
         try:

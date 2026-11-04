@@ -19,7 +19,7 @@ from app.core.public_text import WebCitationStream, web_answer_admits_insufficie
 from app.integrations import web_search as web_search_module
 from app.integrations.web_quality import (attribute_evidence_problem, constraints, focused_query,
                                           localized_query, requires_page_evidence, search_query,
-                                          on_topic, structured_lookup,
+                                          on_topic, prefer_country, structured_lookup,
                                           supports_requested_attribute)
 from app.integrations.web_policy import windows_country
 from app.integrations.web_search import WebSearchError
@@ -527,3 +527,19 @@ def test_google_news_session_declines_consent():
     module = SimpleNamespace(AsyncSession=lambda **kwargs: kwargs)
     decline_google_consent(module)
     assert module.AsyncSession(timeout=5) == {'timeout': 5, 'cookies': {'SOCS': 'CAI'}}
+
+
+@pytest.mark.parametrize('query,expected', [
+    ('noticias de hoje sobre economia', 'noticias de hoje sobre economia em Portugal'),
+    ('noticias do mundo hoje', 'noticias do mundo hoje'),
+    ('noticias internacionais de hoje', 'noticias internacionais de hoje'),
+])
+def test_news_is_local_unless_the_question_is_global(query, expected):
+    assert localized_query(query, 'Portugal') == expected
+
+
+def test_pages_of_the_country_come_first_and_keep_their_order():
+    urls = ['https://a.com.br/1', 'https://b.pt/2', 'https://c.com/3', 'https://d.pt/4']
+    ordered = prefer_country([{'url': url} for url in urls], 'Portugal')
+    assert [item['url'] for item in ordered] == [urls[1], urls[3], urls[0], urls[2]]
+    assert prefer_country([{'url': urls[0]}], 'Japão') == [{'url': urls[0]}]

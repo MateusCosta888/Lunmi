@@ -672,10 +672,10 @@ def test_brain_exposes_the_native_web_capability(tmp_path: Path) -> None:
 
 
 def test_other_cli_brains_do_not_publish_native_web(tmp_path: Path) -> None:
-    spec = find_spec("claude")
+    spec = find_spec("agy")
     assert spec is not None
-    settings = Settings(provider="claude", model="sonnet", state_root=tmp_path)
-    brain = HeadlessCliBrain(settings, spec, executable="claude")
+    settings = Settings(provider="agy", model="sonnet", state_root=tmp_path)
+    brain = HeadlessCliBrain(settings, spec, executable="agy")
     assert not hasattr(brain, "native_web_capability")
     assert not hasattr(brain, "complete_web")
     assert not hasattr(brain, "cancel_web")

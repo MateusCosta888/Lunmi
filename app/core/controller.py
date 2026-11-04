@@ -56,6 +56,7 @@ from app.core.automatic import (AUTO_PROMPT, WRITE_DOCUMENT_PROMPT, EMAIL_PROMPT
                                 direct_web_operation, email_addresses, operation_mutates,
                                 parse_decision, parse_web_decision, web_forbidden, web_requested)
 from app.integrations.web_policy import WebBlocked, public_url, windows_country
+from app.integrations.web_quality import structured_lookup
 from app.integrations.web_quality import (
     attribute_evidence_problem,
     constraints as web_constraints,
@@ -1867,16 +1868,17 @@ class TaskController(SpotifyFlow):
             # A lista publicada é o ledger observado (máx. 5). Uma citação fora dela, ou
             # um pedido `read_required` sem nenhuma leitura observada, não sustentam
             # `suff`/`met`: downgrade honesto, sem segunda consulta nem ledger novo.
-            invalid = _invalid_web_citations(text, result.web_sources)
+            opaque = native.evidence_opaque
+            invalid = [] if opaque else _invalid_web_citations(text, result.web_sources)
             policy = web_constraints(instruction)
-            need_read = policy.read_required
+            need_read = policy.read_required and not opaque
             read_observed = any(bool(item.get('read')) and policy.accepts(item) and policy.dated(item)
                                 for item in result.web_sources)
             admitted = web_answer_admits_insufficiency(text)
             check_text = self._request_check_text(instruction)
             attribute_ok = supports_requested_attribute(check_text, text)
             # O DTO nativo não traz a página: título e excerto observados só podem rebaixar.
-            evidence_problem = attribute_evidence_problem(check_text, [
+            evidence_problem = '' if opaque else attribute_evidence_problem(check_text, [
                 {**item, 'content': item.get('snippet') or ''}
                 for item in result.web_sources if item.get('read')])
             if (public_text and result.web_sources and not unverified_action_claim(text)
@@ -1930,6 +1932,13 @@ class TaskController(SpotifyFlow):
             result.evidence_status = 'partial' if result.web_sources else 'insufficient'
             result.request_status = 'partial' if result.web_sources else 'unmet'
         return result
+
+    @staticmethod
+    def _has_direct_web_source(instruction: str) -> bool:
+        """Link a abrir ou pergunta com API de dados: a Free Search responde em segundos."""
+        operation = direct_web_operation(instruction)
+        return bool((operation and operation['name'] == 'web.open')
+                    or structured_lookup(instruction, windows_country()))
 
     def _fallback_web_operation(self, instruction: str) -> dict[str, Any] | None:
         """Operação Free Search derivada da pergunta, sem outra chamada ao modelo."""
@@ -2228,6 +2237,9 @@ class TaskController(SpotifyFlow):
                 web_origin = web_snapshot.origin
                 web_fallback = web_snapshot.fallback
                 result.web_fallback = web_fallback
+                if (web_origin == "provider" and web_snapshot.preference == "auto"
+                        and lunmi_available and self._has_direct_web_source(instruction)):
+                    web_origin = "lunmi"
             lunmi_ready = bool(web_origin == "lunmi" and lunmi_available)
             # Fora da heurística, quem decide pesquisar é o Brain, também com a origem nativa.
             web_decision_ready = lunmi_ready or (web_origin == "provider" and not web_intent)

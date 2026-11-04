@@ -186,6 +186,8 @@ class NativeWebResult:
     failure_reason: str = ""
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # O provedor lê as páginas do seu lado: há URLs observadas, nunca o texto delas.
+    evidence_opaque: bool = False
 
     def __post_init__(self) -> None:
         try:
