@@ -6,9 +6,9 @@
 
 **Uma assistente de IA para Windows que conversa contigo e executa tarefas no computador.**
 
-[**Descarregar Alpha 12 · Windows x64 · ~330 MB**](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.12/Lunmi-0.1.0-alpha.12-Setup.exe)
+[**Descarregar Beta 2 · Windows x64 · ~360 MB**](https://github.com/MateusCosta888/Lunmi/releases/download/v1.0.0-beta.2/Lunmi-1.0.0-beta.2-Setup.exe)
 
-[Notas da versão](https://github.com/MateusCosta888/Lunmi/releases/tag/v0.1.0-alpha.12) · [Instalar](#instalar) · [Documentação](docs/README.md) · [Contribuir](CONTRIBUTING.md)
+[Notas da versão](https://github.com/MateusCosta888/Lunmi/releases/tag/v1.0.0-beta.2) · [Instalar](#instalar) · [Documentação](docs/README.md) · [Contribuir](CONTRIBUTING.md)
 
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
 
@@ -20,7 +20,7 @@ A Lunmi junta um chat de IA com ferramentas para agir no Windows. Podes pedir-lh
   <img src="docs/assets/lunmi-dark.png" width="1000" alt="Conversa da Lunmi, com histórico na lateral, seletor de modelo e controlo de Autoaprovação" />
 </p>
 
-> **Em fase alpha.** A versão publicada é a 0.1.0-alpha.12. Começa com tarefas pequenas e ficheiros de teste. O instalador ainda não tem certificado de editor do Windows.
+> **Em fase beta.** A versão publicada é a 1.0.0-beta.2. Começa com tarefas pequenas e ficheiros de teste. O instalador ainda não tem certificado de editor do Windows.
 
 ## Tarefas no Windows
 
@@ -42,7 +42,7 @@ O cartão com os detalhes do resultado está oculto por defeito. Podes ativar **
 
 ## Instalar
 
-1. Descarrega o [setup da Alpha 12](https://github.com/MateusCosta888/Lunmi/releases/download/v0.1.0-alpha.12/Lunmi-0.1.0-alpha.12-Setup.exe) para **Windows 10 ou 11, x64**. São cerca de **330 MB**: inclui Python e o runtime de áudio. A voz (~400 MB) e o ditado (~1,6 GB) transferem-se depois, só se aceitares.
+1. Descarrega o [setup da Beta 2](https://github.com/MateusCosta888/Lunmi/releases/download/v1.0.0-beta.2/Lunmi-1.0.0-beta.2-Setup.exe) para **Windows 10 ou 11, x64**. São cerca de **360 MB**: inclui Python e o runtime de áudio. A voz (~400 MB) e o ditado (~1,6 GB) transferem-se depois, só se aceitares.
 2. Executa o setup. O destino predefinido é `%LOCALAPPDATA%\Programs\Lunmi`. Não precisas de instalar Python, Node.js ou Git à parte.
 3. Abre a Lunmi e segue a introdução para ligar um Brain. Escolhe **Groq**, com a tua chave de API, ou **Kiro CLI**, com a tua conta. A introdução pode instalar o Kiro; este percurso exige **Windows 11**. Também podes configurar outro provedor mais tarde no painel Brain.
 
@@ -67,7 +67,7 @@ Os provedores aparecem agrupados por tipo. O campo de chave só surge quando é 
 
 Na aplicação instalada, as novas releases são descarregadas em segundo plano. Em **Configurações → Atualizações**, escolhe **Reiniciar e atualizar** quando não houver uma tarefa ou voz em curso. Guarda os rascunhos antes de reiniciar. Os dados pessoais ficam fora da pasta do programa.
 
-O atualizador pode descarregar apenas os blocos alterados, mas recorre ao setup completo quando necessário. A partir da Alpha 6, os componentes de Python e voz só voltam a ser extraídos quando mudam. Para atualizar versões anteriores ou resolver uma falha, consulta o [guia de atualizações](docs/UPDATES.md).
+O atualizador transfere apenas os pacotes que mudaram, normalmente cerca de 6 MB, e a versão anterior fica guardada para voltar atrás sozinha se a nova não arrancar. Quem vem de uma Alpha desinstala-a e instala a beta com o setup, uma única vez. Para resolver uma falha, consulta o [guia de atualizações](docs/UPDATES.md).
 
 ## Na conversa e no ambiente de trabalho
 
@@ -112,7 +112,7 @@ As conversas e a memória são guardadas localmente, em bases **SQLite separadas
 
 As chaves guardadas pela interface usam a proteção do Windows. O ficheiro `.env`, se utilizado, é texto simples e deve ser protegido. Não publiques bases de dados, exportações, credenciais ou logs com dados pessoais. [Memória e controlo dos dados](docs/MEMORY.md) · [Segurança](SECURITY.md).
 
-A Alpha 12 não foi validada em todos os ambientes. A instalação num PC limpo ainda está a ser ensaiada; faltam cobertura de Windows 10, vários monitores e escalas, e testes do leitor do Node com aplicações como Spotify e browsers. Voz e ditado continuam experimentais e dependem dos dispositivos de áudio. Não há versão para macOS ou Linux. Os avisos conhecidos das dependências estão documentados em [SECURITY.md](SECURITY.md#dependências-upstream).
+A beta não foi validada em todos os ambientes. Faltam cobertura de Windows 10, vários monitores e escalas, e testes do leitor do Node com aplicações como Spotify e browsers. Voz e ditado continuam experimentais e dependem dos dispositivos de áudio. Não há versão para macOS ou Linux. Os avisos conhecidos das dependências estão documentados em [SECURITY.md](SECURITY.md#dependências-upstream).
 
 ## Para programadores
 
