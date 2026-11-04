@@ -67,6 +67,7 @@ jobs:
       - name: Build native launcher
         working-directory: desktop/installer
         run: cargo build --release --locked
+      - run: python desktop/scripts/normalize_runtime.py
       - name: Pack runtimes and write component keys before Electron packaging
         run: node desktop/scripts/beta-release.mjs components desktop/installer/target/release/Lunmi.exe
       - run: npm run dist
