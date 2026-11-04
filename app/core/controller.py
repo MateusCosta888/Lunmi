@@ -2218,6 +2218,8 @@ class TaskController(SpotifyFlow):
                 web_fallback = web_snapshot.fallback
                 result.web_fallback = web_fallback
             lunmi_ready = bool(web_origin == "lunmi" and lunmi_available)
+            # Fora da heurística, quem decide pesquisar é o Brain, também com a origem nativa.
+            web_decision_ready = lunmi_ready or (web_origin == "provider" and not web_intent)
             if explicit_web and web_origin != "provider" and not lunmi_ready:
                 result.scope = 'conversation'
                 result.plan_source = 'web'
@@ -2320,17 +2322,17 @@ class TaskController(SpotifyFlow):
                             # modelo, na memória ou em qualquer configuração do CLI.
                             system_prompt = _NATIVE_WEB_PROMPT + '\n' + _backend_clock_line()
                         elif automatic:
-                            system_prompt = AUTO_PROMPT + (WEB_PROMPT if lunmi_ready else '')
+                            system_prompt = AUTO_PROMPT + (WEB_PROMPT if web_decision_ready else '')
                             if self.settings.computer_write_macro:
                                 system_prompt += WRITE_DOCUMENT_PROMPT
                             system_prompt += _PROPORTIONAL_ANSWER_GUIDANCE
                         else:
-                            system_prompt = (WEB_CONVERSATION_PROMPT if lunmi_ready
+                            system_prompt = (WEB_CONVERSATION_PROMPT if web_decision_ready
                                              else CONVERSATION_PROMPT)
                             # O caminho conversacional sem web também recebe a política de
                             # concisão; o prompt nativo já a inclui na própria constante.
                             system_prompt += _PROPORTIONAL_ANSWER_GUIDANCE
-                        if lunmi_ready and not (web_origin == "provider" and web_intent):
+                        if web_decision_ready and not (web_origin == "provider" and web_intent):
                             # Sem a data, o modelo julga "atual" pela data do treino e não pesquisa.
                             system_prompt += '\n' + _backend_clock_line()
                         if source_decision:
@@ -2379,6 +2381,10 @@ class TaskController(SpotifyFlow):
                         messages.append({'role': 'user', 'content': instruction})
                         return messages
 
+                    def native_context_is_private() -> bool:
+                        return _has_private_text(memory_context, profile_context,
+                                                 *(text for pair in pairs for text in pair))
+
                     chat_messages = build_messages(pairs)
                     # Corta pares completos antigos para caber no orçamento do Brain.
                     while pairs and sum(len(m['content']) for m in chat_messages) > budget:
@@ -2391,9 +2397,7 @@ class TaskController(SpotifyFlow):
                                                 - len(memory_context))
                     result.prompt_chars = sum(len(m['content']) for m in chat_messages)
                     if web_origin == "provider" and web_intent:
-                        result.private_context = _has_private_text(
-                            memory_context, profile_context,
-                            *(text for pair in pairs for text in pair))
+                        result.private_context = native_context_is_private()
                         if (web_snapshot.preference == "auto" and lunmi_available
                                 and deadline_remaining() < WEB_RECOVERY_RESERVE_S):
                             # Sem reserva para uma recuperação útil: `auto` escolhe a
@@ -2453,7 +2457,7 @@ class TaskController(SpotifyFlow):
                                               'esta ação. Faça um pedido direto ou esclareça a operação.')
                             return result
                         result.message = answer or ''
-                    elif lunmi_ready:
+                    elif web_decision_ready:
                         answer, candidates, initial_operation = parse_web_decision(response.text)
                         result.message = answer or ''
                     else:
@@ -2520,6 +2524,15 @@ class TaskController(SpotifyFlow):
                 return result
             if initial_operation is not None and str(initial_operation['name']).startswith('web.'):
                 private_web = True
+                if web_origin == 'provider' and not web_blocked and not web_intent:
+                    # O adaptador nativo escolhe a consulta: só o prompt do turno muda.
+                    web_intent = True
+                    chat_messages = build_messages(pairs)
+                    result.private_context = native_context_is_private()
+                    result.message = ''
+                    return await self._run_provider_web_with_recovery(
+                        instruction, chat_messages, result, web_snapshot,
+                        operation_event, deadline_remaining, ensure_deadline)
                 if web_blocked or web_origin != 'lunmi' or not lunmi_ready:
                     # Recusa explícita ou origem OFF: a escolha do Brain não executa
                     # manager, tool JSON, browser nem fallback; termina aqui.
