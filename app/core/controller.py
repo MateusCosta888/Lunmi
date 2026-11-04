@@ -1295,6 +1295,9 @@ class TaskController(SpotifyFlow):
         candidates = [dict(documents[source['id']]) for source in web_result.sources[:5]
                       if source['id'] in documents]
         chosen = select_evidence(instruction, candidates, remaining)
+        # O manager avaliou a query focada e o documento inteiro; o que conta é o que segue.
+        result.web_delivered_problem = attribute_evidence_problem(
+            self._request_check_text(instruction), chosen)
         selected: dict[Any, dict[str, Any]] = {
             item.get('id'): item for item in chosen
             if isinstance(item, dict) and item.get('id')}
@@ -1608,7 +1611,7 @@ class TaskController(SpotifyFlow):
                 and bool(document['content'])
                 for document in getattr(web_result, 'documents', ()))
             if (web_result.limited or invalid or not str(answer or '').strip() or incomplete
-                    or admitted or not attribute_ok
+                    or admitted or not attribute_ok or result.web_delivered_problem
                     or (need_read and not read_observed)):
                 result.status = 'NOT_VERIFIED'
                 result.failure_kind = 'VERIFICATION_FAILURE'

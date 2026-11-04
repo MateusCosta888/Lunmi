@@ -142,6 +142,8 @@ class TaskResult:
     memory_error: str = ""
     # Interno: o modelo recebeu contexto sensível. Decide o filtro do arquivo; nunca sai no DTO.
     private_context: bool = False
+    # Interno: problema da evidência enviada à síntese, avaliada com o pedido original.
+    web_delivered_problem: str = ""
     # WEB-SEARCH-V1: fontes públicas do turno web (vazio fora dele) e desfecho da consulta.
     # Nunca é evidência de uma ação no desktop.
     web_sources: list[dict[str, Any]] = field(default_factory=list)

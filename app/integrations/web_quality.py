@@ -845,6 +845,17 @@ def _terms(text: str) -> set[str]:
     return {term for term in re.findall(r'[a-z0-9_]{3,}', normalized(text)) if term not in stop}
 
 
+def _support_window(query: str, title: str, block: str, size: int) -> str:
+    """Trecho de `size` à volta da frase com o atributo; '' se nenhuma frase o sustenta."""
+    for sentence in _sentences(block):
+        if len(sentence) <= size and supports_requested_attribute(
+                query, title + '\n' + sentence, today=datetime.now().date()):
+            start = block.find(sentence) - (size - len(sentence)) // 2
+            start = max(0, min(start, len(block) - size))
+            return block[start:start + size]
+    return ''
+
+
 def select_evidence(query: str, documents: list[dict[str, Any]], budget: int
                     ) -> list[dict[str, Any]]:
     """Select relevant paragraphs in original order, with a fair per-source budget."""
@@ -910,9 +921,10 @@ def select_evidence(query: str, documents: list[dict[str, Any]], budget: int
                 # Keep a sentence boundary when possible; do not create broken code fences.
                 if block.startswith('```'):
                     continue
+                window = _support_window(query, title, block, available) if attribute else ''
                 prefix = block[:available]
                 split = max(prefix.rfind('. '), prefix.rfind('\n'))
-                block = prefix[:split + 1] if split >= available // 2 else prefix
+                block = window or (prefix[:split + 1] if split >= available // 2 else prefix)
             chosen[position] = block
             used += len(block) + (2 if len(chosen) > 1 else 0)
             seen.add(key)
