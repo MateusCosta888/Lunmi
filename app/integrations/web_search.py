@@ -545,6 +545,8 @@ class MCPWebClient:
                             item = await asyncio.wait_for(queue.get(),
                                                           timeout=self.idle_seconds)
                         except asyncio.TimeoutError:
+                            # Já a fechar: o próximo pedido abre outra sessão em vez de cair nesta.
+                            self._queue = None
                             break
                         if item is None:
                             break

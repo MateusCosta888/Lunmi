@@ -412,6 +412,69 @@ class WhisperAdapter:
         return " ".join(segment.text.strip() for segment in segments if segment.text).strip()
 
 
+class CloudSttError(RuntimeError):
+    """Falha do ditado na nuvem: só o código fechado sai do worker, nunca a resposta."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class GroqTranscriber:
+    """Whisper no Groq. Só a biblioteca padrão: o runtime de voz não traz cliente HTTP."""
+
+    URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+    MODEL = "whisper-large-v3-turbo"
+
+    def __init__(self, key: str, *, language: str = "pt", timeout: float = 20.0) -> None:
+        self.key = key
+        self.language = language
+        self.timeout = timeout
+
+    @staticmethod
+    def wav(samples: Any) -> bytes:
+        import io
+        import wave
+
+        import numpy as np
+
+        pcm = (np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0) * 32767.0).astype("<i2")
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(TARGET_SAMPLE_RATE)
+            output.writeframes(pcm.tobytes())
+        return buffer.getvalue()
+
+    def body(self, samples: Any, boundary: str) -> bytes:
+        fields = {"model": self.MODEL, "language": self.language, "temperature": "0",
+                  "response_format": "json"}
+        parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+                 for name, value in fields.items()]
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.wav"\r\n'
+                     'Content-Type: audio/wav\r\n\r\n'.encode())
+        return b"".join(parts) + self.wav(samples) + f"\r\n--{boundary}--\r\n".encode()
+
+    def transcribe(self, samples: Any) -> str:
+        import urllib.error
+        import urllib.request
+        import uuid
+
+        boundary = uuid.uuid4().hex
+        request = urllib.request.Request(self.URL, data=self.body(samples, boundary), method="POST", headers={
+            "Authorization": f"Bearer {self.key}", "User-Agent": "Lunmi",
+            "Content-Type": f"multipart/form-data; boundary={boundary}"})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return str(json.loads(response.read()).get("text") or "").strip()
+        except urllib.error.HTTPError as exc:
+            raise CloudSttError({401: "cloud_key", 403: "cloud_key", 429: "cloud_limit"}.get(
+                exc.code, "stt_failed")) from None
+        except (OSError, ValueError):
+            raise CloudSttError("cloud_network") from None
+
+
 def load_whisper(model_dir: str | Path, *, device: str = "cuda",
                  compute_type: str = "float16", language: str = "pt",
                  beam_size: int = 5) -> WhisperAdapter:
@@ -661,6 +724,9 @@ class InputWorker:
         self._emit_state(generation, "transcribing")
         try:
             text = self._model.transcribe(samples)
+        except CloudSttError as exc:
+            self.emit({"type": "error", "generation": generation, "code": exc.code})
+            return
         except Exception:
             self.emit({"type": "error", "generation": generation, "code": "stt_failed"})
             return
@@ -815,6 +881,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--language", default="pt")
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument('--device', choices=('cpu', 'cuda'), default='cuda')
+    parser.add_argument('--engine', choices=('local', 'groq'), default='local')
     parser.add_argument("--max-capture-ms", type=int, default=30_000)
     parser.add_argument("--onset-timeout-ms", type=int, default=5_000)
     parser.add_argument("--endpoint-silence-ms", type=int, default=1_000)
@@ -827,7 +894,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    cloud = args.engine == 'groq'
+    key = os.environ.pop("LUNMI_GROQ_KEY", "")
     worker = InputWorker(
+        load_model=(lambda: GroqTranscriber(key, language=args.language)) if cloud else None,
         model_dir=args.model_dir,
         vad_path=args.vad,
         sample_rate=args.sample_rate,
@@ -841,7 +911,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         max_transcript_chars=args.max_transcript_chars,
     )
     try:
-        if args.device == 'cuda':
+        if args.device == 'cuda' and not cloud:
             prepare_native_runtime()
         worker.prepare()
     except Exception:

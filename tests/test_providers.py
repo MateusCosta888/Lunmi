@@ -401,3 +401,44 @@ def test_each_provider_keeps_its_remembered_key_across_switches_and_restarts(
     settings_module.save_selection("kiro", "auto")
     assert Settings.load().api_key == ""
     assert settings_module.saved_credentials("groq")["api_key"] == "groq-test-key"
+
+
+@pytest.mark.parametrize("headers,body,expected", [
+    ({"retry-after": "12"}, b'{"error":{"message":"Rate limit reached on requests per minute (RPM): Limit 30"}}',
+     "O provedor atingiu o limite de pedidos por minuto. Tenta de novo daqui a 12 s."),
+    ({"retry-after": "1.2"}, b"tokens per minute (TPM)", "O provedor atingiu o limite de tokens por minuto. Tenta de novo daqui a 2 s."),
+    ({"retry-after": "3600"}, b"tokens per day (TPD)", "O provedor atingiu o limite de tokens por dia. Tenta de novo mais tarde ou usa outro cérebro."),
+    ({}, b"PRIVATE prompt echo", "O provedor atingiu um limite de uso. Tenta de novo daqui a um minuto ou usa outro cérebro."),
+])
+def test_a_rate_limit_says_which_limit_and_when_it_returns(headers, body, expected) -> None:
+    from app.llm import rate_limit_notice
+    assert rate_limit_notice(headers, body) == expected
+
+
+def test_the_chat_gets_the_rate_limit_notice_after_the_second_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    import httpx
+
+    import app.llm as llm
+    from app.brain.api_brain import ApiBrain
+    from app.brain.contracts import BrainError, ErrorKind
+
+    async def no_wait(_seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(llm.asyncio, "sleep", no_wait)
+
+    async def scenario() -> BrainError:
+        brain = ApiBrain(Settings(provider="groq", model="fixture", api_key="PRIVATE_KEY"))
+        await brain._provider.client.aclose()
+        brain._provider.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _request: httpx.Response(
+            429, headers={"retry-after": "9"}, content=b"limit on requests per minute (RPM)")))
+        with pytest.raises(BrainError) as caught:
+            await brain.complete([{"role": "user", "content": "oi"}])
+        await brain.close()
+        return caught.value
+
+    error = asyncio.run(scenario())
+    assert error.kind is ErrorKind.RATE_LIMITED
+    assert error.message == "O provedor atingiu o limite de pedidos por minuto. Tenta de novo daqui a 9 s."

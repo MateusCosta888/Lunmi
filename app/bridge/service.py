@@ -855,6 +855,8 @@ class BridgeService(VoiceBridge):
             return self._handle_voice_input_finish(payload)
         if cmd == "voice.input.cancel":
             return self._handle_voice_input_cancel(payload)
+        if cmd == "voice.input.engine":
+            return self._handle_voice_input_engine(payload)
         if cmd == "voice.input.result":
             return self._handle_voice_input_result(payload)
         if cmd == "app.shutdown":

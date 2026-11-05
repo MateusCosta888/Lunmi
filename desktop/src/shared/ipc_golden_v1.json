@@ -92,6 +92,7 @@
     "voice.input.finish",
     "voice.input.get",
     "voice.input.result",
+    "voice.input.engine",
     "voice.input.start",
     "voice.set",
     "voice.speak_last",

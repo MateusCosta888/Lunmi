@@ -679,6 +679,23 @@ SHAPES: tuple[Callable[[list[Token], str, AppIndex | None], FastPlan | None], ..
 )
 
 
+_LEADING_FILLERS = frozenset({"beleza", "blz", "ok", "okay", "ta", "certo", "bom", "entao", "agora",
+                              "e", "ai", "lunmi"})
+
+
+def _without_fillers(tokens: list[Token]) -> list[Token]:
+    """O ditado traz "beleza, abre aí a calculadora para mim": fica o pedido, "abre a calculadora"."""
+    tokens = list(tokens)
+    while tokens and tokens[0].folded in _LEADING_FILLERS:
+        del tokens[0]
+    if len(tokens) > 2 and tokens[1].folded in {"ai", "e"}:
+        del tokens[1]
+    if len(tokens) > 3 and [token.folded for token in tokens[-2:]] in (
+            ["para", "mim"], ["pra", "mim"], ["por", "favor"]):
+        del tokens[-2:]
+    return tokens
+
+
 def resolve(instruction: str, apps: AppIndex | None = None) -> FastPlan | None:
     """The deterministic plan for an instruction, or ``None`` to let the agent plan it.
 
@@ -694,7 +711,7 @@ def resolve(instruction: str, apps: AppIndex | None = None) -> FastPlan | None:
         return None
     if len([part for part in (piece.strip() for piece in _SENTENCES.split(text)) if part]) != 1:
         return None
-    tokens = tokenize(text)
+    tokens = _without_fillers(tokenize(text))
     if not tokens or any(token.folded in REFUSED_WORDS for token in tokens):
         return None
     for shape in SHAPES:

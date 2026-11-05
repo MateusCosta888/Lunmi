@@ -111,7 +111,7 @@ def translate_provider_error(exc: ProviderError) -> BrainError:
         return BrainError(kind, _KIND_MESSAGES.get(kind, message) if kind is ErrorKind.TIMEOUT else message,
                           detail=message)
     kind = _HTTP_STATUS_KINDS.get(int(status.group(1)), ErrorKind.PROVIDER_UNAVAILABLE)
-    return BrainError(kind, _KIND_MESSAGES.get(kind, message), detail=message)
+    return BrainError(kind, exc.notice or _KIND_MESSAGES.get(kind, message), detail=message)
 
 
 def resolve_base_url(provider: str, base_url: str) -> str:

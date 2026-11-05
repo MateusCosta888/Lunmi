@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import codecs
+import logging
+import math
 import re
 import time
 from abc import ABC, abstractmethod
@@ -42,10 +44,54 @@ def rate_limit_wait(headers: Any) -> float | None:
     return seconds + 0.5
 
 
+_LIMIT_NAME = re.compile(rb"\b(requests|tokens) per (minute|day)\b", re.IGNORECASE)
+_LIMIT_WORDS = {b"requests": "pedidos", b"tokens": "tokens", b"minute": "minuto", b"day": "dia"}
+
+
+def rate_limit_notice(headers: Any, body: bytes) -> str:
+    """Que limite acabou e quando volta. Do corpo só sai este vocabulário fechado, nunca texto."""
+    name = _LIMIT_NAME.search(body)
+    what = (f"o limite de {_LIMIT_WORDS[name[1].lower()]} por {_LIMIT_WORDS[name[2].lower()]}"
+            if name else "um limite de uso")
+    try:
+        seconds = math.ceil(float(str(headers.get("retry-after") or "")))
+    except ValueError:
+        seconds = 0
+    if 0 < seconds <= 120:
+        return f"O provedor atingiu {what}. Tenta de novo daqui a {seconds} s."
+    later = "mais tarde" if seconds else "daqui a um minuto"
+    return f"O provedor atingiu {what}. Tenta de novo {later} ou usa outro cérebro."
+
+
 class _RateLimited(Exception):
-    def __init__(self, wait: float | None) -> None:
+    def __init__(self, wait: float | None, notice: str) -> None:
         super().__init__("rate limited")
         self.wait = wait
+        self.notice = notice
+
+
+async def _rate_limited(response: Any) -> _RateLimited:
+    return _RateLimited(rate_limit_wait(response.headers),
+                        rate_limit_notice(response.headers, await response.aread()))
+
+
+_GENERATION_FAILED = {b"tool_use_failed", b"json_validate_failed", b"output_parse_failed"}
+_ERROR_CODE = re.compile(rb'"code"\s*:\s*"([a-z_]{1,40})"')
+
+
+GENERATION_FAILED_MESSAGE = "O modelo não conseguiu formar a resposta. Tenta de novo."
+
+
+class _Regenerate(Exception):
+    """HTTP 400 em que foi o modelo que falhou a resposta: uma nova tentativa costuma resultar."""
+
+
+async def _bad_request(response: Any) -> _Regenerate | None:
+    code = _ERROR_CODE.search(await response.aread())
+    if code is None:
+        return None
+    logging.warning("Provider HTTP 400: %s", code[1].decode())  # só o código fechado, nunca o corpo
+    return _Regenerate() if code[1] in _GENERATION_FAILED else None
 
 
 class _TooLarge(Exception):
@@ -84,7 +130,7 @@ def _fitted(body: dict[str, Any], too: _TooLarge) -> dict[str, Any] | None:
 
 
 class ProviderError(RuntimeError):
-    pass
+    notice = ""  # frase já pronta para o utilizador, quando o transporte sabe mais do que o código HTTP
 
 
 class Plan(BaseModel):
@@ -197,15 +243,24 @@ class LLMProvider(ABC):
         await self.client.aclose()
 
     async def _post(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
-        for attempt in (0, 1):
+        used: set[str] = set()  # cada recuperação só uma vez, sem gastar a das outras
+        for _attempt in range(4):
             try:
                 return await self._post_once(url, headers, body)
             except _RateLimited as limited:
-                if attempt or limited.wait is None:
-                    raise ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.") from None
+                if 'wait' in used or limited.wait is None:
+                    error = ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.")
+                    error.notice = limited.notice
+                    raise error from None
+                used.add('wait')
                 await asyncio.sleep(limited.wait)
+            except _Regenerate:
+                if 'again' in used:
+                    raise ProviderError(GENERATION_FAILED_MESSAGE) from None
+                used.add('again')
             except _TooLarge as too:
-                fitted = None if attempt else _fitted(body, too)
+                fitted = None if 'fit' in used else _fitted(body, too)
+                used.add('fit')
                 if fitted is None:
                     raise ProviderError("API retornou HTTP 413. Confira chave, modelo, saldo e endpoint.") from None
                 body = fitted
@@ -218,9 +273,11 @@ class LLMProvider(ABC):
         try:
             async with self.client.stream("POST", url, headers=headers, json=body) as response:
                 if response.status_code == 429:
-                    raise _RateLimited(rate_limit_wait(response.headers))
+                    raise await _rate_limited(response)
                 if response.status_code == 413 and (too := await _too_large(response)):
                     raise too
+                if response.status_code == 400 and (again := await _bad_request(response)):
+                    raise again
                 if response.status_code != 200:
                     # Do not expose response bodies: these may echo credentials/prompts.
                     raise ProviderError(f"API retornou HTTP {response.status_code}. Confira chave, modelo, saldo e endpoint.")
@@ -254,7 +311,8 @@ class LLMProvider(ABC):
 
     async def _sse(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> AsyncGenerator[str, None]:
         # O 429 chega antes de qualquer evento, por isso repetir nunca duplica texto já emitido.
-        for attempt in (0, 1):
+        used: set[str] = set()  # cada recuperação só uma vez, sem gastar a das outras
+        for _attempt in range(4):
             try:
                 # aclosing: quem para de ler fecha já a ligação HTTP do gerador interno.
                 async with aclosing(self._sse_once(url, headers, body)) as events:
@@ -262,12 +320,20 @@ class LLMProvider(ABC):
                         yield event
                 return
             except _RateLimited as limited:
-                if attempt or limited.wait is None:
-                    raise ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.") from None
+                if 'wait' in used or limited.wait is None:
+                    error = ProviderError("API retornou HTTP 429. Confira chave, modelo, saldo e endpoint.")
+                    error.notice = limited.notice
+                    raise error from None
+                used.add('wait')
                 await asyncio.sleep(limited.wait)
+            except _Regenerate:
+                if 'again' in used:
+                    raise ProviderError(GENERATION_FAILED_MESSAGE) from None
+                used.add('again')
             except _TooLarge as too:
                 # Refused before any event, so the retry never repeats text already emitted.
-                fitted = None if attempt else _fitted(body, too)
+                fitted = None if 'fit' in used else _fitted(body, too)
+                used.add('fit')
                 if fitted is None:
                     raise ProviderError("API retornou HTTP 413. Confira chave, modelo, saldo e endpoint.") from None
                 body = fitted
@@ -283,9 +349,11 @@ class LLMProvider(ABC):
             async with self.client.stream("POST", url, headers={**headers, "Accept": "text/event-stream"},
                                           json=body) as response:
                 if response.status_code == 429:
-                    raise _RateLimited(rate_limit_wait(response.headers))
+                    raise await _rate_limited(response)
                 if response.status_code == 413 and (too := await _too_large(response)):
                     raise too
+                if response.status_code == 400 and (again := await _bad_request(response)):
+                    raise again
                 if response.status_code != 200:
                     raise ProviderError(f"API retornou HTTP {response.status_code}. Confira chave, modelo, saldo e endpoint.")
                 if response.headers.get("content-type", "").split(";", 1)[0].strip() != "text/event-stream":

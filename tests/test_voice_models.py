@@ -533,7 +533,7 @@ def test_an_older_manifest_without_the_light_model_stays_valid(tmp_path: Path) -
     manifest.write_text(json.dumps({"files": [
         {"path": path, "url": "https://huggingface.co/x", "sha256": "a" * 64, "bytes": 1}
         for path in ("models/supertonic-3/a", "models/whisper-large-v3-turbo/b", "models/silero/c")]}), encoding="utf-8")
-    assert set(load_manifest(manifest)) == {"speech", "dictation"}
+    assert set(load_manifest(manifest)) == {"speech", "dictation", "dictation_vad"}
 
 
 def test_a_weak_pc_prefers_the_light_model_once_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

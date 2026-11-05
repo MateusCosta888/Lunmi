@@ -124,7 +124,8 @@ _NATIVE_WEB_PROMPT = (
 # pergunta simples/definição fica curta e sem recomendações não pedidas; código, tutorial
 # ou relatório/investigação pedidos ficam completos, sem teto rígido nem truncagem.
 _PROPORTIONAL_ANSWER_GUIDANCE = (
-    '\n\nAnswer proportionally to the request. Answer the asked question first. By default, '
+    '\n\nReply in the language of the user\'s latest message, whatever language came before, '
+    'unless they ask for another. Answer proportionally to the request. Answer the asked question first. By default, '
     'give a few sentences or a short list, with no introduction or repeated conclusion. For '
     'a simple definition such as "what is Docker", answer in one to three sentences: no '
     'headings, tables, lists, examples or code unless the user requested them. For '
@@ -1658,8 +1659,8 @@ class TaskController(SpotifyFlow):
             result.status = 'FAILED'
             result.failure_kind = classify_failure_kind(exc)
             # Limite por minuto do fornecedor: a pesquisa correu, falta só a resposta; dizê-lo.
-            result.message = (WEB_MESSAGES['rate_limited'] if exc.kind is ErrorKind.RATE_LIMITED
-                              else WEB_MESSAGES['failed'])
+            result.message = ('A pesquisa foi feita, mas a resposta não chegou. ' + exc.message
+                              if exc.kind is ErrorKind.RATE_LIMITED else WEB_MESSAGES['failed'])
             result.evidence_status, result.request_status = 'insufficient', 'unmet'
             operation_event('operation.finished', {**state, 'state': 'failed_no_effect',
                                                    'verified': False,

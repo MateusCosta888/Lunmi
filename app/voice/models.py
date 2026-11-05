@@ -48,6 +48,8 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "speech": ("models/supertonic-3/",),
     "dictation": ("models/whisper-large-v3-turbo/", "models/silero/"),
     "dictation_light": ("models/faster-whisper-small/", "models/silero/"),
+    # O ditado pelo Groq só precisa de saber quando há fala: 2 MB, sem nenhum Whisper local.
+    "dictation_vad": ("models/silero/",),
 }
 LIGHT_MODEL_PREFIX = GROUPS["dictation_light"][0]
 MODELS_DIRNAME = "voice-models"

@@ -13,6 +13,8 @@ from app.settings import Settings
 from app.voice.eligibility import speakable_reply
 from app.voice.input_manager import VoiceInputManager
 from app.voice.manager import VoiceError, VoiceManager
+from app.settings import ConfigurationError, saved_credentials
+from app.voice.input_manager import DICTATION_ENGINES
 from app.voice.models import GROUPS as VOICE_MODEL_GROUPS
 from app.voice.models import ModelsError, VoiceModels, manifest_for, models_root, older_voice_components
 from app.voice.runtime import voice_home
@@ -46,6 +48,7 @@ class VoiceBridge:
             on_speech_interrupt=self.voice.stop,
             on_active_changed=self.voice.set_input_active,
             emit_level=self._emit_voice_input_level,
+            groq_key=self._groq_key,
         )
         # Warmup de introdução: só prepara recursos; não fala nem abre microfone. O renderer
         # pede explicitamente `voice.warmup` no loading e espera `voice.readiness`/timeout.
@@ -194,6 +197,25 @@ class VoiceBridge:
             raise protocol.ProtocolError(
                 "invalid_payload", "Este comando de ditado não aceita campos."
             )
+
+    def _groq_key(self) -> str:
+        """A chave do Groq serve mesmo com outro cérebro ligado; uma ilegível conta como ausente."""
+        if self.settings.provider == "groq" and self.settings.api_key:
+            return self.settings.api_key
+        try:
+            return saved_credentials("groq")["api_key"]
+        except ConfigurationError:
+            return ""
+
+    def _handle_voice_input_engine(self, payload: dict[str, Any]) -> dict[str, Any]:
+        engine = payload.get("engine")
+        if set(payload) - {"engine"} or (payload and engine not in DICTATION_ENGINES):
+            raise protocol.ProtocolError("invalid_payload", "Use {} ou {'engine':'local'|'groq'}.")
+        if engine:
+            if engine == "groq":
+                self.voice_models.download("dictation_vad")
+            self.voice_input.set_engine(str(engine))
+        return {"engine": self.voice_input.engine(), "key_ready": bool(self._groq_key())}
 
     def _handle_voice_input_get(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._voice_input_empty_payload(payload)

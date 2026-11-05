@@ -342,13 +342,17 @@ def _fresh_web_question(instruction: str) -> bool:
     # Uma pergunta sobre o presente ("quem é o atual papa", "qual o preço hoje") ou sobre o
     # acontecimento mais recente ("último jogo", "últimos papas") muda com o tempo: a memória
     # do modelo responde com dados antigos, por isso pesquisa.
-    present = (_PRESENT_QUESTION.search(text)
+    present = (_PRESENT_QUESTION.search(text) and not _SMALL_TALK.search(text)
                and re.search(r'\b(?:atual|atuais|atualmente|hoje|agora|neste momento)\b', text))
     # Pedidos que exigem página (ranking, fonte, estudo) continuam no Brain, que foca a query.
     recent = (present or _LATEST_EVENT.search(text)) and not _requires_page_evidence(instruction)
     return bool(price or bitcoin or fx_quote or (temporal and (version or news)) or recent)
 
 
+# "como estás hoje" fala com ela, não sobre o mundo: "hoje" sozinho não pede uma pesquisa.
+_SMALL_TALK = re.compile(
+    r'\b(?:voce|tu|te|contigo|consigo|sentindo|sentes|tudo bem|tudo certo)\b|'
+    r'\bcomo (?:que )?(?:esta|estao|vai|vao|anda|andam)\b.*\b(?:o dia|as coisas|tudo)\b')
 _PRESENT_QUESTION = re.compile(
     r'^(?:quem|qual|quais|quando|quanto|quantos|quantas|onde|como (?:esta|estao|anda|andam)|'
     r'o que (?:aconteceu|esta)|ja)\b|\?\s*$')
@@ -607,7 +611,7 @@ def spotify_tool_mutates(operation: str) -> bool:
 
 
 _ACTION_VERBS = (
-    r'(?:abr[aei]|abrir|open|fech[ae]|fechar|close|cria|crie|criar|create|apaga|apague|apagar|delete|'
+    r'(?:abr[aei]|abrir|open|foc[ae]|foque|focar|focus|fech[ae]|fechar|close|cria|crie|criar|create|apaga|apague|apagar|delete|'
     r'elimina|elimine|remov[ae]|remove|mova|move|mover|copi[ae]|copiar|copy|renomei[ae]|rename|'
     r'organiz[ae]|organizar|faz|faca|make|escrev[ae]|escrever|write|digit[ae]|digitar|type|'
     r'salv[ae]|salvar|guard[ae]|guardar|save|envia|envie|enviar|send|instal[ae]|instalar|install|'
@@ -628,6 +632,7 @@ def allows_actions(instruction: str) -> bool:
                    if not unicodedata.combining(c)).strip()
     if re.search(r'\b(?:somente leitura|leitura apenas|sem executar|nao executes?|nao execute|nao altere)\b', text):
         return False
+    text = re.sub(r'^(?:(?:beleza|blz|ok|okay|ta|certo|bom|entao|agora|e|ai)[,;: ]+)+', '', text)
     text = re.sub(r'^(?:por favor[, ]+|please[, ]+)', '', text)
     text = re.sub(r'^me\s+', '', text)
     text = re.sub(r'^(?:(?:eu )?(?:quero|queria|gostaria de)|(?:podes|pode|consegues|voce pode|can you|could you))\s+', '', text)

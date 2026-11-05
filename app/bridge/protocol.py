@@ -95,6 +95,7 @@ VOICE_INPUT_COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.input.finish",
     "voice.input.cancel",
     "voice.input.result",
+    "voice.input.engine",
 })
 
 # Introdução: instalar o Kiro CLI e entrar na conta sem terminal. `status` consulta o CLI
@@ -177,6 +178,7 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.input.finish",
     "voice.input.cancel",
     "voice.input.result",
+    "voice.input.engine",
     "app.shutdown",
 }) | SPOTIFY_COMMAND_TYPES | VOICE_INPUT_COMMAND_TYPES | WEB_COMMAND_TYPES | HISTORY_COMMAND_TYPES | KIRO_COMMAND_TYPES
 

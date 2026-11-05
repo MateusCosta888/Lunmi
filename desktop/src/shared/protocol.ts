@@ -108,6 +108,7 @@ export const COMMAND_TYPES = [
   "voice.input.finish",
   "voice.input.cancel",
   "voice.input.result",
+  "voice.input.engine",
   /** WEB-SEARCH-V1 (aditivo): estado/definições; ver `.agents/WEB-SEARCH-V1-CONTRACT.md`. */
   "web.get",
   "web.set",

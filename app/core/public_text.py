@@ -25,6 +25,9 @@ def unverified_action_claim(text: str) -> bool:
 _WEB_SOURCE_TOKEN = re.compile(r'\[[ \t]*src-[^\[\]\n]{1,80}?[ \t]*\]', re.IGNORECASE)
 _WEB_SOURCE_START = re.compile(r'\[[ \t]*src-', re.IGNORECASE)
 _WEB_SOURCE_ANY = re.compile(r'[ \t]*\[[ \t]*src-[^\]\n]{0,80}\]?', re.IGNORECASE)
+# O modelo também escreve "(Fonte: src‑d1c4…)", muitas vezes com hífen não separável.
+_WEB_SOURCE_BARE = re.compile(r'[ \t]*\(?(?:fontes?:[ \t]*)?\bsrc[-\u2010\u2011\u2012\u2013][0-9a-f]{6,}\b\)?',
+                              re.IGNORECASE)
 
 
 def web_public_text(text: str) -> str:
@@ -34,7 +37,7 @@ def web_public_text(text: str) -> str:
     antes desta projeção). Texto normal, código não-web e URLs não são alterados; um
     token incompleto no fim do texto também é removido para não expor metadados.
     """
-    return _WEB_SOURCE_ANY.sub('', str(text or ''))
+    return _WEB_SOURCE_BARE.sub('', _WEB_SOURCE_ANY.sub('', str(text or ''))).rstrip()
 
 
 class WebCitationStream:

@@ -33,6 +33,7 @@ REASON_MODELS_MISSING = "models_missing"
 REASON_VAD_MISSING = "vad_missing"
 REASON_WORKER_MISSING = "worker_missing"
 REASON_OUTSIDE_HOME = "runtime_outside_home"
+REASON_GROQ_KEY = "groq_key_missing"
 
 MESSAGES = {
     REASON_RUNTIME_MISSING: "Entrada de voz indisponível: runtime de ditado não instalado.",
@@ -40,6 +41,7 @@ MESSAGES = {
     REASON_VAD_MISSING: "Entrada de voz indisponível: modelo de voz (VAD) ausente.",
     REASON_WORKER_MISSING: "Entrada de voz indisponível: worker de ditado ausente.",
     REASON_OUTSIDE_HOME: "Entrada de voz indisponível: runtime fora da pasta de voz.",
+    REASON_GROQ_KEY: "Ditado pelo Groq indisponível: guarda primeiro a chave do Groq em Cérebro.",
 }
 
 
@@ -77,6 +79,8 @@ def resolve_input_environment(
     runtime_python: str | Path | None = None,
     models_dir: str | Path | None = None,
     silero_path: str | Path | None = None,
+    cloud: bool = False,
+    cloud_key: bool = False,
 ) -> VoiceInputEnvironment:
     """Resolve os caminhos e diz honestamente se os artefactos estão presentes.
 
@@ -105,6 +109,10 @@ def resolve_input_environment(
         elif downloaded is not None:
             model = downloaded.joinpath(*WHISPER_MODEL_RELATIVE)
             silero = downloaded.joinpath(*SILERO_MODEL_RELATIVE)
+        if cloud and not silero.is_file():
+            vad = verified_models(state_root, home, "dictation_vad")
+            if vad is not None:
+                silero = vad.joinpath(*SILERO_MODEL_RELATIVE)
     worker = Path(worker_path).expanduser().resolve() if worker_path is not None else (
         Path(__file__).resolve().with_name(WORKER_FILENAME))
 
@@ -113,8 +121,10 @@ def resolve_input_environment(
         reason = REASON_OUTSIDE_HOME
     elif not python.is_file():
         reason = REASON_RUNTIME_MISSING
-    elif not model.is_dir() or any(
-            not (model / name).is_file() for name in REQUIRED_MODEL_FILES):
+    elif cloud and not cloud_key:
+        reason = REASON_GROQ_KEY
+    elif not cloud and (not model.is_dir() or any(
+            not (model / name).is_file() for name in REQUIRED_MODEL_FILES)):
         reason = REASON_MODELS_MISSING
     elif not silero.is_file():
         reason = REASON_VAD_MISSING

@@ -55,7 +55,12 @@ _WORKER_ERROR_MESSAGES = {
     "audio_failed": "Microfone indisponível.",
     "stt_failed": "Não foi possível transcrever o áudio.",
     "stt_timeout": MESSAGE_STT_TIMEOUT,
+    "cloud_key": "O Groq recusou a chave. Confirma-a em Cérebro.",
+    "cloud_limit": "Atingiste o limite de ditado do Groq. Tenta de novo daqui a um minuto.",
+    "cloud_network": "Sem ligação ao Groq; o ditado não foi transcrito.",
 }
+ENGINE_FILENAME = "dictation-engine.txt"
+DICTATION_ENGINES = ("local", "groq")
 
 # Ambiente mínimo do worker: nada de `LLM_*`, chaves, `.env` ou PATH de credenciais.
 _WORKER_ENV_ALLOWLIST = (
@@ -97,6 +102,7 @@ class VoiceInputManager:
         start_timeout_s: float = START_TIMEOUT_SECONDS,
         stt_timeout_s: float | None = None,
         cancel_timeout_s: float = CANCEL_TIMEOUT_SECONDS,
+        groq_key: Callable[[], str] = lambda: "",
     ) -> None:
         self._emit = emit
         self.session_id = session_id
@@ -110,6 +116,7 @@ class VoiceInputManager:
         self._on_speech_interrupt = on_speech_interrupt
         self._on_active_changed = on_active_changed
         self._emit_level = emit_level
+        self._groq_key = groq_key
         self.start_timeout_s = float(start_timeout_s)
         # The measured CPU path can take longer than the audio; max capture is 30 seconds.
         self.stt_timeout_s = float(stt_timeout_s if stt_timeout_s is not None else (
@@ -150,13 +157,34 @@ class VoiceInputManager:
     def environment(self) -> VoiceInputEnvironment:
         if self._fixed_environment is not None:
             return self._fixed_environment
+        cloud = self.engine() == "groq"
         return resolve_input_environment(
             self.state_root,
             worker_path=self._worker_path,
             runtime_python=self._runtime_python,
             models_dir=self._models_dir,
             silero_path=self._silero_path,
+            cloud=cloud,
+            cloud_key=cloud and bool(self._groq_key()),
         )
+
+    def engine(self) -> str:
+        """`groq` só depois de o utilizador o escolher; qualquer outro conteúdo é local."""
+        try:
+            saved = (self.state_root / ".local" / ENGINE_FILENAME).read_text(encoding="utf-8").strip()
+        except OSError:
+            return "local"
+        return "groq" if saved == "groq" else "local"
+
+    def set_engine(self, engine: str) -> None:
+        """O worker atual carregou o motor antigo: fecha-o e o próximo ditado arranca com este."""
+        if engine not in DICTATION_ENGINES:
+            raise ValueError("unknown dictation engine")
+        self.release_worker()
+        path = self.state_root / ".local" / ENGINE_FILENAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(engine, encoding="utf-8")
+        self._publish()
 
     def _state_locked(self, env: VoiceInputEnvironment) -> tuple[str, str]:
         if not env.available and self._state not in ACTIVE_STATES:
@@ -486,6 +514,8 @@ class VoiceInputManager:
         # garantimos que nenhuma credencial/HF token do produto entra no processo externo.
         env["HF_HUB_OFFLINE"] = "1"
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        if self.engine() == "groq":
+            env["LUNMI_GROQ_KEY"] = self._groq_key()  # só este worker, e nunca na linha de comando
         return env
 
     def _worker_argv(self, env: VoiceInputEnvironment) -> list[str]:
@@ -494,6 +524,7 @@ class VoiceInputManager:
             "--model-dir", str(env.model),
             "--vad", str(env.silero),
             "--device", env.device,
+            "--engine", self.engine(),
         ]
 
     def _ensure_worker_locked(self, env: VoiceInputEnvironment) -> bool:
