@@ -6,9 +6,9 @@
 
 **Uma assistente de IA para Windows que conversa contigo e executa tarefas no computador.**
 
-[**Descarregar Beta 4 · Windows x64 · ~360 MB**](https://github.com/MateusCosta888/Lunmi/releases/download/v1.0.0-beta.4/Lunmi-1.0.0-beta.4-Setup.exe)
+[**Descarregar Beta 5 · Windows x64 · ~360 MB**](https://github.com/MateusCosta888/Lunmi/releases/download/v1.0.0-beta.5/Lunmi-1.0.0-beta.5-Setup.exe)
 
-[Notas da versão](https://github.com/MateusCosta888/Lunmi/releases/tag/v1.0.0-beta.4) · [Instalar](#instalar) · [Documentação](docs/README.md) · [Contribuir](CONTRIBUTING.md)
+[Notas da versão](https://github.com/MateusCosta888/Lunmi/releases/tag/v1.0.0-beta.5) · [Instalar](#instalar) · [Documentação](docs/README.md) · [Contribuir](CONTRIBUTING.md)
 
 [![Checks](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml/badge.svg)](https://github.com/MateusCosta888/Lunmi/actions/workflows/checks.yml)
 
@@ -20,7 +20,7 @@ A Lunmi junta um chat de IA com ferramentas para agir no Windows. Podes pedir-lh
   <img src="docs/assets/lunmi-dark.png" width="1000" alt="Conversa da Lunmi, com histórico na lateral, seletor de modelo e controlo de Autoaprovação" />
 </p>
 
-> **Em fase beta.** A versão publicada é a 1.0.0-beta.4. Começa com tarefas pequenas e ficheiros de teste. O instalador ainda não tem certificado de editor do Windows.
+> **Em fase beta.** A versão publicada é a 1.0.0-beta.5. Começa com tarefas pequenas e ficheiros de teste. O instalador ainda não tem certificado de editor do Windows.
 
 ## Tarefas no Windows
 
@@ -42,7 +42,7 @@ O cartão com os detalhes do resultado está oculto por defeito. Podes ativar **
 
 ## Instalar
 
-1. Descarrega o [setup da Beta 4](https://github.com/MateusCosta888/Lunmi/releases/download/v1.0.0-beta.4/Lunmi-1.0.0-beta.4-Setup.exe) para **Windows 10 ou 11, x64**. São cerca de **360 MB**: inclui Python e o runtime de áudio. A voz (~400 MB) e o ditado (~1,6 GB) transferem-se depois, só se aceitares.
+1. Descarrega o [setup da Beta 5](https://github.com/MateusCosta888/Lunmi/releases/download/v1.0.0-beta.5/Lunmi-1.0.0-beta.5-Setup.exe) para **Windows 10 ou 11, x64**. São cerca de **360 MB**: inclui Python e o runtime de áudio. A voz (~400 MB) e o ditado (~1,6 GB) transferem-se depois, só se aceitares.
 2. Executa o setup. O destino predefinido é `%LOCALAPPDATA%\Programs\Lunmi`. Não precisas de instalar Python, Node.js ou Git à parte.
 3. Abre a Lunmi e segue a introdução para ligar um Brain. Escolhe **Groq**, com a tua chave de API, ou **Kiro CLI**, com a tua conta. A introdução pode instalar o Kiro; este percurso exige **Windows 11**. Também podes configurar outro provedor mais tarde no painel Brain.
 
