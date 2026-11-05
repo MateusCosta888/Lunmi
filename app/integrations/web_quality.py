@@ -164,6 +164,7 @@ _DATE_HEADING = re.compile(
     r'wednesday|thursday|friday|saturday|sunday)?\W*' + _FULL_DATE + r'\W*')
 _PAST_PERIOD = re.compile(r'\b(?:em|in|no ano de)\s+((?:19|20)\d{2})\b')
 _YEAR = re.compile(r'(?<!\d)((?:19|20)\d{2})(?!\d)')
+_COPYRIGHT = re.compile(r'\b(?:copyright|todos os direitos|all rights)\b[^.\n]*')
 _VARIANTS = ('pro max', 'pro', 'max', 'plus', 'ultra', 'air', 'mini', 'lite', 'se', 'fe')
 _REGION_CURRENCY = (
     (re.compile(r'\b(?:portugal|portugues[ae]?|lisboa|pt-pt)\b'), 'EUR'),
@@ -400,7 +401,8 @@ def _event_dates(text: str) -> list[date]:
         for sentence in _sentences(line):
             if _FIXTURE_MATCH.search(sentence):
                 found.extend(_fixture_dates(_UPDATE_DATE.sub(' ', sentence)) or heading)
-        heading = _fixture_dates(line) if _DATE_HEADING.fullmatch(line.strip()) else []
+        if line.strip():  # um título de data costuma ter uma linha em branco antes do jogo
+            heading = _fixture_dates(line) if _DATE_HEADING.fullmatch(line.strip()) else []
     return found
 
 
@@ -415,11 +417,11 @@ def _supports_fixture(query: str, text: str, *, today: date | None = None) -> bo
 
 def _supports_release(query: str, text: str, *, today: date | None = None) -> bool:
     """Uma data ainda por vir: "26 de maio de 2026" já passada é um adiamento por notar."""
-    text = normalized(text)
+    text = _COPYRIGHT.sub(' ', normalized(text))
     if not _subject_matches(query, text):
         return False
     current = today or datetime.now().date()
-    if any(event >= current for event in _event_dates(text)):
+    if any(event >= current for event in _fixture_dates(_UPDATE_DATE.sub(' ', text))):
         return True
     if any(int(year) > current.year for year in _YEAR.findall(text)):
         return True
@@ -1026,6 +1028,12 @@ _WEATHER_TIME = re.compile(r'\b(?:hoje|amanha|agora|depois|esta semana|today|tom
 _CITY_ENGLISH = {'lisboa': 'Lisbon', 'londres': 'London', 'nova iorque': 'New York',
                  'nova york': 'New York', 'roma': 'Rome'}
 _HOLIDAY = re.compile(r'\bferiados?\b')
+_HOLIDAY_PLACE = re.compile(r'\bferiados?\b.*?\b(?:em|no|na|nos|nas|de|do|da|in)\s+([a-z]{3,})')
+_HOLIDAY_NOT_PLACE = frozenset({'hoje', 'amanha', 'ontem', 'proximo', 'proxima', 'este', 'esta', 'ano', 'mes',
+                                'semana', 'natal', 'pascoa', 'carnaval', 'pais', 'meu', 'minha', 'nacional'})
+_NOT_WEATHER = re.compile(r'\b(?:corpo|humano|agua|graus|celsius|fahrenheit|kelvin|forno|processador|'
+                          r'ebulicao|fusao)\b')
+_PAST_VALUE = re.compile(r'\b(?:valia|valeu|custava|custou|historic\w*)\b')
 _CRYPTO = re.compile(r'\b(bitcoin|btc|ethereum|eth|solana|dogecoin)\b')
 _CRYPTO_ASK = re.compile(r'\b(?:quanto|preco|valor|vale|cotacao|price)\b')
 _FX_CODES = {'dolar': 'USD', 'dolares': 'USD', 'usd': 'USD', 'euro': 'EUR', 'euros': 'EUR',
@@ -1042,16 +1050,24 @@ def structured_lookup(query: str, country: str, *, today: date | None = None) ->
     text = normalized(query).strip(' ?!.')
     current = today or datetime.now().date()
     home = normalized(country)
-    if _WEATHER.search(text):
+    # Estas fontes só sabem o valor de hoje: uma pergunta sobre o passado segue a pesquisa normal.
+    past = bool(_PAST_VALUE.search(text)) or any(int(year) < current.year for year in _YEAR.findall(text))
+    if _WEATHER.search(text) and not past and not _NOT_WEATHER.search(text):
         place = _WEATHER_PLACE.search(text)
         name = _WEATHER_TIME.sub('', place[1]).strip() if place else ''
         return ('openmeteo', f'weather {_CITY_ENGLISH.get(name, name)}') if name else None
     if _HOLIDAY.search(text):
+        asked = _HOLIDAY_PLACE.search(text)
+        known = {*_MONTHS, *_HOLIDAY_NOT_PLACE, 'portugal', *(name.split()[0] for name in _ENGLISH_COUNTRY)}
+        if asked and asked[1] not in known:
+            return None  # só conheço estes países: Itália ou Lisboa vão à pesquisa normal
         named = next((name for name in (*_ENGLISH_COUNTRY, 'portugal') if name in text), home)
         years = _YEAR.findall(text)
         return (('holidays', f'public holidays {_ENGLISH_COUNTRY.get(named, named)} '
                              f'{years[0] if years else current.year}') if named else None)
     crypto = _CRYPTO.search(text)
+    if past:
+        return None
     if crypto and _CRYPTO_ASK.search(text):
         return 'coingecko', f'{crypto[1]} price'
     if currency_quote_question(text):

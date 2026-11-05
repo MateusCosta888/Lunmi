@@ -249,6 +249,11 @@ _LOCAL_TARGET = re.compile(
     r'email|e-mail|gmail|spotify)\b|'
     r'\b(?:no windows\s+(?:o\s+)?(?:programa|app|aplicativo)|'
     r'(?:programa|app|aplicativo)\s+instalado)\b')
+_LINK_ACTION = re.compile(
+    r'\b(?:atalho|favorito\w*|marcador\w*|escrev\w*|digit\w*|envi\w*|mand\w*|partilh\w*|compartilh\w*|'
+    r'copi\w*|cola|cole|guard\w*|salv\w*|baix\w*|transfer\w*|descarreg\w*|instal\w*|'
+    r'n[oa] (?:chrome|edge|firefox|opera|brave|navegador|browser|bloco de notas|notepad|word)|'
+    r'phishing|burla|golpe|fraude|seguro|virus|malware)\b')
 # Fatos de calendário estáveis não justificam pesquisa pública. O atributo finito
 # (`requested_attribute`) continua a ser a fonte partilhada; este filtro só evita
 # transformar "quantos dias tem uma semana?" numa consulta web.
@@ -301,12 +306,21 @@ def _web_explanation(instruction: str) -> bool:
 
 # Cotação cambial explícita: só roteia, nunca acrescenta par/moeda. A decisão de
 # qualidade/verificação continua no manager e no controller.
+def _asks_for_work(text: str) -> bool:
+    """"escreve um poema sobre a chuva" pede um texto ou uma ação, não a previsão."""
+    text = re.sub(r'^(?:me\s+|por favor[, ]+)+', '', text)
+    if re.match(r'(?:faz(?:er)? (?:sol|frio|calor)|calcul)', text):
+        return False
+    return bool(re.match(r'(?:' + _ACTION_VERBS + r'|traduz\w*|redig\w*|compoe|lembr\w*|'
+                         r'marc[ae]\w*|agend\w*|adicion\w*|resum\w*)\b', text))
+
+
 def _fresh_web_question(instruction: str) -> bool:
     text = _normalized(_repair_mutable_terms(instruction))
     if _LOCAL_TARGET.search(text):
         return False
-    if structured_lookup(text, 'portugal') is not None:  # o país real só decide no manager
-        return True
+    if not _asks_for_work(text) and structured_lookup(text, 'portugal') is not None:
+        return True  # o país real só decide no manager
     # Atributo finito pedido (contagem, cargo, fixture, preço, valuation): um facto
     # mutável chega ao manager antes de uma resposta livre. Definições, matemática,
     # Saitama e calendário estável ficam de fora pela própria classificação/guarda.
@@ -383,8 +397,9 @@ def _direct_web_query(instruction: str, command: re.Match[str]) -> str | None:
     query = re.sub(r'^(?:aí\b[\s,]*|ai[\s,]+(?=(?:pra|para|qual|quais|quem|quando|onde|como|'
                    r'quanto|quantos|quantas|o|a|os|as|se|sobre)\b))', '', query, flags=re.IGNORECASE)
     query = re.sub(r'^(?:pra|para)\s+mim\b[\s,]*', '', query, flags=re.IGNORECASE)
-    query = re.sub(r'\s+e\s+(?:me\s+)?(?:faz|faça|faca|fazer|dá|da|diz|diga|explica|explique|'
-                   r'resume|resuma|analisa|analise)\b.*$', '', query, flags=re.IGNORECASE)
+    # "e da Argentina" é o segundo assunto; só "e da um resumo" é o pedido sem acento.
+    query = re.sub(r'\s+e\s+(?:me\s+da\b|da\s+(?:um|uma|me)\b|(?:me\s+)?(?:faz|faça|faca|fazer|dá|diz|diga|'
+                   r'explica|explique|resume|resuma|analisa|analise)\b).*$', '', query, flags=re.IGNORECASE)
     query = re.sub(r'^(?:(?:na|no|en|on|pela|the)\s+)?(?:internet|web|net|online|google)\b\s*',
                    '', query, flags=re.IGNORECASE)
     query = re.sub(r'^(?:sobre|about|for|por|de|do|da)\b\s*', '', query, flags=re.IGNORECASE)
@@ -417,6 +432,9 @@ def direct_web_operation(instruction: str, *, context: str = '') -> dict[str, An
             return None
         before = text[:address.start()].strip(' \t,.;:!?')
         if _LOCAL_TARGET.search(_normalized(before)):
+            return None
+        # Partilhar um link pede para o ler; fazer outra coisa com ele é com o Brain.
+        if _LINK_ACTION.search(_normalized(before + ' ' + text[address.end():])):
             return None
         # Dois links pedem uma comparação: quem decide é o Brain.
         if len(_URL_IN_TEXT.findall(text)) > 1:

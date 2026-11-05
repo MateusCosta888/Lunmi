@@ -55,6 +55,15 @@ KILO_WEB_AGENT = (
     '    "http://192.168.*": deny\n'
     '    "https://192.168.*": deny\n'
     '    "http://169.254.*": deny\n'
+    '    "https://169.254.*": deny\n'
+    '    "http://172.*": deny\n'
+    '    "https://172.*": deny\n'
+    '    "http://0.*": deny\n'
+    '    "https://0.*": deny\n'
+    '    "http://*.nip.io*": deny\n'
+    '    "https://*.nip.io*": deny\n'
+    '    "http://*.sslip.io*": deny\n'
+    '    "https://*.sslip.io*": deny\n'
     '    "http://[*": deny\n'
     '    "https://[*": deny\n'
     "---\n"
@@ -91,6 +100,7 @@ def parse_codex(events: list[dict[str, Any]]) -> WebTurn:
         if kind in {'turn.failed', 'error'}:
             turn.failed = True
         if kind == 'turn.completed':
+            turn.failed = False  # um `error` de nova tentativa não decide o turno que acabou
             usage = _dict(event.get('usage'))
             turn.input_tokens = usage.get('input_tokens')
             turn.output_tokens = usage.get('output_tokens')

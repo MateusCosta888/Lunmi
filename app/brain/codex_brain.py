@@ -164,4 +164,6 @@ class CodexBrain:
         return BrainHealth(HealthStatus.READY, f"Conta {account.get('planType') or 'ChatGPT'} pronta.")
 
     async def close(self) -> None:
+        if self._web is not None:
+            await self._web.close()
         await self._client.close()

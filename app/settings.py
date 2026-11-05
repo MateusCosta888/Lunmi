@@ -375,7 +375,10 @@ def save_provider(provider: str, model: str, api_key: str, base_url: str, *, pat
     else:
         settings = Settings(provider=provider, model=model.strip(), api_key=api_key.strip(), base_url=base_url.strip())
     settings.validate()
-    values = _read_provider_file(path)
+    try:
+        values = _read_provider_file(path)
+    except ConfigurationError:
+        values = {}  # um ficheiro ilegível não pode impedir quem está a reconfigurar
     credentials: dict[str, dict[str, str]] = {}
     for name in SUPPORTED_PROVIDERS:
         entry = _stored_credentials(values, name)

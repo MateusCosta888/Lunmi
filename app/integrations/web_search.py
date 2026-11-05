@@ -963,8 +963,9 @@ class WebSearchManager:
                 await self._close_client()
             if (not client_failed and requested_attribute(query)
                     and attribute_evidence_problem(query, documents)):
-                await self._second_look(client, query, policy, mode, sources, documents,
-                                        warnings, budget, started, env)
+                # A leitura pode ter trocado de sessão; a variável `client` ficaria com a morta.
+                await self._second_look(await self._ensure_client(env), query, policy, mode, sources,
+                                        documents, warnings, budget, started, env)
         evidence = 'suff' if documents or snippets_only else 'insufficient'
         if policy.freshness:
             dated = [source for source in sources if policy.dated(source)]
@@ -1021,7 +1022,9 @@ class WebSearchManager:
                 "query": query, "engines": [engine], "format": "json", "max_results": 3,
                 "use_cache": False,
             }, timeout=min(SEARCH_TIMEOUT, _remaining(budget, started)))
-        except WebSearchError:
+        except WebSearchError as exc:
+            if exc.code == 'timeout':
+                await self._close_client()  # um timeout mata a sessão: a pesquisa normal abre outra
             return None
         found, _ = _search_sources(payload, limit=3)
         sources = [source for source in found if engine in source.get('engines', ())]
@@ -1075,7 +1078,8 @@ class WebSearchManager:
 
     async def _read_pages(self, client: MCPWebClient, sources: list[dict[str, Any]],
                           policy: WebConstraints, query: str, count: int, multiple: bool,
-                          timeout: float, started: float, *, env: WebEnvironment
+                          timeout: float, started: float, *, env: WebEnvironment,
+                          patience: float | None = None
                           ) -> tuple[list[dict[str, Any]], list[str], bool]:
         """Lê até `count` candidatos e preserva o que já foi lido se algo falhar.
 
@@ -1095,7 +1099,7 @@ class WebSearchManager:
         # Failed candidates are not useful evidence; scan the finite pool under the same operation deadline.
         candidates = (sources if count > QUICK_READS and (policy.read_required or multiple)
                       else sources[:count])
-        patience = AUTO_BATCH_HTTP if timeout == AUTO_TIMEOUT else PER_ATTEMPT_HTTP
+        patience = patience or (AUTO_BATCH_HTTP if timeout == AUTO_TIMEOUT else PER_ATTEMPT_HTTP)
         step = count if multiple else 1
         index = 0
         while index < len(candidates):
@@ -1218,7 +1222,8 @@ class WebSearchManager:
             self._emit_state("reading", MESSAGES["reading"])
             # `research` lê sempre até 3 páginas; só o orçamento muda com a profundidade.
             documents, read_warnings, client_failed = await self._read_pages(
-                client, sources, policy, query, DEEP_READS, True, budget, started, env=env)
+                client, sources, policy, query, DEEP_READS, True, budget, started, env=env,
+                patience=PER_ATTEMPT_HTTP)
             warnings.extend(read_warnings)
             if client_failed:
                 await self._close_client()

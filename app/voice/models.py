@@ -360,17 +360,21 @@ class VoiceModels:
                 event.set()
         return self.snapshot()
 
+    def _running(self, group: str) -> bool:
+        thread = self._threads.get(group)
+        return thread is not None and thread.is_alive()
+
     def remove(self, group: str) -> dict[str, Any]:
         """Frees a group's disk space. Files another installed group still uses stay in place."""
         with self._lock:
-            thread = self._threads.get(group)
-            if thread is not None and thread.is_alive():
+            if self._running(group):
                 raise ModelsError(MESSAGE_REMOVE_BUSY)
             groups = self._groups()
             if group not in groups:
                 raise ModelsError("Grupo de modelos desconhecido.")
             kept = {item.path for name, files in groups.items()
-                    if name != group and self._quick_ok(files, self._marker(name)) for item in files}
+                    if name != group and (self._quick_ok(files, self._marker(name)) or self._running(name))
+                    for item in files}
             files = [item for item in groups[group] if item.path not in kept]
             # Marker first: a removal that stops half-way never looks installed.
             self._marker(group).unlink(missing_ok=True)

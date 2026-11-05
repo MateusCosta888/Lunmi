@@ -506,8 +506,11 @@ def _mkdir_shape(tokens: list[Token], instruction: str,
         words = phrase.split()
         if [token.folded for token in tokens[-len(words):]] != words:
             continue
-        # Sem nome, o mesmo que o Windows faria; quem pediu a pasta não deve ter de voltar a pedir.
-        name = _name(tokens, index, len(tokens) - len(words)) or "Nova pasta"
+        end = len(tokens) - len(words)
+        # Sem nome, o mesmo que o Windows faria; um nome que não sei ler fica com o Brain.
+        name = _name(tokens, index, end) or ("" if index < end else "Nova pasta")
+        if not name:
+            return None
         return FastPlan("filesystem", f"pasta {name}", operation="mkdir",
                         paths=(f"{alias}/{name}",))
     return None

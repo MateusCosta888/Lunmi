@@ -47,6 +47,7 @@ MESSAGE_WORKER_LOST = "Motor de ditado encerrou inesperadamente."
 MESSAGE_START_TIMEOUT = "O ditado não arrancou a tempo."
 MESSAGE_STT_TIMEOUT = "A transcrição demorou demasiado."
 MESSAGE_NO_SPEECH = "Não foi detetada fala."
+MESSAGE_NOT_READY = "O ditado ainda estava a preparar. Volta a tentar daqui a uns segundos."
 MESSAGE_WARMUP_TIMEOUT = "A preparação do ditado demorou demasiado."
 
 _WORKER_ERROR_MESSAGES = {
@@ -368,7 +369,7 @@ class VoiceInputManager:
                 self._cancel_timers_locked()
                 self._clear_result_locked()
                 self._state = "idle"
-                self._message = MESSAGE_NO_SPEECH
+                self._message = MESSAGE_NOT_READY
                 finalized = True
                 result = self._ack_locked(True, "", env=env)
             elif not self._send_locked({"type": "finish", "generation": generation}):
