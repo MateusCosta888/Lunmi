@@ -97,6 +97,7 @@ class BridgeServer:
                 session_id=self.session_id,
             )
             self._service.update_host_pids(sorted(self.host_pids))
+            self._service.schedule_automation_prewarm()
         return self._service
 
     def _log(self, message: str) -> None:

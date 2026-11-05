@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import logging
 import os
 import threading
 import uuid
@@ -74,6 +75,7 @@ from app.voice.eligibility import SpeechStream
 from app.voice.input_manager import VoiceInputManager
 from app.voice.manager import VoiceManager
 
+AUTOMATION_PREWARM_DELAY_SECONDS = 20.0  # deixa a janela e os workers de voz abrir primeiro
 LOCATION_TIMEOUT_SECONDS = 45.0
 # Quanto a thread lenta do comando `brain.set` espera o commit na thread do loop antes de
 # devolver um erro de operação pendente. Fica abaixo do prazo do Electron (35 s) para que o
@@ -552,6 +554,21 @@ class BridgeService(VoiceBridge):
             logs_path=logs_dir,
             output_path=out_dir,
         )
+
+    def schedule_automation_prewarm(self, delay_s: float = AUTOMATION_PREWARM_DELAY_SECONDS) -> None:
+        """Num i3 a primeira ação esperava 92 s pelo worker (05/11): arranca-o depois da abertura."""
+        if self.sandbox_dir is None and self.settings.prewarm:
+            self._loop.call_soon_threadsafe(self._loop.call_later, delay_s, self._start_automation_prewarm)
+
+    def _start_automation_prewarm(self) -> None:
+        if not self._closed and not self._is_task_running():
+            self._automation_prewarm = self._loop.create_task(self._prewarm_automation())
+
+    async def _prewarm_automation(self) -> None:
+        try:
+            await self.controller.engine.start()
+        except Exception as exc:  # noqa: BLE001 - a primeira ação volta a tentar e mostra o erro
+            logging.info("Pré-arranque do worker falhou: %s", type(exc).__name__)
 
     def _sync_engine_host_pids(self) -> None:
         engine = getattr(self.controller, "engine", None)
