@@ -56,13 +56,16 @@ import {
   type NodeDoneExpiry,
   effectiveNodeStatus,
   isCompanionPresenceAction,
-  isNodeAttentionStatus,
   isPresenceAction,
   NODE_ACTIONS,
   NODE_PASSIVE_REASON,
   NODE_SUCCESS_VISIBLE_MS,
+  nodeActivityFor,
+  nodeLabelFor,
   nodePassiveBlocksAction,
   nodePassiveFromTaskPhase,
+  nodePillWidth,
+  nodeSurfaceAfterChat,
   nodeStatusInputFromProjection,
   nodeSurfaceForStatus,
   nodeToneFor,
@@ -198,6 +201,8 @@ let nodeGestureSeq = 0;
 let nodeExpiredDone: NodeDoneExpiry | null = null;
 let lastSession: SessionReadyPayload | null = null;
 let lastVoiceState: VoiceStateEventDto | null = null;
+let lastWebState: string | null = null;
+let nodeClickWatch = false;
 /** Atalho próprio do ditado; prefs e registo separados do Node. */
 let voiceShortcutStore: VoiceInputShortcutStore | null = null;
 /** Supervisor do helper WH_KEYBOARD_LL; prefs e registo separados do Node. */
@@ -439,12 +444,30 @@ function nodeStateDto(): NodeStateDto {
     status,
     tone: voicePhase === "error" ? "error" : voicePhase ? "working" : nodeToneFor(status),
     session_id: lastSession?.session_id ?? null,
+    activity: nodeActivityFor(chatProjection?.taskProgress, lastWebState),
     voice_phase: voicePhase,
   };
 }
 
 function publishNode(): void {
-  broadcastPresence({ type: "node", state: nodeStateDto() });
+  const state = nodeStateDto();
+  syncNodePillWidth(state);
+  broadcastPresence({ type: "node", state });
+}
+
+function syncNodePillWidth(state: NodeStateDto = nodeStateDto()): void {
+  companionManager?.setPillWidth(nodePillWidth(
+    nodeLabelFor(state.status, state.voice_phase, lastVoiceState?.state, state.activity)));
+}
+
+/** Só a automação bloqueia o Node: em conversa e pesquisa dá para ler, escrever e parar. */
+function nodeTaskBlocksInput(): boolean {
+  return nodePassiveFromTaskPhase(chatProjection?.taskPhase, chatProjection?.touchesDesktop);
+}
+
+/** Minimizada conta como escondida: o Windows diz que ela continua «visível». */
+function mainHidden(): boolean {
+  return !mainWindow?.isVisible() || mainWindow.isMinimized();
 }
 
 /**
@@ -632,7 +655,7 @@ function publishChatDelta(delta: ChatProjectionDeltaDto): void {
 
 /** Ligar/desligar o passivo no manager a partir da fase RAW; idempotente e sem foco. */
 function syncNodePassive(): void {
-  const running = nodePassiveFromTaskPhase(chatProjection?.taskPhase);
+  const running = nodeTaskBlocksInput();
   if (running === nodePassive) return;
   nodePassive = running;
   companionManager?.setPassive(running);
@@ -712,7 +735,7 @@ function restoreMainAfterCompanionFailure(reason: string): void {
   publishNode();
   // Enquanto a tarefa corre, uma falha do Node é fail-closed: não abrir a principal com foco.
   // A recuperação é manual (bandeja/gesto) depois do terminal, como no passivo normal.
-  if (nodePassiveFromTaskPhase(chatProjection?.taskPhase)) return;
+  if (nodeTaskBlocksInput()) return;
   showMainWindow();
 }
 
@@ -733,6 +756,7 @@ function ensureCompanion(surface: NodeVisibleSurface = "docked"): boolean {
       },
       onStateChange: (snapshot) => {
         companionSnapshot = snapshot;
+        syncNodeClickWatch();
         broadcastPresence({ type: "mode", mode: presenceMode() });
         publishNode();
       },
@@ -826,7 +850,7 @@ export function registerPowerVoiceGuards(
 // ---------------------------------------------------------------------------
 
 function publishVoiceHoldPhase(phase: VoiceInputHoldPhaseDto): void {
-  const background = !mainWindow?.isVisible() && presencePrefs.resident && presencePrefs.node.enabled;
+  const background = mainHidden() && presencePrefs.resident && presencePrefs.node.enabled;
   if (background && phase.phase === "pressed") nodeGestureSeq += 1;
   backgroundVoice.hold(phase, background);
   refreshBackgroundVoice();
@@ -869,13 +893,13 @@ function cancelVoiceInputForLifecycle(): void | Promise<void> {
 
 /** A completed, acknowledged voice task reveals only its already projected conversation. */
 function refreshBackgroundVoice(): void {
-  if (backgroundVoice.takeCompleted() && !quitting && !mainWindow?.isVisible() &&
+  if (backgroundVoice.takeCompleted() && !quitting && mainHidden() &&
       presencePrefs.resident && presencePrefs.node.enabled) {
     syncNodePassive();
     if (!nodePassive) companionManager?.setSurface("chat", { focus: false });
   }
-  if (backgroundVoice.phase && !mainWindow?.isVisible() && presencePrefs.resident &&
-      presencePrefs.node.enabled && !companionManager) ensureCompanion("pill");
+  if (backgroundVoice.phase && mainHidden() && presencePrefs.resident && presencePrefs.node.enabled &&
+      !companionManager?.window?.isVisible()) ensureCompanion("pill");
   applyNodeSurfacePolicy();
   publishNode();
 }
@@ -975,7 +999,7 @@ async function applyPresenceAction(
   // para recuperar: cancelar/abrir continuam a ser gestos humanos válidos.
   if (
     fromCompanion &&
-    nodePassiveFromTaskPhase(chatProjection?.taskPhase) &&
+    nodeTaskBlocksInput() &&
     nodePassiveBlocksAction(action)
   ) {
     return {
@@ -1039,10 +1063,7 @@ async function applyPresenceAction(
       nodeGestureSeq += 1;
       nodePillAutomatic = false;
       if (action === "node-close" && wasChat) {
-        // Fechar o chat com pendência volta a `attention`: o aviso não se perde.
-        companionManager.setSurface(
-          isNodeAttentionStatus(nodeStatus) && !terminalNodeNoticeExpired() ? "attention" : "revealed"
-        );
+        closeNodeChat();
       } else if (!companionManager.handleAction(action)) {
         error = "invalid_action";
       }
@@ -1078,16 +1099,37 @@ async function applyPresenceAction(
  * Atalho = um gesto humano: abre o chat com o compositor (o bloqueio durante `running` é N4).
  * Segundo toque recolhe o Node. Nunca abre só a cápsula nem rouba foco fora do chat.
  */
+function closeNodeChat(): void {
+  const target = nodeSurfaceAfterChat(nodeStatus, presencePrefs.node.show_activity, terminalNodeNoticeExpired());
+  nodePillAutomatic = target === "pill";
+  companionManager?.setSurface(target);
+}
+
+/** O chat aberto por voz não tem foco: só assim um clique fora consegue fechá-lo. */
+function syncNodeClickWatch(): void {
+  const active = companionSnapshot.surface === "chat" && companionSnapshot.phase === "settled";
+  if (active === nodeClickWatch || !backendSupervisor?.isRunning) return;
+  nodeClickWatch = active;
+  void backendSupervisor._sendInternalCommand("node.clicks.watch", { active }, 4000).catch(() => undefined);
+}
+
+function onNodeClick(): void {
+  // A automação também clica; durante o ditado o balão é o estado do microfone.
+  if (companionSnapshot.surface !== "chat" || nodeTaskBlocksInput() || backgroundVoice.phase) return;
+  if (companionManager?.containsScreenPoint(screen.getCursorScreenPoint())) return;
+  nodeGestureSeq += 1;
+  closeNodeChat();
+}
+
 function toggleNodeFromShortcut(): void {
   if (quitting || !presencePrefs.resident || !presencePrefs.node.enabled) return;
   // N4: o atalho também é recusado enquanto a tarefa corre — não abre, não recolhe, não foca.
   // Mesma fase RAW do passivo; um atalho não pode furar a guarda que o companheiro respeita.
-  if (nodePassiveFromTaskPhase(chatProjection?.taskPhase)) return;
+  if (nodeTaskBlocksInput()) return;
   nodeGestureSeq += 1;
   nodePillAutomatic = false;
   if (companionSnapshot.surface === "chat") {
-    companionManager?.setSurface("docked");
-    nodeSurfaceSuppressedFor = nodeStatus;
+    closeNodeChat();
     return;
   }
   ensureCompanion("chat");
@@ -1216,7 +1258,7 @@ function setupPresenceIpc(): void {
     trusted: isTrustedCompanion,
     active: () => presencePrefs.resident && presencePrefs.node.enabled &&
       Boolean(companionManager?.window?.isVisible()) && companionSnapshot.surface === "chat" && companionSnapshot.phase === "settled",
-    passive: () => nodePassiveFromTaskPhase(chatProjection?.taskPhase) ||
+    passive: () => nodeTaskBlocksInput() ||
       Boolean(chatProjection?.snapshot().confirm || chatProjection?.snapshot().input),
     media: currentNodeMedia,
   });
@@ -2069,8 +2111,15 @@ function bootstrap(): void {
         backgroundVoice.finished(finished.task_id, result?.status);
         refreshBackgroundVoice();
       }
+      if (envelope.type === "node.click") onNodeClick();
+      if (envelope.type === "web.changed") {
+        lastWebState = String((envelope.payload as Record<string, unknown>).state ?? "");
+        publishNode();
+      }
+      if (envelope.type === "task.progress") publishNode();
       if (envelope.type === "voice.state") {
         lastVoiceState = envelope.payload as unknown as VoiceStateEventDto;
+        syncNodePillWidth();
         sendPresenceTo(companionManager?.window ?? null, { type: "voice", state: lastVoiceState });
       }
       if (mainWindow && !mainWindow.isDestroyed()) {

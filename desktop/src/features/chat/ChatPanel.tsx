@@ -105,6 +105,7 @@ export function ChatPanel({
   const setText = setDraft ?? setLocalText;
   const [legacyMode, setMode] = useState<ChatMode>("execute");
   const [dismissedResultError, setDismissedResultError] = useState<string | null>(null);
+  const shownAnswer = useRef<string | null>(null);
   const result = chat.task?.result;
   const resultErrorKey = result ? `${session?.session_id}:${result.task_id}:${result.status}:${Boolean(result.false_success)}:${result.failure_kind ?? ""}` : null;
   const resultError = !showTaskResults && result && verdictOf(result) === "failure" && dismissedResultError !== resultErrorKey
@@ -154,9 +155,17 @@ export function ChatPanel({
     // `scrollIntoView` não existe em todo ambiente (jsdom, por exemplo): rolar é conveniência e
     // não pode derrubar a conversa.
     const node = listEndRef.current;
-    if (node && typeof node.scrollIntoView === "function") {
+    if (!node || typeof node.scrollIntoView !== "function") return;
+    const last = chat.messages.at(-1);
+    if (last?.role !== "assistant") {
       node.scrollIntoView({ block: "end" });
+      return;
     }
+    // Uma resposta abre no início, uma só vez: com fontes por baixo, o fundo escondia o texto dela.
+    if (shownAnswer.current === last.message_id) return;
+    shownAnswer.current = last.message_id ?? null;
+    const answers = node.parentElement?.querySelectorAll('[data-testid="chat-message-assistant"]');
+    answers?.[answers.length - 1]?.scrollIntoView?.({ block: "start" });
   }, [chat.messages]);
 
   const converseEnabled = session ? session.capabilities.converse !== false : false;

@@ -41,6 +41,7 @@ const INPUT_VOICE_TEXT: Record<string, string> = {
 
 /** Distância ao fundo (px) a partir da qual se considera que o leitor saiu do fundo. */
 const STICK_THRESHOLD_PX = 24;
+const ANSWER_TOP_GAP_PX = 12;
 
 export interface MiniChatProps {
   /**
@@ -64,6 +65,8 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useAutoResizeTextarea(draft, interactive);
   const stickToBottom = useRef(true);
+  const shownAnswer = useRef<string | null>(null);
+  const wasInteractive = useRef(false);
   const lastFocusKey = useRef<number | undefined>(undefined);
 
   /**
@@ -91,9 +94,23 @@ export function MiniChat({ onClose, focusKey, interactive = true }: MiniChatProp
   useEffect(() => {
     const node = listRef.current;
     if (!node) return;
-    if (!stickToBottom.current) return;
-    node.scrollTop = node.scrollHeight;
-  }, [chat.messages, chat.confirmRequest, chat.inputRequest, chat.task?.phase]);
+    const last = chat.messages.at(-1);
+    if (last?.role === "user") stickToBottom.current = true;
+    // Uma resposta abre no início: com fontes por baixo, seguir o fundo escondia o texto dela.
+    const reopened = interactive && !wasInteractive.current;
+    const newAnswer = last?.role === "assistant" && shownAnswer.current !== last.message_id;
+    // Quem subiu para reler fica onde está, exceto ao reabrir o chat.
+    if (last?.role === "assistant" && interactive && (reopened || (newAnswer && stickToBottom.current))) {
+      shownAnswer.current = last.message_id ?? null;
+      stickToBottom.current = false;
+      const bubbles = node.querySelectorAll('[data-testid^="mini-message-"]');
+      const start = bubbles[bubbles.length - 1]?.getBoundingClientRect().top;
+      if (start !== undefined) node.scrollTop += start - node.getBoundingClientRect().top - ANSWER_TOP_GAP_PX;
+    } else if (stickToBottom.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+    wasInteractive.current = interactive;
+  }, [chat.messages, chat.confirmRequest, chat.inputRequest, chat.task?.phase, interactive]);
 
   // Erro local: uma tentativa nova (ou uma sessão nova) limpa o erro anterior — a árvore do Node
   // fica sempre montada e um erro velho não pode continuar no ecrã.

@@ -102,6 +102,7 @@ export const COMMAND_TYPES = [
   "voice.models.download",
   "voice.models.cancel",
   "voice.models.remove",
+  "node.clicks.watch",
   /** VOICE INPUT V1 (aditivo): ditado revisto; ver `.agents/VOICE-INPUT-V1-CONTRACT.md`. */
   "voice.input.get",
   "voice.input.start",
@@ -165,6 +166,7 @@ export const EVENT_TYPES = [
   "spotify.changed",
   /** WEB-SEARCH-V1: payload `WebStateDto` exato, com `session_id` e `revision`. */
   "web.changed",
+  "node.click",
   "log.append",
 ] as const;
 

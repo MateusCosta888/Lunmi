@@ -1,114 +1,171 @@
-/* Pele do LUNMI NODE V1 (`desktop/src/features/companion/node.css`).
-   O corpo é preto uniforme sobre o envelope inteiro (420×520 DIP) e a silhueta é a shape nativa
-   do main (`setShape`): não há clip-path nem raio CSS a imitar o recorte, para nunca existir uma
-   região invisível que ainda recebe cliques. O conteúdo é posicionado pelo rect partilhado
-   (`nodeContentRect`), o mesmo que o main usa para a shape — sem rect nem IPC por frame.
-   Círculo/cápsula pretos; o chat segue o tema ou a preferência explícita por preto. */
+/* Pele do LUNMI NODE (`desktop/src/features/companion/node.css`).
+   A janela é transparente e o desenho é daqui, com bordas suaves. A região nativa (`setShape`) só
+   recebe cliques; os rects vêm de `nodeContentRect`, os mesmos do main. A orb fica sempre visível
+   e o resto sai dela como um balão de fala. */
 
 .lunmi-node {
   position: fixed;
   inset: 0;
-  color: #f2f2f2;
+  color: var(--node-text);
   font-family: "Segoe UI", system-ui, sans-serif;
   -webkit-app-region: no-drag;
+  --node-ease: cubic-bezier(.2, .8, .2, 1);
+  /* Enchimento, texto e traço do balão. O traço tem de se ler contra o próprio enchimento (3:1):
+     assim o balão separa-se de qualquer fundo sem sombra, porque o enchimento trata do outro lado. */
+  --node-fill: var(--lunmi-bg-card);
+  --node-text: var(--lunmi-text-primary);
+  --node-base-edge: color-mix(in srgb, var(--lunmi-text-primary) 46%, var(--lunmi-bg-card));
+  --node-edge: var(--node-base-edge);
+  --node-fill-now: var(--node-fill);
+  --node-ring: rgba(255, 255, 255, .34);
 }
-
-/* Corpo: preto fosco uniforme, sem gradiente, sem borda, sem raio. */
-.lunmi-node-body {
-  position: absolute;
-  inset: 0;
-  background: #090909;
+.lunmi-node[data-chat-appearance="black"] {
+  --node-fill: #090909;
+  --node-text: #f2f2f2;
+  --node-base-edge: #77777c;
 }
+/* Tom: o traço e um toque no enchimento; o sentido vai sempre no texto, nunca só na cor. */
+.lunmi-node[data-tone="working"] { --node-edge: var(--lunmi-accent); }
+.lunmi-node[data-tone="needs"] { --node-edge: var(--lunmi-warning); --node-fill-now: color-mix(in srgb, var(--lunmi-warning) 12%, var(--node-fill)); }
+.lunmi-node[data-tone="success"] { --node-edge: var(--lunmi-success); --node-fill-now: color-mix(in srgb, var(--lunmi-success) 12%, var(--node-fill)); }
+.lunmi-node[data-tone="error"] { --node-edge: var(--lunmi-error); --node-fill-now: color-mix(in srgb, var(--lunmi-error) 12%, var(--node-fill)); }
+.lunmi-node[data-tone="offline"] { --node-text: var(--lunmi-text-secondary); }
+.lunmi-node[data-chat-appearance="black"][data-tone="working"] { --node-edge: #f2f2f2; }
 
 .lunmi-node-content { position: absolute; inset: 0; }
-
-/* As três camadas ficam montadas: o objeto nunca é remontado. Só a camada da superfície
-   assente está visível; as outras ficam `hidden` (fora da árvore de acessibilidade). */
 .lunmi-node-layer { position: absolute; }
 .lunmi-node-layer[hidden] { display: none; }
 
-/* Durante o morph o interior fica discreto: o conteúdo entra quando a forma assenta.
-   `visibility: hidden` (atrasado para não cortar o fade) tira a camada da ordem de tabulação;
-   durante o morph nada recebe input, nem por Tab nem por clique. */
-.lunmi-node-layer {
-  opacity: 1;
-  transition: opacity 120ms ease;
-}
-.lunmi-node[data-visible="false"] .lunmi-node-layer {
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-  transition: opacity 120ms ease, visibility 0s linear 120ms;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .lunmi-node-layer { transition: none; }
-}
-
-/* --- círculo (botão acessível: Enter/Espaço nativos; 52×52 de alvo) --- */
+/* --- orb: botão acessível, 52×52; sobe e desce do topo do ecrã --- */
 .lunmi-node-circle {
   display: grid;
   place-items: center;
   border: 0;
+  border-radius: 50%;
   padding: 0;
-  background: transparent;
-  color: inherit;
+  overflow: hidden;
+  background: #090909;
+  box-shadow: inset 0 0 0 1px var(--node-ring);
+  color: #f2f2f2;
   font: inherit;
   cursor: pointer;
+  transition: top 180ms var(--node-ease);
 }
-.lunmi-node-circle img { filter: brightness(0) invert(1); pointer-events: none; }
-.lunmi-node-circle:focus-visible,
-.lunmi-node-pill:focus-visible { outline: 2px solid rgba(255, 255, 255, .65); outline-offset: 2px; }
+/* O anel da orb é uma camada própria por cima da galáxia: o outline ficava por baixo dela. */
+.lunmi-node-circle:focus-visible { outline: none; }
+.lunmi-node-circle:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.lunmi-node-pill:focus-visible { outline: 2px solid var(--lunmi-accent); outline-offset: -4px; }
+.lunmi-node[data-chat-appearance="black"] .lunmi-node-pill:focus-visible { outline-color: #f2f2f2; }
+.lunmi-node-circle .lunmi-galaxy-orb { width: 100%; height: 100%; pointer-events: none; }
 
-/* --- cápsula (etiqueta do estado finito publicado pelo main) --- */
+/* --- balões: saem da orb e voltam para ela ---
+   Animação (não transição): o balão passa de `hidden` a visível no mesmo commit em que abre, e uma
+   transição não arranca a partir de display:none. Sem sobrelevação: o que sai da região nativa
+   (3 px de folga) é cortado. O ponto de partida é o centro da orb: 38 px = 12 de folga + 26 de raio. */
+.lunmi-node-pill,
+.lunmi-node-chat { --bloom-from: .2; }
+.lunmi-node-pill[data-open="true"] { animation: lunmi-node-out 240ms var(--node-ease) both; }
+.lunmi-node-pill[data-open="false"] { animation: lunmi-node-in 150ms ease-in both; }
+.lunmi-node-chat[data-open="true"] { animation: lunmi-node-out 300ms var(--node-ease) both; }
+.lunmi-node-chat[data-open="false"] { animation: lunmi-node-in 160ms ease-in both; }
+.lunmi-node[data-side="right"] .lunmi-node-pill { transform-origin: calc(100% + 38px) 50%; }
+.lunmi-node[data-side="left"] .lunmi-node-pill { transform-origin: -38px 50%; }
+.lunmi-node[data-side="right"] .lunmi-node-chat { transform-origin: calc(100% - 26px) -38px; }
+.lunmi-node[data-side="left"] .lunmi-node-chat { transform-origin: 26px -38px; }
+@keyframes lunmi-node-out {
+  from { opacity: 0; transform: scale(var(--bloom-from)); }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+@keyframes lunmi-node-in {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: scale(var(--bloom-from)); }
+}
+
+/* Bico de balão de fala, desenhado em duas camadas: ::before é o traço, ::after é o enchimento,
+   1,2 px mais baixo e a cobrir o traço do corpo na base, para o bico sair do balão sem costura.
+   Caixa 22×12, vértice em cima; a base do traço (linha 9) assenta na borda do balão e o vértice
+   fica a 9 px dela, dentro dos 12 px entre balão e orb (a região nativa deixa 24×12 / 12×20). */
+.lunmi-node-pill::before,
+.lunmi-node-pill::after,
+.lunmi-node-chat::before,
+.lunmi-node-chat::after {
+  content: "";
+  position: absolute;
+  width: 22px;
+  height: 12px;
+  pointer-events: none;
+  transform-origin: 11px 9px;
+}
+.lunmi-node-pill::before,
+.lunmi-node-chat::before {
+  background: var(--node-edge);
+  clip-path: path("M0 9 C4 9 7 7.2 8.6 4 Q11 -4 13.4 4 C15 7.2 18 9 22 9 Z");
+}
+.lunmi-node-pill::after,
+.lunmi-node-chat::after {
+  background: var(--node-fill-now);
+  clip-path: path("M0 10.2 C4 10.2 7 8.4 8.6 5.2 Q11 -2.8 13.4 5.2 C15 8.4 18 10.2 22 10.2 L22 11.2 L0 11.2 Z");
+}
+/* Chat: o bico fica por baixo da orb (26 px da ponta do envelope, o centro dela). */
+.lunmi-node-chat::before,
+.lunmi-node-chat::after { top: -10px; }
+.lunmi-node[data-side="right"] .lunmi-node-chat::before,
+.lunmi-node[data-side="right"] .lunmi-node-chat::after { left: calc(100% - 36px); }
+.lunmi-node[data-side="left"] .lunmi-node-chat::before,
+.lunmi-node[data-side="left"] .lunmi-node-chat::after { left: 14px; }
+/* Cápsula: a orb está ao lado, à altura do meio; o bico roda 90° para a apontar. */
+.lunmi-node-pill::before,
+.lunmi-node-pill::after { top: calc(50% - 9px); }
+.lunmi-node[data-side="right"] .lunmi-node-pill::before,
+.lunmi-node[data-side="right"] .lunmi-node-pill::after { left: calc(100% - 10px); transform: rotate(90deg); }
+.lunmi-node[data-side="left"] .lunmi-node-pill::before,
+.lunmi-node[data-side="left"] .lunmi-node-pill::after { left: -12px; transform: rotate(-90deg); }
+
 .lunmi-node-pill {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 18px;
-  border: 0;
-  background: transparent;
-  color: inherit;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid var(--node-edge);
+  border-radius: 14px;
+  background: var(--node-fill-now);
+  color: var(--node-text);
   font: inherit;
-  text-align: left;
   cursor: pointer;
 }
 .lunmi-node-pill-text {
   margin: 0;
   font-size: 14px;
-  color: #f2f2f2;
+  font-weight: 500;
+  color: var(--node-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* --- indicador de estado: o tom vem do main, a UI não o inventa --- */
-.lunmi-node-dot {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #6b6b6b;
-  flex: 0 0 auto;
+.lunmi-node-chat {
+  --node-fill-now: var(--node-fill);
+  --node-edge: var(--node-base-edge);
+  border: 1px solid var(--node-edge);
+  border-radius: 18px;
+  background: var(--node-fill);
 }
-.lunmi-node-pill .lunmi-node-dot { position: static; }
-.lunmi-node[data-tone="working"] .lunmi-node-dot { background: #e7bb75; animation: lunmi-node-pulse 1.6s ease-in-out infinite; }
-.lunmi-node[data-tone="needs"] .lunmi-node-dot { background: #e7bb75; }
-.lunmi-node[data-tone="success"] .lunmi-node-dot { background: #8fbf9b; }
-.lunmi-node[data-tone="error"] .lunmi-node-dot { background: #e58d99; }
-.lunmi-node[data-tone="offline"] .lunmi-node-dot { background: #4a4a4a; }
 
-@keyframes lunmi-node-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .35; }
-}
 @media (prefers-reduced-motion: reduce) {
-  .lunmi-node[data-tone="working"] .lunmi-node-dot { animation: none; }
+  .lunmi-node-circle { transition: none; }
+  .lunmi-node-pill[data-open], .lunmi-node-chat[data-open] { animation: none; }
+  .lunmi-node-pill[data-open="false"], .lunmi-node-chat[data-open="false"] { opacity: 0; }
 }
 
-/* --- chat: o MiniChat real dentro do rect partilhado, sobre o corpo preto --- */
+/* --- chat: o MiniChat real dentro do balão --- */
 .lunmi-node-chat .lunmi-mini {
   position: absolute;
   inset: 0;
@@ -116,12 +173,11 @@
   height: 100%;
   margin: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: inherit;
   background: transparent;
   box-shadow: none;
   color: var(--lunmi-text-primary);
 }
-.lunmi-node[data-surface="chat"][data-chat-appearance="theme"] .lunmi-node-body { background: var(--lunmi-bg-card); }
 
 /* A paleta preta é local ao chat, incluindo fontes web; não muda o tema da principal. */
 .lunmi-node[data-chat-appearance="black"] .lunmi-mini {
@@ -143,6 +199,3 @@
 }
 .lunmi-node-chat .lunmi-mini-composer textarea::selection { background: var(--lunmi-surface-hover); color: var(--lunmi-text-primary); }
 
-/* ORB REACTIVE V1: a miniatura preenche o alvo circular existente (52×52) sem mudar geometria,
-   forma nativa nem hit regions; o ponteiro continua a pertencer ao botão. */
-.lunmi-node-circle .lunmi-galaxy-orb { width: 100%; height: 100%; pointer-events: none; }

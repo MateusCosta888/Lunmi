@@ -10,7 +10,7 @@
  *
  * O harness nativo do Root cobre a prova Win32; aqui fica a decisão e o ciclo da janela.
  */
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const fake = vi.hoisted(() => ({
   windows: [] as any[],
@@ -319,7 +319,7 @@ it("entrar em passivo preserva o morph em curso: anima, assenta e nunca foca nem
   expect(vi.getTimerCount()).toBe(1);
   expect(win.ignoreCalls.at(-1)).toBe(true);
 
-  vi.advanceTimersByTime(100);
+  vi.advanceTimersByTime(1200);
   expect(win.shapes.length).toBeGreaterThan(shapesAtEntry);
   expect(win.ignoreCalls.slice(ignoresAtEntry).every((ignore: boolean) => ignore === true)).toBe(true);
   expect(win.focused).toBe(0);
@@ -378,4 +378,43 @@ it("show e retarget durante o passivo continuam sem input e sem foco", () => {
   expect(win.ignoreCalls.at(-1)).toBe(true);
   expect(win.focused).toBe(0);
   expect(win.focusable).toBe(false);
+});
+
+it("a região do balão curto segue a frase, mesmo a meio da transição", () => {
+  const { manager, win } = setup();
+  const span = () => {
+    const rects = win.shapes.at(-1) as { x: number; width: number }[];
+    return Math.max(...rects.map(rect => rect.x + rect.width)) - Math.min(...rects.map(rect => rect.x));
+  };
+  manager.setSurface("pill");
+  manager.setPillWidth(110);
+  vi.advanceTimersByTime(1200);
+  const narrow = span();
+  manager.setPillWidth(220);
+  expect(span()).toBe(narrow + 110);
+  manager.setSurface("revealed");
+  vi.advanceTimersByTime(1200);
+  const shapes = win.shapes.length;
+  manager.setPillWidth(130);
+  expect(win.shapes.length).toBe(shapes); // sem balão aberto não há região a mudar
+});
+
+describe("projeção: que tarefas mexem no ambiente de trabalho", () => {
+  const event = (type: string, payload: Record<string, unknown>) => ({ v: 1, id: type, type, payload }) as never;
+  const session = { session_id: "s1" } as never;
+
+  it("conversa e pesquisa nunca bloqueiam; depois de agir, a tarefa fica marcada até ao fim", async () => {
+    const { ChatProjectionStore } = await import("../electron/chat-projection");
+    const store = new ChatProjectionStore(() => undefined);
+    store.syncSession(session);
+    store.apply(event("task.started", { session_id: "s1", task_id: "t1", mode: "auto", text: "oi" }));
+    store.apply(event("task.progress", { session_id: "s1", task_id: "t1", state: "Thinking" }));
+    expect(store.touchesDesktop).toBe(false);
+    store.apply(event("task.progress", { session_id: "s1", task_id: "t1", state: "Executing" }));
+    expect(store.touchesDesktop).toBe(true);
+    store.apply(event("task.progress", { session_id: "s1", task_id: "t1", state: "Thinking" }));
+    expect(store.touchesDesktop).toBe(true);
+    store.apply(event("task.started", { session_id: "s1", task_id: "t2", mode: "auto", text: "oi" }));
+    expect(store.touchesDesktop).toBe(false);
+  });
 });

@@ -104,6 +104,7 @@
     "voice.models.download",
     "voice.models.cancel",
     "voice.models.remove",
+    "node.clicks.watch",
     "web.get",
     "web.set"
   ],
@@ -137,6 +138,7 @@
     "task.progress",
     "task.started",
     "voice.input.level",
+    "node.click",
     "voice.input.state",
     "voice.readiness",
     "voice.models",

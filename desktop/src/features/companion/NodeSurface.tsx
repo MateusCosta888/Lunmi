@@ -1,26 +1,18 @@
 /**
  * Superfície do LUNMI NODE V1 (`desktop/src/features/companion/NodeSurface.tsx`).
  *
- * O objeto é UM só: o DOM nasce uma vez e nunca é remontado quando a superfície muda
- * (círculo → cápsula → chat). O main é a autoridade da forma — a `setShape` nativa recorta a
- * janela no rect da superfície e é ela que define também a região de input. Por isso aqui não há
- * clip-path nem raio CSS a imitar a silhueta: o corpo cobre o envelope inteiro
- * e o recorte nativo faz o resto (D4).
+ * A orb fica sempre visível e nunca é remontada. O resto sai dela como um balão de fala: uma
+ * frase curta ao lado, o chat por baixo. A janela é transparente e o desenho é CSS, com bordas
+ * suaves; o main define só a região de cliques (`setShape`), com os mesmos números de
+ * `desktop/src/shared/node.ts`. A animação é CSS, sem rect nem IPC por frame.
  *
- * O conteúdo é posicionado com a ajuda partilhada (`nodeContentRect` de
- * `desktop/src/shared/node.ts`), a mesma que o main usa para a shape: um número para o desenho e
- * para o input. Nenhum rect nem IPC por frame — a geometria só é recalculada quando muda a
- * superfície, o lado ou o tamanho da janela.
- *
- * Um gesto abre o chat: o clique no círculo pede `node-open` uma vez e o main percorre a
- * sequência aprovada (círculo → cápsula → chat). A cápsula é uma etapa visual do morph, nunca
- * um segundo clique.
+ * Clicar na orb abre o chat; com o chat aberto, fecha-o.
  *
  * O Node nunca mostra texto de conversa fora do chat: o único conteúdo livre é a etiqueta curta
  * do estado finito publicado pelo main (`status`/`tone`).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { nodeContentRect, NODE, type NodeBounds } from "../../shared/node";
+import { nodeContentRect, nodeLabelFor, nodePillWidth, NODE, type NodeBounds } from "../../shared/node";
 import { presenceAction, useNodePreferences, useNodeState, usePresenceVoiceState } from "../../shared/ipc/presence";
 import { GalaxyOrb } from "../chat/orb/GalaxyOrb";
 import { deriveOrbMode } from "../chat/orb/orbState";
@@ -46,43 +38,8 @@ const SURFACE_LAYER: Record<NodeSurfaceKind, NodeLayer | null> = {
   chat: "chat",
 };
 
-/**
- * Etiquetas honestas por estado finito. São texto fixo do enum publicado pelo main — nunca
- * progresso, instrução ou mensagem da conversa. Curtas para caberem nos 280 px da cápsula e
- * dizem o que o clique faz: confirmar/responder acontece na janela principal; os estados
- * terminais abrem o chat onde o resultado já está.
- */
-const STATUS_LABEL: Record<NodeStatus, string> = {
-  idle: "Pronta",
-  working: "A trabalhar",
-  needs_confirm: "Confirmar na principal",
-  needs_input: "Responder na principal",
-  done: "Concluída",
-  not_verified: "Por verificar",
-  cancelled: "Cancelada",
-  failed: "Falhou",
-  offline: "Sem ligação",
-};
-
 /** Para onde a cápsula leva: decisões ficam na principal; resultados abrem no chat. */
 const SHOW_MAIN_STATUSES: ReadonlySet<NodeStatus> = new Set<NodeStatus>(["needs_confirm", "needs_input"]);
-
-const IDLE_LABEL = "Lunmi";
-
-/**
- * VOICE/NODE V3: etiquetas fixas e honestas do campo canónico `NodeStateDto.voice_phase`
- * (publicado pelo main; `null`/ausente = comportamento V1). Nenhum texto livre, nenhuma
- * transcrição, nenhum progresso — a UI só espelha o enum fechado. A atividade explícita do
- * microfone não é ocultada por `show_activity=false`: enquanto houver fase de voz, é ela que a
- * cápsula mostra (limpeza/precedência de turno são autoridade do main).
- */
-const VOICE_LABEL: Record<NonNullable<NodeStateDto["voice_phase"]>, string> = {
-  starting: "A preparar o microfone",
-  listening: "A escutar",
-  thinking: "A pensar",
-  // delta do contrato: falha de ENTRADA de voz — etiqueta fixa honesta, nunca "tarefa falhou".
-  error: "O ditado falhou",
-};
 
 /** Envelope medido: a janela do Node É o envelope (420×520 DIP, ou o que couber no ecrã). */
 function measureEnvelope(): NodeBounds {
@@ -141,14 +98,18 @@ export function NodeSurface(): React.ReactElement | null {
   }, []);
 
   const side: NodeSide = state?.side ?? "right";
+  const voicePhase = state?.voice_phase ?? null;
+  // Saída de voz (TTS) é um facto do main; a etiqueta «A falar» só aparece quando ele é real.
+  const label = nodeLabelFor(state?.status ?? null, voicePhase, presenceVoice?.state, state?.activity);
+  const pillWidth = nodePillWidth(label);
   const rects = useMemo(
     () => ({
       circle: nodeContentRect("revealed", side, envelope),
       docked: nodeContentRect("docked", side, envelope),
-      pill: nodeContentRect("pill", side, envelope),
+      pill: nodeContentRect("pill", side, envelope, pillWidth),
       chat: nodeContentRect("chat", side, envelope),
     }),
-    [side, envelope]
+    [side, envelope, pillWidth]
   );
 
   const open = useCallback(() => request("node-open"), [request]);
@@ -156,8 +117,8 @@ export function NodeSurface(): React.ReactElement | null {
 
   useEffect(() => {
     const onBlur = () => {
-      if (state?.surface !== "chat" || state.phase !== "settled" || state.voice_phase
-        || state.status === "working" || state.status === "needs_confirm" || state.status === "needs_input") return;
+      // A tarefa continua: ao fechar, o balão curto mostra o que ela está a fazer.
+      if (state?.surface !== "chat" || state.phase !== "settled" || state.voice_phase) return;
       close();
     };
     window.addEventListener("blur", onBlur);
@@ -188,7 +149,9 @@ export function NodeSurface(): React.ReactElement | null {
    */
   const settledNow = state?.phase === "settled";
   const layer = SURFACE_LAYER[settled];
-  const circleActive = settledNow && layer === "circle";
+  // O destino abre o balão já; o que está a sair continua montado até assentar, para animar.
+  const target = state ? SURFACE_LAYER[state.surface] : layer;
+  const circleActive = settledNow && layer !== null;
   const pillActive = settledNow && layer === "pill";
   const chatActive = settledNow && layer === "chat";
 
@@ -197,12 +160,6 @@ export function NodeSurface(): React.ReactElement | null {
   const phase = state.phase;
   const tone = state.tone;
   const status = state.status;
-  const voicePhase = state.voice_phase ?? null;
-  // Saída de voz (TTS) é um facto do main; a etiqueta «A falar» só aparece quando ele é real.
-  const label = voicePhase ? VOICE_LABEL[voicePhase]
-    : presenceVoice?.state === "playing" ? "A falar"
-    : presenceVoice?.state === "synthesizing" ? "A preparar a voz"
-    : status ? STATUS_LABEL[status] : IDLE_LABEL;
   // A cápsula é acionável: confirmação/resposta levam à principal (onde se decide) e os estados
   // terminais abrem o chat, onde o resultado já está. Nunca aprova nem responde no Node.
   const pillNeedsMain = status !== null && SHOW_MAIN_STATUSES.has(status);
@@ -217,7 +174,8 @@ export function NodeSurface(): React.ReactElement | null {
     ttsState: presenceVoice?.state ?? null,
     taskWorking: status === "working",
   });
-  const circleTop = settled === "docked" ? rects.docked.y : rects.circle.y;
+  const circleTop = state.surface === "docked" ? rects.docked.y : rects.circle.y;
+  const chatOpen = state.surface === "chat";
 
   return (
     <div
@@ -231,13 +189,9 @@ export function NodeSurface(): React.ReactElement | null {
       data-tone={tone}
       data-status={status ?? "none"}
       data-voice={voicePhase ?? "none"}
-      data-visible={phase === "settled" ? "true" : "false"}
       onPointerEnter={onPointerEnter}
       onKeyDown={onKeyDown}
     >
-      {/* O corpo acompanha a aparência do chat; a shape nativa continua a única silhueta. */}
-      <div className="lunmi-node-body" data-testid="node-body" aria-hidden="true" />
-
       {/*
         `inert` é um atributo do commit, não um efeito: sai na MESMA mutação que assenta a
         superfície, por isso o foco do composer (efeito do filho, que corre antes do efeito do
@@ -249,16 +203,15 @@ export function NodeSurface(): React.ReactElement | null {
           type="button"
           className="lunmi-node-layer lunmi-node-circle"
           data-testid="node-circle"
-          hidden={layer !== "circle"}
           style={rectStyle(rects.circle.x, circleTop, rects.circle.width, rects.circle.height)}
-          aria-label="Abrir o chat da Lunmi"
-          title="Abrir o chat"
+          aria-label={chatOpen ? "Fechar o chat da Lunmi" : "Abrir o chat da Lunmi"}
+          title={chatOpen ? "Fechar o chat" : "Abrir o chat"}
           disabled={!circleActive}
           tabIndex={circleActive ? 0 : -1}
-          onClick={open}
+          onClick={chatOpen ? close : open}
         >
-          <GalaxyOrb mode={orbMode} compact active={layer === "circle"} />
-          <span className="lunmi-node-dot" data-testid="node-dot" aria-hidden="true" />
+          {/* Recolhida, só se vê um arco sem os olhos: não há nada para animar. */}
+          <GalaxyOrb mode={orbMode} compact active={state.surface !== "docked"} />
         </button>
 
         <button
@@ -266,21 +219,22 @@ export function NodeSurface(): React.ReactElement | null {
           className="lunmi-node-layer lunmi-node-pill"
           data-testid="node-pill"
           data-action={pillNeedsMain ? "show-main" : "node-open"}
-          hidden={layer !== "pill"}
+          data-open={target === "pill"}
+          hidden={layer !== "pill" && target !== "pill"}
           style={rectStyle(rects.pill.x, rects.pill.y, rects.pill.width, rects.pill.height)}
           aria-label={pillLabel}
           disabled={!pillActive}
           tabIndex={pillActive ? 0 : -1}
           onClick={pillAction}
         >
-          <span className="lunmi-node-dot" aria-hidden="true" />
           <span className="lunmi-node-pill-text" data-testid="node-pill-text">{label}</span>
         </button>
 
         <div
           className="lunmi-node-layer lunmi-node-chat"
           data-testid="node-chat"
-          hidden={layer !== "chat"}
+          data-open={target === "chat"}
+          hidden={layer !== "chat" && target !== "chat"}
           aria-hidden={!chatActive}
           style={rectStyle(rects.chat.x, rects.chat.y, rects.chat.width, rects.chat.height)}
         >

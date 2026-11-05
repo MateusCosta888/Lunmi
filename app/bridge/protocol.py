@@ -172,6 +172,7 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.models.download",
     "voice.models.cancel",
     "voice.models.remove",
+    "node.clicks.watch",
     # VOICE INPUT V1: entrada separada da saída; nunca reutiliza `capture_supported`.
     "voice.input.get",
     "voice.input.start",
@@ -225,6 +226,8 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "spotify.changed",
     # WEB-SEARCH-V1: estado público da pesquisa web; payload `WebStateDto` exato.
     "web.changed",
+    # O chat do Node pede para saber de cliques fora dele; nunca leva posição nem janela.
+    "node.click",
     "log.append",
 })
 

@@ -1,18 +1,21 @@
 /**
  * Geometria e estado puro do LUNMI NODE V1 (`desktop/src/shared/node.ts`).
  *
- * Porte directo dos protótipos aprovados em `output/node-n0/prototype/geometry.cjs`: as mesmas
- * constantes, a mesma curva e as mesmas decisões. Sem Electron, sem DOM, sem timers — o main
- * agenda e aplica `setShape`; este módulo responde «que rect e que região em progresso t» e
- * «que superfície esta ação produz». Assim desenho e input usam exactamente os mesmos números.
+ * Sem Electron, sem DOM, sem timers. A orb fica sempre visível e o resto sai dela como um balão
+ * de fala: uma frase curta ao lado, o chat por baixo. O desenho é CSS (bordas com antialiasing);
+ * `setShape` só define a região que recebe cliques, com uma folga de `region_outset`, porque uma
+ * região nativa não tem antialiasing e cortava as bordas em degraus. Desenho e região usam os
+ * mesmos números daqui.
  *
  * Todas as coordenadas são DIP. O envelope é o único rect nativo de um lado: as superfícies
- * vivem dentro dele, por isso a janela nunca é redimensionada nem movida durante um morph.
+ * vivem dentro dele, por isso a janela nunca é redimensionada nem movida durante uma transição.
  */
 import type {
   ChatProjectionDto,
+  NodeActivity,
   NodePreferencesDto,
   NodeSide,
+  NodeStateDto,
   NodeStatus,
   NodeSurface,
   NodeTone,
@@ -43,20 +46,23 @@ export type NodeVisibleSurface = Exclude<NodeSurface, "hidden">;
 
 export const NODE = Object.freeze({
   envelope_width: 420,
-  envelope_height: 520,
+  envelope_height: 570,
   circle: 52,
   dock_visible: 20,
   margin: 16,
   reveal_top: 10,
   pill_width: 280,
-  pill_height: 60,
+  pill_min_width: 96,
+  pill_height: 44,
+  /** Distância da orb ao balão; o bico do balão vive neste espaço. */
+  bubble_gap: 12,
+  /** Folga da região nativa à volta do desenho: o antialiasing precisa de pixels para respirar. */
+  region_outset: 3,
   chat_width: 380,
   chat_height: 480,
   radius: 26,
   band_height: 2,
   hover_hysteresis_ms: 600,
-  /** Calibração Root 2026-10-21: 8 ms pedidos produzem ticks ~15.6 ms no Windows. */
-  morph_tick_ms: 8,
 });
 
 export const NODE_DURATIONS = Object.freeze({
@@ -119,8 +125,11 @@ export function isCompanionPresenceAction(value: unknown): value is PresenceActi
  * publicado: com `show_activity:false` o status efetivo é `null`, mas a tarefa continua a correr
  * e o Node continua passivo. `show_activity` não entra nesta decisão de propósito.
  */
-export function nodePassiveFromTaskPhase(phase: string | null | undefined): boolean {
-  return phase === "running";
+export function nodePassiveFromTaskPhase(
+  phase: string | null | undefined,
+  touchesDesktop: boolean = true
+): boolean {
+  return phase === "running" && touchesDesktop;
 }
 
 /** Motivo público fixo devolvido ao companheiro quando a ação é recusada em passivo. */
@@ -216,13 +225,17 @@ function circleX(side: NodeSide, envelope: NodeBounds): number {
 export function nodeContentRect(
   surface: NodeVisibleSurface,
   side: NodeSide,
-  envelope: NodeBounds
+  envelope: NodeBounds,
+  pillWidth: number = NODE.pill_width
 ): NodeBounds {
   const circle = Math.min(NODE.circle, envelope.width, envelope.height);
-  const pillWidth = Math.min(NODE.pill_width, envelope.width);
+  const orbTop = clampInt(NODE.reveal_top, 0, Math.max(0, envelope.height - circle));
+  const beside = circle + NODE.bubble_gap;
+  const width = Math.max(1, Math.min(pillWidth, envelope.width - beside));
   const pillHeight = Math.min(NODE.pill_height, envelope.height);
+  const chatTop = orbTop + beside;
   const chatWidth = Math.min(NODE.chat_width, envelope.width);
-  const chatHeight = Math.min(NODE.chat_height, envelope.height);
+  const chatHeight = Math.max(1, Math.min(NODE.chat_height, envelope.height - chatTop));
 
   switch (surface) {
     case "docked":
@@ -233,24 +246,19 @@ export function nodeContentRect(
         height: circle,
       };
     case "revealed":
-      return {
-        x: circleX(side, envelope),
-        y: clampInt(NODE.reveal_top, 0, Math.max(0, envelope.height - circle)),
-        width: circle,
-        height: circle,
-      };
+      return { x: circleX(side, envelope), y: orbTop, width: circle, height: circle };
     case "pill":
     case "attention":
       return {
-        x: side === "left" ? 0 : Math.max(0, envelope.width - pillWidth),
-        y: clampInt(NODE.reveal_top, 0, Math.max(0, envelope.height - pillHeight)),
-        width: pillWidth,
+        x: side === "left" ? beside : Math.max(0, envelope.width - beside - width),
+        y: orbTop + Math.round((circle - pillHeight) / 2),
+        width,
         height: pillHeight,
       };
     case "chat":
       return {
         x: side === "left" ? 0 : Math.max(0, envelope.width - chatWidth),
-        y: 0,
+        y: chatTop,
         width: chatWidth,
         height: chatHeight,
       };
@@ -334,9 +342,30 @@ export function nodeShapeForSurface(
   surface: NodeVisibleSurface,
   side: NodeSide,
   envelope: NodeBounds,
-  radius: number = NODE.radius
+  pillWidth: number = NODE.pill_width
 ): NodeShapeRect[] {
-  return nodeShapeRects(nodeContentRect(surface, side, envelope), envelope.width, envelope.height, radius);
+  const outset = (rect: NodeBounds): NodeBounds => ({
+    x: rect.x - NODE.region_outset,
+    y: rect.y - NODE.region_outset,
+    width: rect.width + 2 * NODE.region_outset,
+    height: rect.height + 2 * NODE.region_outset,
+  });
+  const strips = (rect: NodeBounds, radius: number) =>
+    nodeShapeRects(outset(rect), envelope.width, envelope.height, radius);
+  const orbSurface = surface === "docked" ? "docked" : "revealed";
+  const orb = nodeContentRect(orbSurface, side, envelope);
+  const region = strips(orb, NODE.radius + NODE.region_outset);
+  if (surface === "docked" || surface === "revealed") return region;
+  const bubble = nodeContentRect(surface, side, envelope, pillWidth);
+  const tail = surface === "chat"
+    ? { x: orb.x + orb.width / 2 - 12, y: orb.y + orb.height, width: 24, height: NODE.bubble_gap }
+    : {
+        x: side === "left" ? orb.x + orb.width : bubble.x + bubble.width,
+        y: orb.y + orb.height / 2 - 10,
+        width: NODE.bubble_gap,
+        height: 20,
+      };
+  return [...region, ...strips(bubble, 20), ...nodeShapeRects(tail, envelope.width, envelope.height, 0)];
 }
 
 /** Parte visível do círculo recolhido (o arco inferior) em coordenadas de janela. */
@@ -392,21 +421,6 @@ export function nodeRetractionDecision(input: {
   return input.elapsed >= hysteresis ? "dock" : "wait";
 }
 
-export function easeInOutCubic(t: number): number {
-  const k = clamp(t, 0, 1);
-  return k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
-}
-
-export function interpolateNodeRect(from: NodeBounds, to: NodeBounds, t: number): NodeBounds {
-  const k = easeInOutCubic(t);
-  return {
-    x: from.x + (to.x - from.x) * k,
-    y: from.y + (to.y - from.y) * k,
-    width: from.width + (to.width - from.width) * k,
-    height: from.height + (to.height - from.height) * k,
-  };
-}
-
 export function nodeTransitionDuration(
   to: NodeSurface,
   options: { reduced?: boolean; scale?: number } = {}
@@ -418,24 +432,79 @@ export function nodeTransitionDuration(
 }
 
 /**
- * Sequência causal: o mesmo objeto cresce na horizontal até à cápsula e só depois na vertical
- * até ao chat. Nunca um círculo interpolado directamente para o chat.
- */
-export function planNodeSequence(from: NodeSurface, to: NodeSurface): NodeVisibleSurface[] {
-  if (!isNodeSurface(to) || !isNodeSurface(from)) {
-    throw new Error(`unknown_surface: ${String(to)}`);
-  }
-  if (from === to) return [];
-  if (to === "hidden") return [];
-  if (to !== "chat") return [to];
-  if (from === "pill" || from === "attention" || from === "chat") return ["chat"];
-  return ["pill", "chat"];
-}
-
-/**
  * Superfície seguinte de uma ação fechada. `null` = nada a fazer. Ações idempotentes devolvem a
  * superfície atual (o chamador não cria transição, apenas re-arma a custódia se for `revealed`).
  */
+/** Etiquetas de texto fixo: nunca progresso, instrução ou mensagem da conversa. */
+const NODE_STATUS_LABEL: Record<NodeStatus, string> = {
+  idle: "Pronta",
+  working: "A trabalhar…",
+  needs_confirm: "Confirmar na principal",
+  needs_input: "Responder na principal",
+  done: "Concluída",
+  not_verified: "Por verificar",
+  cancelled: "Cancelada",
+  failed: "Falhou",
+  offline: "Sem ligação",
+};
+
+const NODE_VOICE_LABEL: Record<NonNullable<NodeStateDto["voice_phase"]>, string> = {
+  starting: "A preparar…",
+  listening: "A escutar…",
+  thinking: "A pensar…",
+  // Falha de ENTRADA de voz: nunca «tarefa falhou».
+  error: "O ditado falhou",
+};
+
+const NODE_ACTIVITY_LABEL: Record<NodeActivity, string> = {
+  thinking: "A pensar…",
+  searching: "A pesquisar…",
+  reading: "A ler fontes…",
+  acting: "A executar…",
+  verifying: "A verificar…",
+};
+
+/** A frase do balão, a mesma no main (região) e na superfície (desenho). */
+export function nodeLabelFor(
+  status: NodeStatus | null,
+  voicePhase: NodeStateDto["voice_phase"] | undefined,
+  ttsState: string | null | undefined,
+  activity?: NodeActivity | null
+): string {
+  if (voicePhase) return NODE_VOICE_LABEL[voicePhase];
+  if (ttsState === "playing") return "A falar…";
+  if (ttsState === "synthesizing") return "A preparar a voz…";
+  if (status === "working" && activity) return NODE_ACTIVITY_LABEL[activity];
+  return status ? NODE_STATUS_LABEL[status] : "Lunmi";
+}
+
+/** O que a tarefa faz agora, a partir dos sinais reais do backend; a pesquisa é mais precisa. */
+export function nodeActivityFor(
+  progress: string | null | undefined,
+  webState: string | null | undefined
+): NodeActivity | null {
+  if (webState === "searching" || webState === "starting") return "searching";
+  if (webState === "reading") return "reading";
+  if (progress === "Executing") return "acting";
+  if (progress === "Verifying") return "verifying";
+  return progress === "Thinking" ? "thinking" : null;
+}
+
+/** Ao fechar o chat, o aviso ou o trabalho em curso continuam à vista; sem nada, fica a orb. */
+export function nodeSurfaceAfterChat(
+  status: NodeStatus | null,
+  showActivity: boolean,
+  noticeExpired: boolean
+): NodeVisibleSurface {
+  if (isNodeAttentionStatus(status) && !noticeExpired) return "attention";
+  return effectiveNodeStatus(status, showActivity) === "working" ? "pill" : "revealed";
+}
+
+/** Largura do balão à medida da frase: as etiquetas são um conjunto fechado e curto. */
+export function nodePillWidth(label: string): number {
+  return Math.round(clamp(label.length * 7.4 + 34, NODE.pill_min_width, NODE.pill_width));
+}
+
 export function nextNodeSurface(surface: NodeSurface, action: NodeAction): NodeSurface | null {
   if (surface === "hidden") return null;
   switch (action) {
@@ -443,8 +512,7 @@ export function nextNodeSurface(surface: NodeSurface, action: NodeAction): NodeS
       if (surface === "docked") return "revealed";
       return surface === "revealed" ? "revealed" : null;
     case "node-open":
-      // UMA ação humana abre o chat a partir de qualquer superfície visível. O morph interno
-      // mantém N0 (`pill` → `chat`); a cápsula é uma etapa visual, não um clique extra.
+      // UMA ação humana abre o chat a partir de qualquer superfície visível.
       return "chat";
     case "node-close":
       // Fechar é um gesto: o chat volta ao círculo revelado; um segundo gesto recolhe.
@@ -643,18 +711,7 @@ export interface NodeTransitionState {
   id: number;
   from: NodeSurface;
   to: NodeSurface;
-  fromRect: NodeBounds | null;
-  toRect: NodeBounds;
   durationMs: number;
-  startedAt: number;
-}
-
-export interface NodeTransitionSample {
-  id: number;
-  progress: number;
-  elapsed: number;
-  rect: NodeBounds;
-  done: boolean;
 }
 
 let nextNodeTransitionId = 0;
@@ -663,54 +720,20 @@ let nextNodeTransitionId = 0;
 export function beginNodeTransition(input: {
   from: NodeSurface;
   to: NodeVisibleSurface;
-  fromRect: NodeBounds | null;
-  toRect: NodeBounds;
   durationMs: number;
-  startedAt: number;
 }): NodeTransitionState {
   nextNodeTransitionId += 1;
   return {
     id: nextNodeTransitionId,
     from: input.from,
     to: input.to,
-    fromRect: input.fromRect,
-    toRect: input.toRect,
     durationMs: Math.max(0, Math.round(input.durationMs)),
-    startedAt: input.startedAt,
   };
 }
 
 /** Só para testes: repõe a numeração local de transições. */
 export function resetNodeTransitionIds(): void {
   nextNodeTransitionId = 0;
-}
-
-export function sampleNodeTransition(
-  transition: NodeTransitionState,
-  now: number
-): NodeTransitionSample {
-  const elapsed = Math.max(0, now - transition.startedAt);
-  const progress = transition.durationMs <= 0 ? 1 : clamp(elapsed / transition.durationMs, 0, 1);
-  // Sem origem (`hidden`): o morph começa já no destino — não há rect anterior a interpolar.
-  const fromRect = transition.fromRect ?? transition.toRect;
-  return {
-    id: transition.id,
-    progress,
-    elapsed,
-    rect: interpolateNodeRect(fromRect, transition.toRect, progress),
-    done: progress >= 1,
-  };
-}
-
-export function nodeShapeForTransition(
-  transition: NodeTransitionState,
-  progress: number,
-  envelope: NodeBounds,
-  radius: number = NODE.radius
-): NodeShapeRect[] {
-  const fromRect = transition.fromRect ?? transition.toRect;
-  const rect = interpolateNodeRect(fromRect, transition.toRect, progress);
-  return nodeShapeRects(rect, envelope.width, envelope.height, radius);
 }
 
 /** Aceleradores aceites: 1–4 modificadores + uma tecla nomeada, sem espaços nem caracteres soltos. */

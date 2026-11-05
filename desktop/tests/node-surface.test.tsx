@@ -43,7 +43,7 @@ const SESSION: SessionReadyPayload = {
 
 const ENVELOPE = { x: 0, y: 0, width: 420, height: 520 };
 
-it("recolhe ao sair do chat sem cancelar pedidos e preserva pendências/ditado", async () => {
+it("sair do chat fecha-o sem cancelar nada, exceto durante o ditado", async () => {
   const h = presence({ surface: "chat" });
   render(<NodeSurface />);
   await waitFor(() => expect(screen.getByTestId("lunmi-node").getAttribute("data-surface")).toBe("chat"));
@@ -53,10 +53,14 @@ it("recolhe ao sair do chat sem cancelar pedidos e preserva pendências/ditado",
     expect(h.actions).toContain("node-close");
   });
   h.actions.length = 0;
+  // A tarefa e a pendência continuam: ao fechar, o balão curto mostra-as.
   for (const status of ["working", "needs_confirm", "needs_input"] as const) {
     h.emitNode({ status });
-    act(() => { window.dispatchEvent(new Event("blur")); });
-    expect(h.actions).toHaveLength(0);
+    await waitFor(() => {
+      act(() => { window.dispatchEvent(new Event("blur")); });
+      expect(h.actions).toContain("node-close");
+    });
+    h.actions.length = 0;
   }
   h.emitNode({ status: null, voice_phase: "listening" });
   act(() => { window.dispatchEvent(new Event("blur")); });
@@ -178,14 +182,12 @@ describe("NodeSurface — objeto contínuo", () => {
     render(<NodeSurface />);
     const root = await screen.findByTestId("lunmi-node");
     const circle = screen.getByTestId("node-circle");
-    const body = screen.getByTestId("node-body");
 
     harness.emitNode({ surface: "revealed", transition_id: 2 });
     await waitFor(() => expect(screen.getByTestId("lunmi-node").getAttribute("data-surface")).toBe("revealed"));
 
     expect(screen.getByTestId("lunmi-node")).toBe(root);
     expect(screen.getByTestId("node-circle")).toBe(circle);
-    expect(screen.getByTestId("node-body")).toBe(body);
   });
 
   it("um clique no círculo abre o chat: uma só ação node-open, sem cápsula extra nem toggle-mini", async () => {
@@ -211,21 +213,52 @@ describe("NodeSurface — objeto contínuo", () => {
     expect(harness.actions).toEqual(["node-reveal"]);
   });
 
-  it("o conteúdo só entra em settled; durante o morph mantém o anterior", async () => {
+  it("a orb nunca sai; o balão abre logo, mas só recebe input quando assenta", async () => {
     const harness = presence({ surface: "revealed" });
     render(<NodeSurface />);
     const root = await screen.findByTestId("lunmi-node");
+    const circle = screen.getByTestId("node-circle") as HTMLButtonElement;
 
     harness.emitNode({ surface: "chat", phase: "transitioning", transition_id: 2 });
     await waitFor(() => expect(root.getAttribute("data-phase")).toBe("transitioning"));
-    expect(root.getAttribute("data-visible")).toBe("false");
-    // O conteúdo anterior (círculo) continua montado; o chat ainda não é o conteúdo visível.
-    expect((screen.getByTestId("node-chat") as HTMLElement).hasAttribute("hidden")).toBe(true);
+    const chat = screen.getByTestId("node-chat") as HTMLElement;
+    expect(chat.hasAttribute("hidden")).toBe(false);
+    expect(chat.getAttribute("data-open")).toBe("true");
+    expect((screen.getByTestId("mini-input") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(circle.hasAttribute("hidden")).toBe(false);
 
     harness.emitNode({ surface: "chat", phase: "settled", transition_id: 3 });
-    await waitFor(() => expect(root.getAttribute("data-visible")).toBe("true"));
-    expect((screen.getByTestId("node-chat") as HTMLElement).hasAttribute("hidden")).toBe(false);
-    expect((screen.getByTestId("node-circle") as HTMLElement).hasAttribute("hidden")).toBe(true);
+    await waitFor(() => expect((screen.getByTestId("mini-input") as HTMLTextAreaElement).disabled).toBe(false));
+    expect(circle.hasAttribute("hidden")).toBe(false);
+    expect(circle.disabled).toBe(false);
+  });
+
+  it("com o chat aberto, clicar na orb fecha-o", async () => {
+    const harness = presence({ surface: "chat" });
+    render(<NodeSurface />);
+    const circle = await screen.findByTestId("node-circle");
+    expect(circle.getAttribute("aria-label")).toBe("Fechar o chat da Lunmi");
+    fireEvent.click(circle);
+    expect(harness.actions).toEqual(["node-close"]);
+  });
+
+  it("o balão que sai continua montado até assentar, para poder animar", async () => {
+    const harness = presence({ surface: "chat" });
+    render(<NodeSurface />);
+    await screen.findByTestId("mini-chat");
+    harness.emitNode({ surface: "revealed", phase: "transitioning", transition_id: 2 });
+    await waitFor(() => expect(screen.getByTestId("node-chat").getAttribute("data-open")).toBe("false"));
+    expect(screen.getByTestId("node-chat").hasAttribute("hidden")).toBe(false);
+    harness.emitNode({ surface: "revealed", phase: "settled", transition_id: 3 });
+    await waitFor(() => expect(screen.getByTestId("node-chat").hasAttribute("hidden")).toBe(true));
+  });
+
+  it("já não há ponto de estado ao lado da orb", async () => {
+    presence({ surface: "revealed" });
+    render(<NodeSurface />);
+    await screen.findByTestId("node-circle");
+    expect(screen.queryByTestId("node-dot")).toBeNull();
+    expect(document.querySelector(".lunmi-node-dot")).toBeNull();
   });
 });
 
@@ -248,7 +281,7 @@ describe("NodeSurface — estado publicado pelo main", () => {
     const harness = presence({ surface: "pill", status: "working", tone: "working" });
     render(<NodeSurface />);
     const root = await screen.findByTestId("lunmi-node");
-    expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar");
+    expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar…");
 
     harness.emitNode({ status: "done", tone: "success" });
     await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Concluída"));
@@ -290,30 +323,21 @@ describe("NodeSurface — estado publicado pelo main", () => {
     expect(screen.getByTestId("node-pill-text").textContent).toBe("Pronta");
 
     harness.emitNode({ voice_phase: "listening" });
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A escutar"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A escutar…"));
     harness.emitNode({ voice_phase: "thinking" });
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar…"));
     harness.emitNode({ voice_phase: null });
     await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Pronta"));
 
     // TTS: só «A falar» quando o main publica uma fase de fala real.
     harness.emitVoice({ session_id: "sess-n", enabled: true, auto_speak: false, available: true, state: "playing", generation: 2, can_speak_last: true, capture_supported: false, message: "" });
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A falar"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A falar…"));
     harness.emitVoice({ session_id: "sess-n", enabled: true, auto_speak: false, available: true, state: "ready", generation: 3, can_speak_last: true, capture_supported: false, message: "" });
     await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("Pronta"));
   });
 });
 
 describe("NodeSurface — forma nativa e geometria partilhada", () => {
-  it("o corpo é preto uniforme sem clip/radius: a silhueta é a shape do main", async () => {
-    presence({ surface: "revealed" });
-    render(<NodeSurface />);
-    const body = await screen.findByTestId("node-body");
-    expect(body.style.borderRadius).toBe("");
-    expect(body.style.clipPath).toBe("");
-    expect(body.className).toContain("lunmi-node-body");
-  });
-
   it("as camadas são posicionadas pelo helper partilhado, sem rect nem IPC por frame", async () => {
     const harness = presence({ surface: "chat" });
     render(<NodeSurface />);
@@ -384,16 +408,15 @@ describe("NodeSurface — N3: foco, morph e input", () => {
     expect((screen.getByTestId("mini-input") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
-  it("as camadas ocultas da superfície assente não recebem input", async () => {
+  it("no chat aberto, só a orb e o balão recebem input; a frase curta fica fora", async () => {
     presence({ surface: "chat" });
     render(<NodeSurface />);
     await screen.findByTestId("mini-chat");
 
-    const circle = screen.getByTestId("node-circle") as HTMLButtonElement;
-    expect(circle.hasAttribute("hidden")).toBe(true);
-    expect(circle.disabled).toBe(true);
-    expect(circle.tabIndex).toBe(-1);
-    // A camada ativa é a única operável.
+    const pill = screen.getByTestId("node-pill") as HTMLButtonElement;
+    expect(pill.hasAttribute("hidden")).toBe(true);
+    expect(pill.disabled).toBe(true);
+    expect(pill.tabIndex).toBe(-1);
     expect((screen.getByTestId("mini-input") as HTMLTextAreaElement).disabled).toBe(false);
     expect((screen.getByTestId("mini-send") as HTMLButtonElement).tabIndex).toBe(0);
   });

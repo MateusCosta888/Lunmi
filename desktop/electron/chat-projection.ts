@@ -27,6 +27,8 @@ import type {
 export class ChatProjectionStore {
   private state: ChatProjectionState = createChatProjection("");
 
+  private desktopTaskId: string | null = null;
+
   constructor(private readonly publish: (delta: ChatProjectionDeltaDto) => void) {}
 
   public get sessionId(): string {
@@ -43,6 +45,20 @@ export class ChatProjectionStore {
    */
   public get taskPhase(): string | null {
     return this.state.task?.phase ?? null;
+  }
+
+  /** Último passo da tarefa em curso, para o Node dizer o que ela está a fazer. */
+  public get taskProgress(): string | null {
+    return this.state.task?.phase === "running" ? this.state.task.progress ?? null : null;
+  }
+
+  /**
+   * A tarefa corrente já mexeu no ambiente de trabalho. Conversa e pesquisa nunca chegam aqui, e
+   * uma tarefa que começou a agir fica marcada até ao fim, mesmo a pensar entre duas ações.
+   */
+  public get touchesDesktop(): boolean {
+    const id = this.state.task?.task_id;
+    return Boolean(id) && id === this.desktopTaskId;
   }
 
   /** Sessão nova reinicia; a mesma sessão (resync de PIDs) não toca em nada. */
@@ -121,6 +137,8 @@ export class ChatProjectionStore {
       return false;
     }
     this.state = outcome.state;
+    const task = this.state.task;
+    if (task?.progress === "Executing" || task?.progress === "Verifying") this.desktopTaskId = task.task_id;
     this.publish(outcome.delta);
     return true;
   }

@@ -9,14 +9,16 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  beginNodeTransition,
+  nodeActivityFor,
+  nodeSurfaceAfterChat,
+  nodeLabelFor,
+  nodePassiveFromTaskPhase,
+  nodePillWidth,
   COMPANION_PRESENCE_ACTIONS,
-  easeInOutCubic,
   isCompanionPresenceAction,
   isPresenceAction,
   NODE_ACTIONS,
   PRESENCE_ACTIONS,
-  interpolateNodeRect,
   isNodeVisibleSurface,
   NODE,
   NODE_DURATIONS,
@@ -30,10 +32,7 @@ import {
   nodeToneFor,
   nodeTransitionDuration,
   nodeVisibleDockedRect,
-  planNodeSequence,
   pointInNodeCustody,
-  sampleNodeTransition,
-  type NodeVisibleSurface,
 } from "../src/shared/node";
 
 const AREA = { x: 0, y: 0, width: 1920, height: 1040 };
@@ -56,11 +55,11 @@ function expectInsideWindow(
 }
 
 describe("envelope N0", () => {
-  it("420×520 encostado ao topo, margem 16 do lado pedido", () => {
+  it("420×570 encostado ao topo, margem 16 do lado pedido", () => {
     const right = nodeEnvelopeBounds("right", AREA);
-    expect(right).toEqual({ x: 1920 - 16 - 420, y: 0, width: 420, height: 520 });
+    expect(right).toEqual({ x: 1920 - 16 - 420, y: 0, width: 420, height: 570 });
     const left = nodeEnvelopeBounds("left", AREA);
-    expect(left).toEqual({ x: 16, y: 0, width: 420, height: 520 });
+    expect(left).toEqual({ x: 16, y: 0, width: 420, height: 570 });
   });
 
   it("área útil pequena limita o envelope e nunca produz medidas negativas", () => {
@@ -81,15 +80,21 @@ describe("rects de conteúdo", () => {
     expect(nodeVisibleDockedRect("right", envelope)).toEqual({ x: 368, y: 0, width: 52, height: 20 });
   });
 
-  it("revealed fica a 10 px do topo; pill e chat encostam ao lado", () => {
+  it("a orb fica no canto; a frase sai ao lado dela e o chat por baixo", () => {
     expect(nodeContentRect("revealed", "right", envelope)).toEqual({ x: 368, y: 10, width: 52, height: 52 });
-    expect(nodeContentRect("pill", "right", envelope)).toEqual({ x: 420 - 280, y: 10, width: 280, height: 60 });
-    expect(nodeContentRect("attention", "right", envelope)).toEqual({ x: 420 - 280, y: 10, width: 280, height: 60 });
-    expect(nodeContentRect("chat", "right", envelope)).toEqual({ x: 420 - 380, y: 0, width: 380, height: 480 });
+    expect(nodeContentRect("pill", "right", envelope, 120)).toEqual({ x: 236, y: 14, width: 120, height: 44 });
+    expect(nodeContentRect("attention", "right", envelope, 120)).toEqual({ x: 236, y: 14, width: 120, height: 44 });
+    expect(nodeContentRect("chat", "right", envelope)).toEqual({ x: 40, y: 74, width: 380, height: 480 });
     // Lado esquerdo espelha o rect, nunca o conteúdo.
     expect(nodeContentRect("revealed", "left", envelope).x).toBe(0);
-    expect(nodeContentRect("pill", "left", envelope).x).toBe(0);
+    expect(nodeContentRect("pill", "left", envelope).x).toBe(64);
     expect(nodeContentRect("chat", "left", envelope).x).toBe(0);
+  });
+
+  it("um ecrã baixo encolhe o chat em vez de o tirar da janela", () => {
+    const low = { x: 0, y: 0, width: 420, height: 400 };
+    const chat = nodeContentRect("chat", "right", low);
+    expect(chat.y + chat.height).toBe(400);
   });
 
   it("hidden não tem rect", () => {
@@ -101,35 +106,35 @@ describe("rects de conteúdo", () => {
 describe("shape nativa", () => {
   const envelope = nodeEnvelopeBounds("right", AREA);
 
-  it("docked é um arco de 20 px, mais estreito nas pontas", () => {
+  it("docked cobre o arco visível com a folga do desenho", () => {
     const rects = nodeShapeForSurface("docked", "right", envelope);
-    expectInsideWindow(rects, 420, 520);
-    expect(rects.reduce((sum, rect) => sum + rect.height, 0)).toBe(20);
-    expect(rects[0].width).toBeLessThan(52);
-    expect(rects.at(-1)!.width).toBeLessThan(52);
-    expect(rects.every((rect) => rect.y < 20)).toBe(true);
+    expectInsideWindow(rects, 420, 570);
+    expect(rects.reduce((sum, rect) => sum + rect.height, 0)).toBe(20 + NODE.region_outset);
+    expect(rects.every((rect) => rect.y < 20 + NODE.region_outset)).toBe(true);
   });
 
-  it("revealed cobre o círculo de 52 px, largo no meio e estreito nos topos", () => {
+  it("revealed cobre o círculo com folga, para o antialiasing não ser cortado", () => {
     const rects = nodeShapeForSurface("revealed", "right", envelope);
-    expectInsideWindow(rects, 420, 520);
-    expect(rects.reduce((sum, rect) => sum + rect.height, 0)).toBe(52);
-    const middle = rects[Math.floor(rects.length / 2)];
-    expect(middle.width).toBe(52);
+    expectInsideWindow(rects, 420, 570);
+    expect(rects.reduce((sum, rect) => sum + rect.height, 0)).toBe(52 + 2 * NODE.region_outset);
     expect(rects[0].width).toBeLessThan(52);
-    expect(rects.at(-1)!.width).toBeLessThan(52);
-    expect(rects[0].y).toBe(10);
+    expect(rects[0].y).toBe(10 - NODE.region_outset);
   });
 
-  it("pill e chat têm cantos redondos (topo estreito, meio inteiro)", () => {
-    for (const surface of ["pill", "chat"] as NodeVisibleSurface[]) {
-      const rects = nodeShapeForSurface(surface, "right", envelope);
-      expectInsideWindow(rects, 420, 520);
-      const top = rects[0];
-      const middle = rects[Math.floor(rects.length / 2)];
-      expect(top.width).toBeLessThan(middle.width);
-      expect(rects.at(-1)!.width).toBeLessThan(middle.width);
-    }
+  it("com o balão aberto, a orb, o bico e o balão recebem cliques", () => {
+    const inside = (rects: { x: number; y: number; width: number; height: number }[], x: number, y: number) =>
+      rects.some((rect) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height);
+    const pill = nodeShapeForSurface("pill", "right", envelope, 120);
+    const chat = nodeShapeForSurface("chat", "right", envelope);
+    expectInsideWindow(pill, 420, 570);
+    expectInsideWindow(chat, 420, 570);
+    expect(inside(pill, 394, 36)).toBe(true); // orb
+    expect(inside(pill, 362, 36)).toBe(true); // bico
+    expect(inside(pill, 300, 36)).toBe(true); // balão
+    expect(inside(pill, 150, 36)).toBe(false); // ao lado da frase curta, o clique passa
+    expect(inside(chat, 394, 36)).toBe(true);
+    expect(inside(chat, 394, 68)).toBe(true);
+    expect(inside(chat, 200, 300)).toBe(true);
   });
 
   it("nunca devolve região vazia (setShape([]) seria o rectângulo inteiro)", () => {
@@ -140,24 +145,9 @@ describe("shape nativa", () => {
     expect(nodeShapeRects({ x: 0, y: 0, width: 0, height: 0 }, 420, 520).length).toBeGreaterThan(0);
   });
 
-  it("uma única cor/rect por faixa: sem buracos verticais", () => {
-    const rects = nodeShapeForSurface("chat", "right", envelope);
-    for (let i = 1; i < rects.length; i += 1) {
-      expect(rects[i].y).toBe(rects[i - 1].y + rects[i - 1].height);
-    }
-  });
 });
 
-describe("morph N0", () => {
-  it("chat é sempre horizontal (pill) e depois vertical, nunca um salto", () => {
-    expect(planNodeSequence("docked", "chat")).toEqual(["pill", "chat"]);
-    expect(planNodeSequence("revealed", "chat")).toEqual(["pill", "chat"]);
-    expect(planNodeSequence("pill", "chat")).toEqual(["chat"]);
-    expect(planNodeSequence("revealed", "pill")).toEqual(["pill"]);
-    expect(planNodeSequence("chat", "revealed")).toEqual(["revealed"]);
-    expect(planNodeSequence("chat", "chat")).toEqual([]);
-  });
-
+describe("transições", () => {
   it("um gesto humano abre o chat a partir de qualquer superfície visível", () => {
     expect(nextNodeSurface("docked", "node-open")).toBe("chat");
     expect(nextNodeSurface("revealed", "node-open")).toBe("chat");
@@ -179,51 +169,49 @@ describe("morph N0", () => {
     expect(nodeTransitionDuration("pill", { scale: 2 })).toBe(520);
   });
 
-  it("interpolação começa e termina nos rects exactos", () => {
-    const from = { x: 368, y: -32, width: 52, height: 52 };
-    const to = { x: 140, y: 10, width: 280, height: 60 };
-    expect(interpolateNodeRect(from, to, 0)).toEqual(from);
-    expect(interpolateNodeRect(from, to, 1)).toEqual(to);
-    const mid = interpolateNodeRect(from, to, 0.5);
-    expect(mid.x).toBe(from.x + (to.x - from.x) * 0.5);
-    expect(mid.width).toBe(from.width + (to.width - from.width) * 0.5);
-    expect(easeInOutCubic(0)).toBe(0);
-    expect(easeInOutCubic(0.5)).toBe(0.5);
-    expect(easeInOutCubic(1)).toBe(1);
+});
+
+describe("balão à medida da frase", () => {
+  it("frases curtas ficam estreitas e nenhuma passa do limite", () => {
+    expect(nodePillWidth("A escutar…")).toBeLessThan(130);
+    expect(nodePillWidth("A escutar…")).toBeGreaterThanOrEqual(NODE.pill_min_width);
+    expect(nodePillWidth("Confirmar na principal")).toBeLessThan(NODE.pill_width);
+    expect(nodePillWidth("x".repeat(200))).toBe(NODE.pill_width);
   });
 
-  it("amostrar no fim assenta no destino e marca done", () => {
-    const envelope = nodeEnvelopeBounds("right", AREA);
-    const transition = beginNodeTransition({
-      from: "revealed",
-      to: "pill",
-      fromRect: nodeContentRect("revealed", "right", envelope),
-      toRect: nodeContentRect("pill", "right", envelope),
-      durationMs: 260,
-      startedAt: 1000,
-    });
-    expect(sampleNodeTransition(transition, 1000).progress).toBe(0);
-    const done = sampleNodeTransition(transition, 1260);
-    expect(done.done).toBe(true);
-    expect(done.rect).toEqual(nodeContentRect("pill", "right", envelope));
-    const mid = sampleNodeTransition(transition, 1130).rect;
-    expect(mid.x).toBeLessThan(nodeContentRect("revealed", "right", envelope).x);
-    expect(mid.x).toBeGreaterThan(done.rect.x);
+  it("a voz vem antes do estado da tarefa", () => {
+    expect(nodeLabelFor("working", "listening", null)).toBe("A escutar…");
+    expect(nodeLabelFor("working", null, "playing")).toBe("A falar…");
+    expect(nodeLabelFor("failed", null, null)).toBe("Falhou");
+    expect(nodeLabelFor(null, null, null)).toBe("Lunmi");
+  });
+});
+
+describe("o que ela está a fazer, sem chat aberto", () => {
+  it("a frase diz o passo real, e a pesquisa é mais precisa do que pensar", () => {
+    expect(nodeLabelFor("working", null, null, nodeActivityFor("Thinking", "idle"))).toBe("A pensar…");
+    expect(nodeLabelFor("working", null, null, nodeActivityFor("Thinking", "searching"))).toBe("A pesquisar…");
+    expect(nodeLabelFor("working", null, null, nodeActivityFor("Thinking", "reading"))).toBe("A ler fontes…");
+    expect(nodeLabelFor("working", null, null, nodeActivityFor("Executing", "idle"))).toBe("A executar…");
+    expect(nodeLabelFor("working", null, null, nodeActivityFor("Verifying", null))).toBe("A verificar…");
+    expect(nodeLabelFor("working", null, null, null)).toBe("A trabalhar…");
+    expect(nodeLabelFor("done", null, null, "thinking")).toBe("Concluída");
   });
 
-  it("um morph interrompido pode partir de um rect desenhado (não do repouso)", () => {
-    const envelope = nodeEnvelopeBounds("right", AREA);
-    const drawn = { x: 300, y: 4, width: 100, height: 54 };
-    const transition = beginNodeTransition({
-      from: "chat",
-      to: "docked",
-      fromRect: drawn,
-      toRect: nodeContentRect("docked", "right", envelope),
-      durationMs: 180,
-      startedAt: 0,
-    });
-    expect(sampleNodeTransition(transition, 0).rect).toEqual(drawn);
-    expect(sampleNodeTransition(transition, 180).rect).toEqual(nodeContentRect("docked", "right", envelope));
+  it("fechar o chat a meio mostra o trabalho; pendências e falhas continuam à vista", () => {
+    expect(nodeSurfaceAfterChat("working", true, false)).toBe("pill");
+    expect(nodeSurfaceAfterChat("working", false, false)).toBe("revealed");
+    expect(nodeSurfaceAfterChat("needs_confirm", true, false)).toBe("attention");
+    expect(nodeSurfaceAfterChat("failed", true, true)).toBe("revealed");
+    expect(nodeSurfaceAfterChat("idle", true, false)).toBe("revealed");
+  });
+});
+
+describe("bloqueio durante tarefas", () => {
+  it("só a automação bloqueia o Node; conversa e pesquisa não", () => {
+    expect(nodePassiveFromTaskPhase("running", false)).toBe(false);
+    expect(nodePassiveFromTaskPhase("running", true)).toBe(true);
+    expect(nodePassiveFromTaskPhase("finished", true)).toBe(false);
   });
 });
 
@@ -289,7 +277,7 @@ describe("enum canónico de ações (main + preload + testes)", () => {
 
 it("constantes N0 permanecem as aprovadas", () => {
   expect(NODE.envelope_width).toBe(420);
-  expect(NODE.envelope_height).toBe(520);
+  expect(NODE.envelope_height).toBe(570);
   expect(NODE.circle).toBe(52);
   expect(NODE.dock_visible).toBe(20);
   expect(NODE.margin).toBe(16);
@@ -297,5 +285,4 @@ it("constantes N0 permanecem as aprovadas", () => {
   expect(NODE.radius).toBe(26);
   expect(NODE.band_height).toBe(2);
   expect(NODE.hover_hysteresis_ms).toBe(600);
-  expect(NODE.morph_tick_ms).toBe(8);
 });

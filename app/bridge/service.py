@@ -69,6 +69,7 @@ from app.settings import (
 from app import preferences as ui_preferences
 from app.integrations.web_search import WebSearchError, WebSearchManager
 from app.integrations.web_state import WebPreferencesError, identity_for_settings
+from app.bridge.click_watch import ClickWatch
 from app.bridge.dto import filter_trusted_host_pids, public_memory_item_dto, public_task_result_dto
 from app.bridge.voice_bridge import VoiceBridge
 from app.voice.eligibility import SpeechStream
@@ -149,6 +150,7 @@ class BridgeService(VoiceBridge):
         self.host_pids: set[int] = filter_trusted_host_pids([], trusted_root_pid=self.trusted_root_pid)
 
         self._loop = asyncio.new_event_loop()
+        self.click_watch = ClickWatch(lambda: self._emit("node.click", {}))
         self._thread = threading.Thread(target=self._run_loop, name="bridge-service-loop", daemon=True)
         self._thread.start()
 
@@ -855,6 +857,11 @@ class BridgeService(VoiceBridge):
             return self._handle_voice_input_finish(payload)
         if cmd == "voice.input.cancel":
             return self._handle_voice_input_cancel(payload)
+        if cmd == "node.clicks.watch":
+            if set(payload) != {"active"} or not isinstance(payload["active"], bool):
+                raise protocol.ProtocolError("invalid_payload", "Use {'active': true|false}.")
+            self.click_watch.set(payload["active"])
+            return {"active": payload["active"]}
         if cmd == "voice.input.engine":
             return self._handle_voice_input_engine(payload)
         if cmd == "voice.input.result":
@@ -2220,6 +2227,7 @@ class BridgeService(VoiceBridge):
         self._deny_all_pending_questions()
         self.kiro_setup.cancel()
         self._close_voice()
+        self.click_watch.set(False)
         try:
             self.spotify_install.close()
         except Exception:

@@ -799,6 +799,8 @@ export interface NodeTransitionDto {
 }
 
 /** Estado público do Node. `v` versiona o DTO; ids de transição são monotónicos. */
+export type NodeActivity = "thinking" | "searching" | "reading" | "acting" | "verifying";
+
 export interface NodeStateDto {
   v: 1;
   enabled: boolean;
@@ -812,6 +814,8 @@ export interface NodeStateDto {
   status: NodeStatus | null;
   tone: NodeTone;
   session_id: string | null;
+  /** O que a tarefa está a fazer agora: enum fechado, nunca texto da conversa. */
+  activity?: NodeActivity | null;
   /** Apresentacao de um turno de voz background; nunca contem transcricao. */
   voice_phase?: "starting" | "listening" | "thinking" | "error" | null;
 }

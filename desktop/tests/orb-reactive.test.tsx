@@ -122,7 +122,7 @@ describe("NodeSurface — miniatura na face circular, resto preservado", () => {
     const orb = circle.querySelector('[data-testid="chat-orb"]') as HTMLElement;
     expect(orb.getAttribute("data-compact")).toBe("true");
     expect(orb.getAttribute("data-mode")).toBe("listening");
-    expect(circle.querySelector('[data-testid="node-dot"]')).not.toBeNull(); // indicador de tom preservado
+    expect(circle.querySelector('[data-testid="node-dot"]')).toBeNull(); // indicador de tom preservado
   });
 
   it("working sem voice_phase: thinking na orb e etiqueta da tarefa na cápsula (V1)", async () => {
@@ -130,18 +130,22 @@ describe("NodeSurface — miniatura na face circular, resto preservado", () => {
     render(<NodeSurface />);
     const circle = await screen.findByTestId("node-circle");
     expect(circle.querySelector('[data-testid="chat-orb"]')?.getAttribute("data-mode")).toBe("thinking");
-    expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar");
+    expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar…");
     expect(screen.getByTestId("lunmi-node").getAttribute("data-surface")).toBe("docked");
   });
 
-  it("superfície chat: camada do círculo oculta e engine pausada (setActive false), não 'indisponível'", async () => {
+  it("com o chat aberto a orb continua visível e animada", async () => {
     presence({ voice_phase: null, surface: "chat" });
     render(<NodeSurface />);
     await screen.findByTestId("node-chat");
-    const circle = screen.getByTestId("node-circle");
-    expect(circle.hasAttribute("hidden")).toBe(true);
-    const orb = circle.querySelector('[data-testid="chat-orb"]') as HTMLElement;
-    expect(orb.getAttribute("data-unavailable")).toBe("false"); // existe e está pausada
-    await vi.waitFor(() => expect(recorder.actives.at(-1)).toBe(false)); // camada inactiva → pausa
+    expect(screen.getByTestId("node-circle").hasAttribute("hidden")).toBe(false);
+    await vi.waitFor(() => expect(recorder.actives.at(-1)).toBe(true));
+  });
+
+  it("recolhida, a orb para: só se vê um arco sem os olhos", async () => {
+    presence({ voice_phase: null, surface: "docked" });
+    render(<NodeSurface />);
+    await screen.findByTestId("node-circle");
+    await vi.waitFor(() => expect(recorder.actives.at(-1)).toBe(false));
   });
 });

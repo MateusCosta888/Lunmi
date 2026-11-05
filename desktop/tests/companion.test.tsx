@@ -335,7 +335,7 @@ describe("MiniChat — N3: scroll, erro local, cancel e alvos", () => {
     expect(list.scrollTop).toBe(0);
   });
 
-  it("com o leitor no fundo, a lista continua a seguir as mensagens novas", async () => {
+  it("com o leitor no fundo, a pergunta nova continua a seguir o fundo", async () => {
     const harness = presence();
     render(<MiniChat />);
     await screen.findByTestId("mini-chat");
@@ -343,9 +343,24 @@ describe("MiniChat — N3: scroll, erro local, cancel e alvos", () => {
 
     list.scrollTop = 800; // distância ao fundo = 0 → está no fundo
     fireEvent.scroll(list);
-    harness.emit({ type: "chat", delta: { session_id: "sess-c", cursor: 1, messages: [{ role: "assistant", text: "nova", message_id: "m1" }] } });
+    harness.emit({ type: "chat", delta: { session_id: "sess-c", cursor: 1, messages: [{ role: "user", text: "nova", message_id: "m1" }] } });
     await waitFor(() => expect(screen.getByText("nova")).toBeTruthy());
     expect(list.scrollTop).toBe(1000);
+  });
+
+  it("uma resposta abre no início dela, não no fundo: as fontes não a escondem", async () => {
+    const harness = presence();
+    render(<MiniChat />);
+    await screen.findByTestId("mini-chat");
+    const list = scrollableList();
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    list.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 300 } as DOMRect);
+    harness.emit({ type: "chat", delta: { session_id: "sess-c", cursor: 1, messages: [{ role: "assistant", text: "nova", message_id: "m1" }] } });
+    await waitFor(() => expect(screen.getByText("nova")).toBeTruthy());
+    rect.mockRestore();
+    expect(list.scrollTop).toBe(1188); // fundo 1000 + (300 - 100) - 12
   });
 
   it("o erro local é limpo numa nova tentativa", async () => {

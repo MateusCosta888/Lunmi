@@ -6,7 +6,7 @@
  * labels vivem em aria/title/sr-only; erros, Cancelar, preview e Parar voz (distinto de Parar
  * tarefa) preservados; sem segundo input hook nem autoenvio manual. NodeSurface espelha
  * exatamente o campo canónico `NodeStateDto.voice_phase` na cápsula aprovada: starting →
- * "A preparar o microfone", listening → "A escutar", thinking → "A pensar"; ausente/null →
+ * "A preparar…", listening → "A escutar…", thinking → "A pensar…"; ausente/null →
  * comportamento V1 (etiqueta de estado/`Lunmi`). jsdom não mede layout: geometria física é do
  * gate visual do Root; aqui prova-se DOM, ordem, classes, acessibilidade e rótulos.
  */
@@ -165,18 +165,18 @@ describe("NodeSurface — espelho do voice_phase canónico", () => {
     presence({ voice_phase: "listening", surface: "pill" });
     render(<NodeSurface />);
     const pill = await screen.findByTestId("node-pill-text");
-    expect(pill.textContent).toBe("A escutar");
+    expect(pill.textContent).toBe("A escutar…");
     expect(screen.getByTestId("lunmi-node").getAttribute("data-voice")).toBe("listening");
   });
 
   it("starting e thinking usam as etiquetas fixas do brief", async () => {
     presence({ voice_phase: "starting", surface: "pill" });
     const first = render(<NodeSurface />);
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A preparar o microfone"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A preparar…"));
     first.unmount();
     presence({ voice_phase: "thinking", surface: "pill", status: "working" });
     render(<NodeSurface />);
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar…"));
   });
 
   it("error usa a etiqueta fixa honesta de entrada de voz (nunca 'tarefa falhou')", async () => {
@@ -189,14 +189,14 @@ describe("NodeSurface — espelho do voice_phase canónico", () => {
   it("sem fase de voz: comportamento V1 preservado (estado da tarefa ou 'Lunmi')", async () => {
     presence({ voice_phase: null, surface: "pill", status: "working" });
     render(<NodeSurface />);
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A trabalhar…"));
     expect(screen.getByTestId("lunmi-node").getAttribute("data-voice")).toBe("none");
   });
 
   it("transcrição nunca aparece na cápsula: rótulo permanece do enum fechado", async () => {
     presence({ voice_phase: "thinking", surface: "pill" });
     render(<NodeSurface />);
-    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar"));
+    await waitFor(() => expect(screen.getByTestId("node-pill-text").textContent).toBe("A pensar…"));
     expect(screen.getByTestId("node-pill-text").textContent).not.toMatch(/pesquisa|spotify|alpha/i);
   });
 });

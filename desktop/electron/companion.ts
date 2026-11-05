@@ -1,17 +1,18 @@
 /**
  * Janela do LUNMI NODE (`desktop/electron/companion.ts`).
  *
- * Uma única BrowserWindow por lado hospeda o envelope fixo de 420×520 DIP aprovado em N0. O main
- * é a única autoridade de superfície, transição e input: a shape nativa (`setShape`, recortada em
- * faixas) é ao mesmo tempo o desenho e a região que recebe cliques. Fora dela o clique passa para
- * a aplicação de trás.
+ * Uma única BrowserWindow por lado hospeda o envelope fixo. O main é a única autoridade de
+ * superfície, transição e input. A janela é transparente e o desenho é CSS, com bordas suaves; a
+ * shape nativa (`setShape`, em faixas) só define a região que recebe cliques. Fora dela o clique
+ * passa para a aplicação de trás. A transição é CSS: a região cobre origem e destino e assenta
+ * no fim, com um único temporizador.
  *
  * Regras que vêm do gate N0 e não podem regredir:
  * - a janela NUNCA é redimensionada nem movida durante um morph;
- * - a shape é aplicada depois de `show`, nunca antes (o primeiro frame é preto uniforme);
+ * - a shape é aplicada depois de `show`, nunca antes;
  * - `setShape([])` significa rectângulo inteiro, por isso a geometria devolve sempre faixas;
- * - não há timer em repouso: o morph agenda a 8 ms e pára ao assentar; a custódia de hover só
- *   corre em `revealed` e fora do passivo, lê o cursor do sistema, sem depender de `pointerleave`;
+ * - não há timer em repouso; a custódia de hover só corre em `revealed` e fora do passivo, lê
+ *   o cursor do sistema, sem depender de `pointerleave`;
  * - um retarget (ecrã/DPI/suspensão) descarta a fila e assenta no destino, sem replay.
  */
 import { BrowserWindow, screen } from "electron";
@@ -22,16 +23,12 @@ import {
   nextNodeSurface,
   NODE,
   NODE_ACTIONS,
-  nodeContentRect,
   nodeEnvelopeBounds,
   nodeRetractionDecision,
   nodeShapeForSurface,
-  nodeShapeForTransition,
-  nodeSurfaceRect,
   nodeTransitionDuration,
-  planNodeSequence,
   pointInNodeCustody,
-  sampleNodeTransition,
+  pointInRect,
   type NodeAction,
   type NodeBounds,
   type NodeVisibleSurface,
@@ -63,11 +60,6 @@ export interface CompanionManagerOptions {
   onRendererGone?: () => void;
 }
 
-/**
- * Intervalo do morph. A calibração única do Root mostrou que 8 ms pedidos produzem ticks de
- * ~15.6 ms no Windows; durações, curva e geometria ficam iguais. Zero timer quando estável.
- */
-export const MORPH_TICK_MS = NODE.morph_tick_ms;
 /** Intervalo de leitura do cursor enquanto o círculo está revelado (custódia). */
 export const CUSTODY_TICK_MS = 120;
 
@@ -76,20 +68,15 @@ export class CompanionManager {
   private prefs: CompanionPreferences;
   private side: NodeSide;
   private envelope: NodeBounds;
-  private settledSurface: NodeSurface = "hidden";
   private targetSurface: NodeSurface = "hidden";
   private focusChat = true;
   private phase: "settled" | "transitioning" = "settled";
   private transitionId = 0;
   private transition: NodeTransitionState | null = null;
-  private queue: NodeVisibleSurface[] = [];
+  private pillWidth: number = NODE.pill_width;
   private morphTimer: NodeJS.Timeout | null = null;
   private custodyTimer: NodeJS.Timeout | null = null;
   private custodyOutsideSince: number | null = null;
-  /** Último rect efectivamente desenhado; interromper um morph parte daqui, não do repouso. */
-  private drawnRect: NodeBounds | null = null;
-  /** Rect de origem de uma nova transição que interrompe um morph em curso. */
-  private pendingFromRect: NodeBounds | null = null;
   private destroying = false;
   /**
    * N4: tarefa a correr → input ignorado, janela nunca focável nem ativada. A superfície e o
@@ -166,7 +153,6 @@ export class CompanionManager {
         return true;
       }
       this.targetSurface = surface;
-      this.settledSurface = surface;
       this.phase = "settled";
       this.transition = null;
       // A shape é validada ANTES de mostrar: se falhar, a janela nunca aparece como envelope
@@ -181,7 +167,6 @@ export class CompanionManager {
         this.destroy();
         return false;
       }
-      this.drawnRect = nodeSurfaceRect(surface, this.side, this.envelope);
       try {
         win.showInactive();
       } catch (err) {
@@ -201,10 +186,8 @@ export class CompanionManager {
   public hide(): void {
     this.stopMorph();
     this.stopCustody();
-    this.queue = [];
     this.transition = null;
     this.phase = "settled";
-    this.settledSurface = "hidden";
     this.targetSurface = "hidden";
     if (this.win && !this.win.isDestroyed()) {
       try {
@@ -217,7 +200,7 @@ export class CompanionManager {
   }
 
   /**
-   * Liga/desliga o modo passivo (N4). Idempotente: cada gesto de shape, `show`, tick do morph e
+   * Liga/desliga o modo passivo (N4). Idempotente: cada gesto de shape, `show`, transição e
    * retarget volta a aplicar a região certa a partir desta flag. Sair do passivo NÃO abre, não
    * foca e não muda a superfície — só devolve o input à aplicação de trás. Em passivo a custódia
    * pára, mas um morph já aprovado continua e assenta normalmente (sem salto para o destino).
@@ -225,7 +208,7 @@ export class CompanionManager {
   public setPassive(passive: boolean): void {
     this.passive = passive;
     if (!passive) this.passiveHidden = false;
-    // N5/F2: a custódia de 120 ms não corre em passivo. Um morph em curso NÃO é cortado nem
+    // N5/F2: a custódia de 120 ms não corre em passivo. Uma transição em curso NÃO é cortado nem
     // assentado à força: continua a animar com o input já ignorado e assenta no destino.
     if (passive) this.stopCustody();
     this.applyInputOwnership();
@@ -290,11 +273,9 @@ export class CompanionManager {
   /** Mantém o destino publicado mas sem tornar a janela visível (fallback do passivo). */
   private keepHidden(surface: NodeVisibleSurface): void {
     this.stopMorph();
-    this.queue = [];
     this.transition = null;
     this.phase = "settled";
     this.targetSurface = surface;
-    this.settledSurface = surface;
     this.publish();
   }
 
@@ -323,26 +304,40 @@ export class CompanionManager {
     if (!this.win || this.win.isDestroyed()) return false;
     this.focusChat = options.focus !== false;
 
-    // Interromper um morph: a nova transição parte do rect que está DESENHADO, não da
-    // superfície de repouso anterior. Sem isto, pedir «dock» a meio de uma abertura dava um
-    // salto invisível (a shape anterior e a origem não coincidiam).
-    const interrupting = this.phase === "transitioning";
-    const fromSurface = interrupting ? this.targetSurface : this.settledSurface;
-    const interruptedRect = interrupting ? this.drawnRect : null;
+    // Interromper é seguro: a região cobre origem e destino, e o CSS parte do que está desenhado.
+    const from = this.targetSurface;
     this.stopMorph();
-    this.transition = null;
-
-    this.queue = planNodeSequence(fromSurface, target);
-    if (this.queue.length === 0) return false;
-
-    this.pendingFromRect = interruptedRect;
-    this.transitionId += 1;
     this.targetSurface = target;
     this.phase = "transitioning";
     this.stopCustody();
+    const transition = beginNodeTransition({ from, to: target, durationMs: nodeTransitionDuration(target) });
+    this.transition = transition;
+    this.transitionId = transition.id;
+    this.applyShape([
+      ...(isNodeVisibleSurface(from) ? nodeShapeForSurface(from, this.side, this.envelope, this.pillWidth) : []),
+      ...nodeShapeForSurface(target, this.side, this.envelope, this.pillWidth),
+    ]);
     this.publish();
-    this.runNextStep();
+    this.morphTimer = setTimeout(() => this.finishMorph(), transition.durationMs);
     return true;
+  }
+
+  /** Se o ponto (ecrã, DIP) cai no que está desenhado; o resto do envelope é de quem está atrás. */
+  public containsScreenPoint(point: { x: number; y: number }): boolean {
+    if (!isNodeVisibleSurface(this.targetSurface)) return false;
+    const local = { x: point.x - this.envelope.x, y: point.y - this.envelope.y };
+    return nodeShapeForSurface(this.targetSurface, this.side, this.envelope, this.pillWidth)
+      .some((rect) => pointInRect(local, rect));
+  }
+
+  /** Largura do balão curto: segue a frase, para a região não apanhar cliques a mais. */
+  public setPillWidth(width: number): void {
+    if (width === this.pillWidth) return;
+    this.pillWidth = width;
+    // Também a meio da transição: a frase nova chega com ela, e a região não pode ficar mais estreita.
+    if (this.targetSurface === "pill" || this.targetSurface === "attention") {
+      this.applyFinalShape(this.targetSurface);
+    }
   }
 
   public applyPreferences(next: CompanionPreferences): boolean {
@@ -372,11 +367,9 @@ export class CompanionManager {
     // aqui deixava o contador da instância à frente do contador do módulo e a publicação seguinte
     // regredia (o hook descarta ids menores e o Node ficava sem conteúdo).
     this.stopMorph();
-    this.queue = [];
     this.transition = null;
     this.envelope = nodeEnvelopeBounds(this.side, this.workArea());
     this.phase = "settled";
-    this.settledSurface = this.targetSurface;
     try {
       win.setBounds(this.envelope);
     } catch (err) {
@@ -403,9 +396,7 @@ export class CompanionManager {
     const win = this.win;
     this.win = null;
     this.transition = null;
-    this.queue = [];
     this.phase = "settled";
-    this.settledSurface = "hidden";
     this.targetSurface = "hidden";
     if (win && !win.isDestroyed()) {
       try {
@@ -459,7 +450,6 @@ export class CompanionManager {
         },
       });
       this.win = win;
-      this.settledSurface = "hidden";
       this.targetSurface = "hidden";
       this.phase = "settled";
       this.transition = null;
@@ -482,7 +472,6 @@ export class CompanionManager {
       });
       win.on("closed", () => {
         this.win = null;
-        this.settledSurface = "hidden";
         this.targetSurface = "hidden";
         this.phase = "settled";
       });
@@ -525,7 +514,7 @@ export class CompanionManager {
 
   private applyFinalShape(surface: NodeSurface): boolean {
     if (!isNodeVisibleSurface(surface)) return false;
-    return this.applyShape(nodeShapeForSurface(surface, this.side, this.envelope));
+    return this.applyShape(nodeShapeForSurface(surface, this.side, this.envelope, this.pillWidth));
   }
 
   private applyShape(rects: { x: number; y: number; width: number; height: number }[]): boolean {
@@ -536,7 +525,7 @@ export class CompanionManager {
       return true;
     }
     try {
-      // A região nova respeita o passivo: um tick do morph nunca devolve input ao Node enquanto
+      // A região nova respeita o passivo: uma transição nunca devolve input ao Node enquanto
       // a tarefa corre (era a regressão do `setIgnoreMouseEvents(false)` em cada tick).
       win.setIgnoreMouseEvents(this.passive);
       win.setShape(rects);
@@ -558,62 +547,11 @@ export class CompanionManager {
   // Morph
   // -------------------------------------------------------------------------
 
-  private runNextStep(): void {
-    const next = this.queue.shift();
-    if (!next) {
-      this.finishMorph();
-      return;
-    }
-    const pending = this.pendingFromRect;
-    this.pendingFromRect = null;
-    const from = pending ? this.targetSurface : this.settledSurface;
-    const fromRect = pending
-      ?? (isNodeVisibleSurface(from) ? nodeContentRect(from, this.side, this.envelope) : null);
-    const toRect = nodeContentRect(next, this.side, this.envelope);
-    this.transition = beginNodeTransition({
-      from,
-      to: next,
-      fromRect,
-      toRect,
-      durationMs: nodeTransitionDuration(next),
-      startedAt: Date.now(),
-    });
-    this.transitionId = this.transition.id;
-    this.publish();
-    this.startMorphTimer();
-  }
-
-  private startMorphTimer(): void {
-    this.stopMorph();
-    this.morphTimer = setInterval(() => this.tickMorph(), MORPH_TICK_MS);
-  }
-
-  private tickMorph(): void {
-    const transition = this.transition;
-    if (!transition) {
-      this.stopMorph();
-      return;
-    }
-    const sample = sampleNodeTransition(transition, Date.now());
-    // Guardar o rect desenhado antes de aplicar: é a origem de qualquer interrupção seguinte.
-    this.drawnRect = sample.rect;
-    this.applyShape(nodeShapeForTransition(transition, sample.progress, this.envelope));
-    if (!sample.done) return;
-    this.settledSurface = transition.to;
-    if (this.queue.length > 0) {
-      this.runNextStep();
-      return;
-    }
-    this.finishMorph();
-  }
-
   private finishMorph(): void {
     this.stopMorph();
     this.transition = null;
     this.phase = "settled";
-    this.settledSurface = this.targetSurface;
     this.applyFinalShape(this.targetSurface);
-    this.drawnRect = nodeSurfaceRect(this.targetSurface, this.side, this.envelope);
     // Só o chat humano (aberto por gesto) recebe foco; todas as outras superfícies não.
     this.applyFocusPolicy(this.targetSurface);
     this.publish();
@@ -648,7 +586,7 @@ export class CompanionManager {
 
   private stopMorph(): void {
     if (this.morphTimer) {
-      clearInterval(this.morphTimer);
+      clearTimeout(this.morphTimer);
       this.morphTimer = null;
     }
   }
