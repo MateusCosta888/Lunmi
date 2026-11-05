@@ -123,6 +123,16 @@ describe("VoiceInputControls — comandos e guardas", () => {
     expect(f.calls).toHaveLength(0);
   });
 
+  it("a transcrever fica visível depois de soltar, para não parecer que continua a escutar", async () => {
+    const f = bridge();
+    await open(f);
+    const generation = await startCapture(f);
+    f.emit({ generation, state: "listening" });
+    expect(screen.queryByTestId("voice-input-transcribing")).toBeNull();
+    f.emit({ generation, state: "transcribing" });
+    expect((await screen.findByTestId("voice-input-transcribing")).textContent).toBe("A transcrever…");
+  });
+
   it("subscrição antes do GET; get com payload exatamente {}", async () => {
     const f = bridge();
     render(<Harness />);

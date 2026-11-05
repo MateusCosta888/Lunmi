@@ -228,6 +228,9 @@ function VoiceInputControlsInner({
           </button>
         )}
       </div>
+      {stateName === "transcribing" && (
+        <p className="lunmi-voice-input-message" aria-hidden="true" data-testid="voice-input-transcribing">A transcrever…</p>
+      )}
       {(showMessage || stateName === "error") && message && (
         <p className="lunmi-voice-input-message" role="status" data-testid="voice-input-message">{message}</p>
       )}

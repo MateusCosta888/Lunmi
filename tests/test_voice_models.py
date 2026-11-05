@@ -496,3 +496,52 @@ def test_a_source_that_stays_down_falls_back_to_its_mirror_with_the_same_pin(
     fresh = VoiceModels(tmp_path / "fresh", tmp_path / "VOICE-SOURCE.json",
                         allow_hosts={"127.0.0.1"}, require_https=False)
     assert run(fresh, "dictation")["state"] == "error" and fresh.installed_dir("dictation") is None
+
+
+def _light_setup(tmp_path: Path) -> tuple[VoiceModels, Path]:
+    files = {"models/supertonic-3/a.onnx": b"s", "models/whisper-large-v3-turbo/model.bin": b"big",
+             "models/silero/silero_vad.onnx": b"v", "models/faster-whisper-small/model.bin": b"small"}
+    manifest = tmp_path / "VOICE-SOURCE.json"
+    manifest.write_text(json.dumps({"files": [
+        {"path": path, "url": f"https://huggingface.co/{path}", "sha256": hashlib.sha256(body).hexdigest(),
+         "bytes": len(body)} for path, body in files.items()]}), encoding="utf-8")
+    root = tmp_path / "root"
+    for path, body in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(body)
+    manager = VoiceModels(root, manifest)
+    for group in ("dictation", "dictation_light"):
+        manager.download(group, network=False)
+        manager.wait(group, 10)
+    return manager, root
+
+
+def test_removing_a_dictation_model_keeps_what_the_other_one_uses(tmp_path: Path) -> None:
+    manager, root = _light_setup(tmp_path)
+    manager.remove("dictation")
+    assert not (root / "models/whisper-large-v3-turbo/model.bin").exists()
+    assert (root / "models/silero/silero_vad.onnx").exists()  # shared with the light model
+    groups = manager.snapshot()["groups"]
+    assert groups["dictation"]["state"] != "installed" and groups["dictation_light"]["state"] == "installed"
+    manager.remove("dictation_light")
+    assert not (root / "models/silero/silero_vad.onnx").exists()
+    assert not (root / "models/faster-whisper-small/model.bin").exists()
+
+
+def test_an_older_manifest_without_the_light_model_stays_valid(tmp_path: Path) -> None:
+    manifest = tmp_path / "old.json"
+    manifest.write_text(json.dumps({"files": [
+        {"path": path, "url": "https://huggingface.co/x", "sha256": "a" * 64, "bytes": 1}
+        for path in ("models/supertonic-3/a", "models/whisper-large-v3-turbo/b", "models/silero/c")]}), encoding="utf-8")
+    assert set(load_manifest(manifest)) == {"speech", "dictation"}
+
+
+def test_a_weak_pc_prefers_the_light_model_once_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.voice import input_runtime
+    manager, root = _light_setup(tmp_path)
+    monkeypatch.setattr(voice_models, "models_root", lambda _state: root)
+    monkeypatch.setattr(voice_models, "manifest_for", lambda _home: manager.manifest_path)
+    monkeypatch.setattr(input_runtime, "low_memory_pc", lambda: True)
+    assert input_runtime.resolve_input_environment(tmp_path).model.name == "faster-whisper-small"
+    monkeypatch.setattr(input_runtime, "low_memory_pc", lambda: False)
+    assert input_runtime.resolve_input_environment(tmp_path).model.name == "whisper-large-v3-turbo"

@@ -98,3 +98,15 @@ def test_close_still_stops_dictation_before_speech_even_if_one_close_fails(broke
     owner.voice = manager("speech")
     owner._close_voice()
     assert order == ["warmup", "dictation", "speech"]
+
+
+def test_removing_dictation_closes_the_worker_first_and_never_touches_the_voice():
+    owner = voice_bridge.VoiceBridge()
+    order = []
+    owner.voice_input = SimpleNamespace(release_worker=lambda: order.append("worker"))
+    owner.voice_models = SimpleNamespace(remove=lambda group: order.append(group) or {"groups": {}})
+    assert owner._handle_voice_models("voice.models.remove", {"group": "dictation"}) == {"groups": {}}
+    assert order == ["worker", "dictation"]
+    with pytest.raises(voice_bridge.protocol.ProtocolError):
+        owner._handle_voice_models("voice.models.remove", {"group": "speech"})
+    assert order == ["worker", "dictation"]

@@ -67,3 +67,31 @@ it("formats sizes in Portuguese", () => {
   expect(formatSize(399_000_000)).toBe("399 MB");
   expect(formatSize(1_624_000_000)).toBe("1,6 GB");
 });
+
+it("offers the light dictation on a weak PC and removes a model only after confirming", async () => {
+  const size = { bytes_total: 486_000_000, bytes_done: 486_000_000, message: "" };
+  const { calls } = bridge({ ...missing, light: true, groups: { ...missing.groups,
+    dictation_light: { state: "installed", ...size } } });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  render(<VoiceModelsPanel />);
+  const remove = await screen.findByRole("button", { name: "Remover e libertar 486 MB" });
+  fireEvent.click(remove);
+  expect(calls.some(call => call.type === "voice.models.remove")).toBe(false);
+  fireEvent.click(remove);
+  await waitFor(() => expect(calls.at(-1)).toEqual({ type: "voice.models.remove", payload: { group: "dictation_light" } }));
+  confirm.mockRestore();
+});
+
+it("hides the light dictation on a normal PC and the missing large one on a weak PC", async () => {
+  const groups = { ...missing.groups, dictation: { ...missing.groups.dictation!, state: "missing" as const },
+    dictation_light: { state: "missing" as const, bytes_total: 486_000_000, bytes_done: 0, message: "" } };
+  bridge({ ...missing, groups });
+  const normal = render(<VoiceModelsPanel />);
+  await screen.findByTestId("voice-model-dictation");
+  expect(screen.queryByTestId("voice-model-dictation_light")).toBeNull();
+  normal.unmount();
+  bridge({ ...missing, light: true, groups });
+  render(<VoiceModelsPanel />);
+  await screen.findByTestId("voice-model-dictation_light");
+  expect(screen.queryByTestId("voice-model-dictation")).toBeNull();
+});

@@ -119,6 +119,30 @@
       ]
     },
     {
+      "path": "models/faster-whisper-small/config.json",
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",
+      "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+      "bytes": 2370
+    },
+    {
+      "path": "models/faster-whisper-small/model.bin",
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+      "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+      "bytes": 483546902
+    },
+    {
+      "path": "models/faster-whisper-small/tokenizer.json",
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+      "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+      "bytes": 2203239
+    },
+    {
+      "path": "models/faster-whisper-small/vocabulary.txt",
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+      "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+      "bytes": 459861
+    },
+    {
       "path": "licenses/supertonic-code-MIT.txt",
       "url": "https://raw.githubusercontent.com/supertone-oss-archive/supertonic-py/df0f9686dac7fbbde391b759e2ee5286a3737622/LICENSE",
       "sha256": "f41cb0ff617e2ed634215f3e62f7b33b3dc02b079c6379a2f1a9c7ce7bd84c03",

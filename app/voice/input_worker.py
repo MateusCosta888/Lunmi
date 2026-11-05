@@ -499,8 +499,7 @@ class InputWorker:
         self._load_model = load_model or (
             lambda: load_whisper(self.model_dir, device=self.device,
                                  compute_type='int8_float32' if self.device == 'cpu' else 'float16', language=self.language,
-                                 # Na CPU, 5 feixes custam várias vezes o tempo de um.
-                                 beam_size=1 if self.device == 'cpu' else self.beam_size))
+                                 beam_size=self.beam_size))
         self._load_vad = load_vad or (lambda: load_silero(self.vad_path))
         self._open_stream = open_stream or open_microphone
         self.block_frames = max(1, int(self.sample_rate * DEFAULT_BLOCK_MS / 1000))

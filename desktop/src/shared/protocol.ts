@@ -101,6 +101,7 @@ export const COMMAND_TYPES = [
   "voice.models.get",
   "voice.models.download",
   "voice.models.cancel",
+  "voice.models.remove",
   /** VOICE INPUT V1 (aditivo): ditado revisto; ver `.agents/VOICE-INPUT-V1-CONTRACT.md`. */
   "voice.input.get",
   "voice.input.start",

@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { describeError, getBridgeApi } from "../../shared/ipc/client";
 import "./voice-models.css";
 
-export type VoiceModelGroup = "speech" | "dictation";
+export type VoiceModelGroup = "speech" | "dictation" | "dictation_light";
 export type VoiceModelState = "missing" | "paused" | "downloading" | "verifying" | "installed" | "error";
 
 export interface VoiceModelStatus {
@@ -21,11 +21,14 @@ export interface VoiceModelStatus {
 export interface VoiceModelsDto {
   groups: Partial<Record<VoiceModelGroup, VoiceModelStatus>>;
   message: string;
+  /** PC abaixo de 12 GB de RAM: oferece o ditado leve em vez do grande. */
+  light?: boolean;
 }
 
 const LABELS: Record<VoiceModelGroup, { title: string; detail: string }> = {
   speech: { title: "Voz da Lunmi", detail: "Para a Lunmi ler as respostas em voz alta." },
   dictation: { title: "Ditado", detail: "Para falares com a Lunmi em vez de escrever." },
+  dictation_light: { title: "Ditado leve", detail: "Modelo mais pequeno para PCs com pouca memória; demora cerca de 10 s por frase." },
 };
 
 const isModelsDto = (value: unknown): value is VoiceModelsDto =>
@@ -56,7 +59,7 @@ export function useVoiceModels(sessionId?: string) {
     return () => { alive = false; unsubscribe(); };
   }, [api, sessionId, supported]);
 
-  const act = useCallback((type: "voice.models.download" | "voice.models.cancel", payload: Record<string, unknown>) => {
+  const act = useCallback((type: "voice.models.download" | "voice.models.cancel" | "voice.models.remove", payload: Record<string, unknown>) => {
     if (!api) return;
     setError("");
     api.sendCommand(type, payload)
@@ -70,18 +73,21 @@ export function useVoiceModels(sessionId?: string) {
     error,
     download: (group: VoiceModelGroup, repair = false) => act("voice.models.download", repair ? { group, repair } : { group }),
     cancel: (group: VoiceModelGroup) => act("voice.models.cancel", { group }),
+    remove: (group: VoiceModelGroup) => act("voice.models.remove", { group }),
   };
 }
 
 export function VoiceModelsPanel({ sessionId, compact = false }: { sessionId?: string; compact?: boolean }):
     React.ReactElement | null {
-  const { supported, models, error, download, cancel } = useVoiceModels(sessionId);
+  const { supported, models, error, download, cancel, remove } = useVoiceModels(sessionId);
   if (!supported || !models) return null;
   return (
     <div className="lunmi-voice-models" data-testid="voice-models">
       {(Object.keys(LABELS) as VoiceModelGroup[]).map(group => {
         const status = models.groups[group];
         if (!status) return null;
+        // Num PC fraco o grande só aparece se já estiver instalado, para poder ser removido.
+        if (group === "dictation_light" ? !models.light : group === "dictation" && models.light && status.state !== "installed") return null;
         const busy = status.state === "downloading" || status.state === "verifying";
         const percent = status.bytes_total ? Math.floor((status.bytes_done / status.bytes_total) * 100) : 0;
         return (
@@ -107,6 +113,10 @@ export function VoiceModelsPanel({ sessionId, compact = false }: { sessionId?: s
                 </button>}
               {!busy && status.state === "installed" && !compact &&
                 <button type="button" onClick={() => download(group, true)}>Verificar e reparar</button>}
+              {!busy && group !== "speech" && (status.state === "installed" || status.state === "paused") && !compact &&
+                <button type="button" onClick={() => {
+                  if (window.confirm(`Remover ${LABELS[group].title}? O ditado deixa de funcionar até voltares a transferir.`)) remove(group);
+                }}>Remover e libertar {formatSize(status.bytes_total)}</button>}
             </div>
           </div>
         );

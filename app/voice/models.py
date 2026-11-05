@@ -42,10 +42,14 @@ from typing import Any, Callable, Iterable
 
 import truststore
 
+from app.voice.warmup import low_memory_pc
+
 GROUPS: dict[str, tuple[str, ...]] = {
     "speech": ("models/supertonic-3/",),
     "dictation": ("models/whisper-large-v3-turbo/", "models/silero/"),
+    "dictation_light": ("models/faster-whisper-small/", "models/silero/"),
 }
+LIGHT_MODEL_PREFIX = GROUPS["dictation_light"][0]
 MODELS_DIRNAME = "voice-models"
 MARKER = ".lunmi-verified"
 PREVIOUS_RUNTIME = "previous-runtime.txt"  # written by desktop/build/installer.nsh
@@ -67,6 +71,7 @@ MESSAGE_NO_SPACE = "Espaço em disco insuficiente para os modelos de voz."
 MESSAGE_CORRUPT = "Um ficheiro chegou diferente do esperado e foi descartado; tenta de novo."
 MESSAGE_LINKED = "A pasta dos modelos é uma ligação para outro sítio; a transferência foi recusada."
 MESSAGE_SOURCE = "A origem de um modelo não é a fixada pela Lunmi; a transferência foi recusada."
+MESSAGE_REMOVE_BUSY = "Pausa a transferência antes de remover este modelo."
 MESSAGE_MANIFEST = "A lista de modelos desta versão está em falta ou inválida."
 MESSAGE_TLS = ("Não foi possível confirmar o certificado dos servidores dos modelos. Confirma a data e a "
                "hora do PC; numa rede com proxy ou antivírus que inspeciona HTTPS, tenta noutra rede.")
@@ -105,6 +110,8 @@ def load_manifest(path: Path) -> dict[str, list[ModelFile]]:
         for name, prefixes in GROUPS.items():
             if item.path.startswith(prefixes):
                 groups[name].append(item)
+    if not any(item.path.startswith(LIGHT_MODEL_PREFIX) for item in groups["dictation_light"]):
+        del groups["dictation_light"]  # an older install's manifest has only the shared silero file
     if not all(groups.values()):
         raise ModelsError(MESSAGE_MANIFEST)
     return groups
@@ -301,7 +308,7 @@ class VoiceModels:
                         ("paused" if partial else "missing"), "")
                     out[name] = {"state": state, "bytes_total": total, "bytes_done": partial, "message": message,
                                  "previous": previous}
-        return {"groups": out, "message": ""}
+        return {"groups": out, "message": "", "light": low_memory_pc()}
 
     def _present_size(self, item: ModelFile) -> int:
         """Bytes already here for a file: final, staged, or partly downloaded."""
@@ -351,6 +358,31 @@ class VoiceModels:
             event = self._cancel.get(group)
             if event is not None:
                 event.set()
+        return self.snapshot()
+
+    def remove(self, group: str) -> dict[str, Any]:
+        """Frees a group's disk space. Files another installed group still uses stay in place."""
+        with self._lock:
+            thread = self._threads.get(group)
+            if thread is not None and thread.is_alive():
+                raise ModelsError(MESSAGE_REMOVE_BUSY)
+            groups = self._groups()
+            if group not in groups:
+                raise ModelsError("Grupo de modelos desconhecido.")
+            kept = {item.path for name, files in groups.items()
+                    if name != group and self._quick_ok(files, self._marker(name)) for item in files}
+            files = [item for item in groups[group] if item.path not in kept]
+            # Marker first: a removal that stops half-way never looks installed.
+            self._marker(group).unlink(missing_ok=True)
+            self._forget_previous(group)
+            for item in files:
+                staged = self.root / STAGING / item.path
+                part = staged.with_name(staged.name + ".part")
+                for path in (self.root / item.path, staged, part, part.with_name(part.name + ".json")):
+                    _guard(self.root, path).unlink(missing_ok=True)
+            self._remove_previous_copies(files)
+            self._jobs.pop(group, None)
+        self._publish(force=True)
         return self.snapshot()
 
     def wait(self, group: str, timeout: float | None = None) -> None:
@@ -620,7 +652,9 @@ class VoiceModels:
         """Keeps an older install's complete copy of `group` in use, proven against its own pins."""
         for base in self._older():
             try:
-                files = load_manifest(_guard(base, base / "VOICE-SOURCE.json"))[group]
+                files = load_manifest(_guard(base, base / "VOICE-SOURCE.json")).get(group)
+                if not files:
+                    continue
                 stamps: dict[str, list[int] | None] = {}
                 for item in files:
                     path = _guard(base, base / item.path)

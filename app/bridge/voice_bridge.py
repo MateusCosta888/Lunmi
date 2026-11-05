@@ -118,7 +118,12 @@ class VoiceBridge:
         allowed = {"group", "repair"} if cmd == "voice.models.download" else {"group"}
         if set(payload) - allowed or group not in VOICE_MODEL_GROUPS or not isinstance(payload.get("repair", False), bool):
             raise protocol.ProtocolError("invalid_payload", "Indica group: speech ou dictation.")
+        if cmd == "voice.models.remove" and group == "speech":
+            raise protocol.ProtocolError("invalid_payload", "Só o ditado pode ser removido.")
         try:
+            if cmd == "voice.models.remove":
+                self.voice_input.release_worker()
+                return self.voice_models.remove(str(group))
             if cmd == "voice.models.download":
                 return self.voice_models.download(str(group), repair=bool(payload.get("repair", False)))
             return self.voice_models.cancel(str(group))

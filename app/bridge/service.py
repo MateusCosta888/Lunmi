@@ -828,7 +828,7 @@ class BridgeService(VoiceBridge):
             return self._handle_voice_warmup(payload)
         if cmd == "voice.warmup.get":
             return self._handle_voice_warmup_get(payload)
-        if cmd in {"voice.models.get", "voice.models.download", "voice.models.cancel"}:
+        if cmd in {"voice.models.get", "voice.models.download", "voice.models.cancel", "voice.models.remove"}:
             return self._handle_voice_models(cmd, payload)
         if cmd == "voice.input.get":
             return self._handle_voice_input_get(payload)

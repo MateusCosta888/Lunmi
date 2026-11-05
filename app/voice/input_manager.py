@@ -388,6 +388,11 @@ class VoiceInputManager:
             self._publish()
         return result
 
+    def release_worker(self) -> None:
+        """Fecha o turno e o worker para os ficheiros do modelo poderem ser apagados no Windows."""
+        self.cancel()
+        self._kill_worker()
+
     # --------------------------------------------------------------- cancel --
     def cancel(self) -> dict[str, Any]:
         with self._lock:

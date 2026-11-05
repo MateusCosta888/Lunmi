@@ -446,8 +446,10 @@ export function BrainPanel({ sendCommand, session, onConfigured }: BrainPanelPro
 
               {mainListing && (
                 <p data-testid="model-listing" className="lunmi-brain-muted">
-                  {mainListing.label} · {mainListing.status}{mainListing.cached ? " · catálogo do cache (não revalidado)" : ""}
-                  {mainListing.detail ? ` — ${mainListing.detail}` : ""}
+                  {mainListing.status === "not_supported" ? mainListing.detail : <>
+                    {mainListing.label} · {mainListing.status}{mainListing.cached ? " · catálogo do cache (não revalidado)" : ""}
+                    {mainListing.detail ? ` — ${mainListing.detail}` : ""}
+                  </>}
                   {mainListing.selection_problem ? <span className="lunmi-brain-warn"> · {mainListing.selection_problem}</span> : null}
                 </p>
               )}

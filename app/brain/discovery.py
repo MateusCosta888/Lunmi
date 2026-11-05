@@ -215,8 +215,8 @@ class ModelDiscovery:
             # Listing something this provider cannot enumerate would be a fixed,
             # invented catalogue. Manual entry remains the documented fallback.
             return self.store(ModelListing(provider, label, DiscoveryStatus.NOT_SUPPORTED,
-                                           detail=f"Catálogo não exposto por {label}. "
-                                                  "Tente outro provider ou atualize a lista.",
+                                           detail=f"{label} não lista modelos aqui. A Lunmi usa o modelo "
+                                                  "predefinido dele.",
                                            fetched_at=time.monotonic()), cache_key=key)
         owned = brain is None
         instance = brain

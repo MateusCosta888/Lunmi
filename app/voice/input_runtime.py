@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.voice.runtime import voice_home
+from app.voice.warmup import low_memory_pc
 
 INPUT_RUNTIME_RELATIVE = ("input-runtime", "Scripts", "python.exe")
 WHISPER_MODEL_RELATIVE = ("models", "whisper-large-v3-turbo")
+LIGHT_WHISPER_MODEL_RELATIVE = ("models", "faster-whisper-small")
 SILERO_MODEL_RELATIVE = ("models", "silero", "silero_vad.onnx")
 WORKER_FILENAME = "input_worker.py"
 
@@ -91,11 +93,16 @@ def resolve_input_environment(
         home.joinpath(*WHISPER_MODEL_RELATIVE).resolve())
     silero = Path(silero_path).expanduser().resolve() if silero_path is not None else (
         home.joinpath(*SILERO_MODEL_RELATIVE).resolve())
-    if models_dir is None and silero_path is None and not model.is_dir():
+    if models_dir is None and silero_path is None:
         # Downloaded after install (01/11): used only once verified; see app/voice/models.py.
         from app.voice.models import verified_models
-        downloaded = verified_models(state_root, home, "dictation")
-        if downloaded is not None:
+        # Num i3 de 2 núcleos o modelo grande leva ~50 s por frase e o small ~10 s (05/11).
+        light = verified_models(state_root, home, "dictation_light") if low_memory_pc() else None
+        downloaded = None if light or model.is_dir() else verified_models(state_root, home, "dictation")
+        if light is not None:
+            model = light.joinpath(*LIGHT_WHISPER_MODEL_RELATIVE)
+            silero = light.joinpath(*SILERO_MODEL_RELATIVE)
+        elif downloaded is not None:
             model = downloaded.joinpath(*WHISPER_MODEL_RELATIVE)
             silero = downloaded.joinpath(*SILERO_MODEL_RELATIVE)
     worker = Path(worker_path).expanduser().resolve() if worker_path is not None else (

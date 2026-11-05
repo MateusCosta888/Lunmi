@@ -102,6 +102,7 @@
     "voice.models.get",
     "voice.models.download",
     "voice.models.cancel",
+    "voice.models.remove",
     "web.get",
     "web.set"
   ],

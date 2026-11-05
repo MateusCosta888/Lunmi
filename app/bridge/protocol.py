@@ -170,6 +170,7 @@ COMMAND_TYPES: frozenset[str] = frozenset({
     "voice.models.get",
     "voice.models.download",
     "voice.models.cancel",
+    "voice.models.remove",
     # VOICE INPUT V1: entrada separada da saída; nunca reutiliza `capture_supported`.
     "voice.input.get",
     "voice.input.start",
