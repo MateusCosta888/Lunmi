@@ -33,6 +33,7 @@
     "approval.get",
     "approval.set",
     "brain.get",
+    "brain.codex.options",
     "brain.list",
     "brain.probe",
     "brain.kiro.status",

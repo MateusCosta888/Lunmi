@@ -384,6 +384,9 @@ export interface ModelInfoDto {
   id: string;
   label: string;
   default: boolean;
+  /** Só no Codex: níveis de raciocínio do modelo e se tem modo rápido. */
+  efforts?: string[];
+  fast?: boolean;
 }
 
 export interface ModelListingDto {

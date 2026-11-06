@@ -31,13 +31,14 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Callable
 
 
 from app import settings as settings_module
 from app.brain import registry
+from app.brain.codex_options import EFFORTS, CodexOptions, load_codex_options, save_codex_options
 from app.brain.contracts import BrainError, Capability
 from app.brain.discovery import DiscoveryStatus, ModelDiscovery, ModelListing, get_discovery
 from app.brain.web import (
@@ -789,6 +790,8 @@ class BridgeService(VoiceBridge):
             return self._handle_brain_list(payload)
         if cmd == "brain.get":
             return self._handle_brain_get()
+        if cmd == "brain.codex.options":
+            return self._handle_codex_options(payload)
         if cmd == "brain.set":
             return self._handle_brain_set(payload)
         if cmd == "brain.verify":
@@ -1410,6 +1413,14 @@ class BridgeService(VoiceBridge):
             },
         }
 
+    def _handle_codex_options(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload:
+            effort, fast = payload.get("effort"), payload.get("fast")
+            if set(payload) != {"effort", "fast"} or effort not in EFFORTS or not isinstance(fast, bool):
+                raise protocol.ProtocolError("invalid_payload", "Use {'effort': nível, 'fast': true|false}.")
+            save_codex_options(self.settings.state_root, CodexOptions(str(effort), fast))
+        return asdict(load_codex_options(self.settings.state_root))
+
     def _handle_brain_get(self) -> dict[str, Any]:
         from app.brain.cli.catalog import find_spec
         from app.brain.cli.known import known_runtime
@@ -1566,6 +1577,7 @@ class BridgeService(VoiceBridge):
                     "id": m.id,
                     "label": m.label or m.id,
                     "default": bool(m.default),
+                    **({"efforts": list(m.efforts), "fast": m.fast} if m.efforts else {}),
                 }
                 for m in listing.models
             ],

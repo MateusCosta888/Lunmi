@@ -10,7 +10,7 @@ import app.llm as llm
 from app.brain.api_brain import ApiBrain
 from app.brain.contracts import BrainError
 from app.computer import fastpath
-from app.core.automatic import allows_actions, direct_web_operation
+from app.core.automatic import allows_actions, direct_web_operation, plain_answer
 from app.core.public_text import web_public_text
 from app.settings import Settings
 
@@ -106,3 +106,13 @@ def test_a_retry_after_a_bad_answer_still_waits_out_a_short_limit(monkeypatch):
     replies = [httpx.Response(400, content=FAILED), httpx.Response(429, headers={'retry-after': '7'}),
                httpx.Response(200, json={'choices': [{'message': {'content': 'ok'}}]})]
     assert scenario(lambda _request: replies.pop(0)).text == 'ok' and waits == [7.5]
+
+
+@pytest.mark.parametrize('text,ok', [
+    ('A inflação é o aumento generalizado dos preços.', True),
+    ('{"kind":"tool"', False),
+    ('   ', False),
+    ('Abri a calculadora.', False),
+])
+def test_plain_prose_is_an_answer_but_a_broken_tool_or_a_claimed_action_is_not(text, ok):
+    assert plain_answer(text) is ok

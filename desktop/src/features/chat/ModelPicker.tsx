@@ -3,6 +3,8 @@ import type { BrainGetDto, BrainStateDto, ModelListingDto } from "../../shared/t
 import { getBridgeApi, toBridgeError, type SendCommandFn } from "../../shared/ipc/client";
 import { Icon } from "../../shared/ui";
 import { useVisualActivity } from "../../shared/useVisualActivity";
+import { Zap } from "lucide-react";
+import { CODEX_LEVELS, CodexSpeedOptions, useCodexOptions } from "../brain/CodexSpeedOptions";
 
 export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChange, onChanged, onProviderSettings }: {
   brain: BrainGetDto | null; sendCommand: SendCommandFn; disabled: boolean; changing: boolean;
@@ -24,6 +26,7 @@ export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChan
   const provider = brain?.current.provider ?? "";
   const fixed = Boolean(brain?.current.env_overrides?.model);
   const current = brain?.current.model ?? "";
+  const { options: speed } = useCodexOptions(sendCommand, provider === "codex");
 
   const hardClose = () => {
     exitAnimation.current?.cancel();
@@ -134,7 +137,10 @@ export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChan
       aria-haspopup="dialog" aria-expanded={open && !closing} aria-controls={id}
       disabled={!provider || disabled || changing} title={disabled ? "Disponível com a conexão pronta e sem tarefa em andamento" : current || "Padrão do provedor"}
       onClick={() => { if (open && !closing) requestClose(); else reopen(); }}>
-      <i className="lunmi-model-dot" aria-hidden="true" /><span>{changing ? "Trocando modelo…" : current || "Padrão do provedor"}</span><Icon name="chevron" size={13} />
+      <i className="lunmi-model-dot" aria-hidden="true" /><span>{changing ? "Trocando modelo…" : current || "Padrão do provedor"}</span>
+      {speed && (speed.effort || speed.fast) && <small className="lunmi-model-speed" data-testid="composer-model-speed">
+        {CODEX_LEVELS[speed.effort]}{speed.fast && <Zap size={13} aria-label="Modo rápido" />}
+      </small>}<Icon name="chevron" size={13} />
     </button>
     {open && <div ref={menu} className="lunmi-model-menu" id={id} role="dialog" data-state={closing ? "closing" : "open"}
       aria-label="Selecionar modelo" data-testid="model-menu">
@@ -150,6 +156,8 @@ export function ModelPicker({ brain, sendCommand, disabled, changing, onBusyChan
         </button>)}
       </div>
       {!loading && !error && !models.length && <p className="lunmi-model-note">{listing && !listing.ok ? "O provedor não confirmou a lista de modelos. Verifique a conexão nas configurações." : query ? "Nenhum modelo corresponde à busca." : "Nenhum modelo disponível nesta conexão. Verifique o provedor nas configurações."}</p>}
+      {provider === "codex" && <CodexSpeedOptions compact sendCommand={sendCommand}
+        model={listing?.models.find(item => current ? item.id === current : item.default)} />}
       <button type="button" className="lunmi-model-settings" disabled={changing || closing} onClick={() => { requestClose(); onProviderSettings(); }}><Icon name="settings" size={16} />Configurar ou trocar provedor<Icon name="chevron" size={13} /></button>
     </div>}
   </div>;

@@ -61,6 +61,7 @@ export const COMMAND_TYPES = [
   "fs.read",
   "brain.list",
   "brain.get",
+  "brain.codex.options",
   "brain.set",
   "brain.verify",
   "brain.probe",

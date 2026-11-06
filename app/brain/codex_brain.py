@@ -23,6 +23,7 @@ from app.brain.contracts import (
     events_for,
 )
 from app.brain.cli_web import web_runtime
+from app.brain.codex_options import load_codex_options
 from app.codex_app_server import CodexAppServer, CodexError, codex_executable
 from app.llm import Completion
 from app.settings import Settings
@@ -94,11 +95,19 @@ class CodexBrain:
                     'cancel_web': self._web.cancel_web}[name]
         raise AttributeError(name)
 
+    def _turn(self) -> dict[str, Any]:
+        options = load_codex_options(self.settings.state_root)
+        supported = self._client._model_efforts.get(self.model)
+        # Trocar de modelo pode deixar um nível que ele não tem: fica o padrão, sem erro.
+        chosen = options.effort if supported is None or options.effort in supported else ""
+        return {"effort": chosen or self.settings.effort, **({"fast": True} if options.fast else {})}
+
     async def complete(self, messages: list[dict[str, Any]]) -> Completion:
         try:
-            if self.settings.effort:
+            turn = self._turn()
+            if turn["effort"] or "fast" in turn:
                 completion = None
-                async for value in self._client.stream(self.model, messages, effort=self.settings.effort):
+                async for value in self._client.stream(self.model, messages, **turn):
                     if isinstance(value, Completion):
                         completion = value
                 if completion is None:
@@ -119,7 +128,7 @@ class CodexBrain:
         yield BrainEvent(EventKind.STARTED, {"provider": self.provider_id, "streaming": True})
         try:
             completion = None
-            async with aclosing(self._client.stream(self.model, messages, effort=self.settings.effort)) as events:
+            async with aclosing(self._client.stream(self.model, messages, **self._turn())) as events:
                 async for value in events:
                     if isinstance(value, str):
                         yield BrainEvent(EventKind.TEXT_DELTA, {"text": value})
@@ -145,7 +154,9 @@ class CodexBrain:
             entries = await self._client.list_models()
         except Exception as exc:
             raise translate(exc) from exc
-        return [ModelInfo(identifier, label, default) for identifier, label, default in entries]
+        return [ModelInfo(identifier, label, default, tuple(self._client._model_efforts.get(identifier, ())),
+                          identifier in self._client._fast_models)
+                for identifier, label, default in entries]
 
     async def health(self) -> BrainHealth:
         if codex_executable() is None:

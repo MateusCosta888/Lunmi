@@ -30,6 +30,7 @@
  * - `brain.probe` continua só com clique explícito e `consent: true`.
  * - AppAgent avançado preservado; sem campo de chave próprio (backend não tem caminho canónico).
  */
+import { CodexSpeedOptions } from "./CodexSpeedOptions";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { describeError, getBridgeApi, toBridgeError, type SendCommandFn } from "../../shared/ipc/client";
 import type {
@@ -443,6 +444,11 @@ export function BrainPanel({ sendCommand, session, onConfigured }: BrainPanelPro
                 onRefresh={() => void loadModels("main", true)}
                 onOpenEmpty={() => void loadModels("main", false)}
               />
+
+              {provider === "codex" && (
+                <CodexSpeedOptions sendCommand={sendCommand}
+                  model={mainModels.find(item => model ? item.id === model : item.default)} />
+              )}
 
               {mainListing && (
                 <p data-testid="model-listing" className="lunmi-brain-muted">

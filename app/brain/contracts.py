@@ -180,6 +180,8 @@ class ModelInfo:
     id: str
     label: str = ""
     default: bool = False
+    efforts: tuple[str, ...] = ()
+    fast: bool = False
 
 
 class Brain(Protocol):

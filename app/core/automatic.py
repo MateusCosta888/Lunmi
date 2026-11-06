@@ -693,6 +693,11 @@ def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def plain_answer(text: str) -> bool:
+    """Texto corrido, sem JSON e sem anunciar uma ação: é uma resposta, só veio sem o envelope."""
+    return bool(text.strip()) and '{' not in text and not unverified_action_claim(text.strip())
+
+
 def parse_decision(raw: str) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
     return _parse_decision(raw, {**DESKTOP_TOOL_ARGS, **WEB_TOOL_ARGS})
 

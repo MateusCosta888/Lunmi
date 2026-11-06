@@ -46,7 +46,7 @@ from app.core import query_rewrite
 from app.core.public_text import (WebCitationStream, public_prefix, unverified_action_claim,
                                   web_answer_admits_insufficiency, web_public_text,
                                   web_synthesis_text)
-from app.core.automatic import (AUTO_PROMPT, WRITE_DOCUMENT_PROMPT, EMAIL_PROMPT, SPOTIFY_MUSIC_OPERATIONS, WEB_CONVERSATION_PROMPT,
+from app.core.automatic import (plain_answer, AUTO_PROMPT, WRITE_DOCUMENT_PROMPT, EMAIL_PROMPT, SPOTIFY_MUSIC_OPERATIONS, WEB_CONVERSATION_PROMPT,
                                 _URL_IN_TEXT,
                                 WEB_PROMPT, WEB_SYNTHESIS_PROMPT, READING_EVIDENCE_GUIDANCE, allows_actions,
                                 allows_email_reply, allows_email_send, allows_local_activation,
@@ -2464,14 +2464,18 @@ class TaskController(SpotifyFlow):
                         except BrainError as error:
                             if source_decision or result.first_public_text_ms is not None:
                                 raise
-                            # Nada foi mostrado nem executado, por isso pedir de novo é seguro.
                             result.decision_error = error.detail
-                            chat_call['attempts'] = 2
-                            result.llm_calls += 1
-                            with timed(result, 'llm_time_ms'), self._provider_metrics(result, self.brain, 'host'):
-                                response = await self._public_completion(chat_messages, result, automatic=automatic)
-                            ensure_deadline()
-                            answer, candidates, initial_operation = parse_decision(response.text)
+                            if plain_answer(response.text):
+                                # Medido no Codex: respondeu bem, só sem o JSON pedido, duas vezes seguidas.
+                                answer, candidates, initial_operation = response.text.strip(), [], None
+                            else:
+                                # Nada foi mostrado nem executado, por isso pedir de novo é seguro.
+                                chat_call['attempts'] = 2
+                                result.llm_calls += 1
+                                with timed(result, 'llm_time_ms'), self._provider_metrics(result, self.brain, 'host'):
+                                    response = await self._public_completion(chat_messages, result, automatic=automatic)
+                                ensure_deadline()
+                                answer, candidates, initial_operation = parse_decision(response.text)
                         if (initial_operation and initial_operation['name'] == 'write_document'
                                 and not self.settings.computer_write_macro):
                             raise BrainError(ErrorKind.MALFORMED_RESPONSE, 'A escrita direta não está ativada.')

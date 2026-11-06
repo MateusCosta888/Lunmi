@@ -26,6 +26,7 @@ from app.brain.web import (
     NativeWebResult,
     NativeWebSource,
 )
+from app.brain.codex_options import load_codex_options
 from app.settings import Settings
 
 MAX_STDOUT_BYTES = 8 * 1024 * 1024
@@ -337,12 +338,18 @@ def _model(flag: str, model: str) -> list[str]:
     return [flag, model] if model else []
 
 
-def _web_argv(provider: str, executable: str, model: str) -> list[str]:
+def _codex_speed(settings: Settings) -> list[str]:
+    options = load_codex_options(settings.state_root)
+    return [*(['-c', f'model_reasoning_effort={options.effort}'] if options.effort else []),
+            *(['-c', 'service_tier=fast'] if options.fast else [])]
+
+
+def _web_argv(provider: str, executable: str, model: str, settings: Settings) -> list[str]:
     if provider == 'codex':
         # `--ignore-user-config` deixa de fora os MCP do utilizador; sem shell só resta a pesquisa.
         return [executable, 'exec', '--json', '--skip-git-repo-check', '--ephemeral',
                 '--ignore-user-config', '-s', 'read-only', '-c', 'web_search="live"',
-                '-c', 'features.shell_tool=false', *_model('-m', model), '-']
+                '-c', 'features.shell_tool=false', *_codex_speed(settings), *_model('-m', model), '-']
     if provider == 'claude':
         return [executable, '--bare', '-p', '--output-format', 'stream-json', '--verbose',
                 '--tools', 'WebSearch,WebFetch', '--allowedTools', 'WebSearch,WebFetch',
@@ -363,5 +370,5 @@ def web_runtime(provider: str, settings: Settings, executable: str) -> CliWebRun
         return None
     model = str(settings.model or '')
     folder = _kilo_folder if provider == 'kilo' else _empty_folder
-    return CliWebRuntime(provider, lambda: _web_argv(provider, executable, model), _PARSERS[provider],
+    return CliWebRuntime(provider, lambda: _web_argv(provider, executable, model, settings), _PARSERS[provider],
                          lambda: folder(settings))
