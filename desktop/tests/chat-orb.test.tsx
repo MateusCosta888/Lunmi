@@ -48,6 +48,23 @@ it("keeps the same orb outside the message scroller across empty and populated c
   expect(screen.getByTestId("composer")).toBeTruthy();
 });
 
+it("a new answer scrolls only the message list, never the window around it", () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  const question = { role: "user" as const, text: "Olá", message_id: "user-1" };
+  const view = render(<ChatPanel chat={state([question])} session={null} />);
+  const list = screen.getByTestId("chat-messages");
+  list.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 300 } as DOMRect);
+  const answer = { role: "assistant" as const, text: "Resposta", message_id: "answer-1" };
+  view.rerender(<ChatPanel chat={state([question, answer])} session={null} />);
+  expect(list.scrollTop).toBe(188); // 300 - 100 - 12: o início da resposta
+  view.rerender(<ChatPanel chat={state([question, { ...answer, text: "Resposta maior" }])} session={null} />);
+  expect(list.scrollTop).toBe(188); // o texto a crescer não volta a mexer
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
+});
+
 it("keeps an accessible visual fallback when WebGL is unavailable", () => {
   render(<GalaxyOrb />);
   expect(screen.getByTestId("chat-orb").getAttribute("data-unavailable")).toBe("true");

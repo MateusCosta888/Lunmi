@@ -94,6 +94,8 @@ function bubbleStyle(role: string): React.CSSProperties {
   };
 }
 
+const ANSWER_TOP_GAP_PX = 12;
+
 export function ChatPanel({
   chat, session, draft, setDraft, voiceInput, reportVoiceMode, modelPicker, modelChanging = false, autoApprove,
   attachments, attachmentPayload, onPickAttachment, onRemoveAttachment,
@@ -152,20 +154,20 @@ export function ChatPanel({
   }, [text]);
 
   useEffect(() => {
-    // `scrollIntoView` não existe em todo ambiente (jsdom, por exemplo): rolar é conveniência e
-    // não pode derrubar a conversa.
-    const node = listEndRef.current;
-    if (!node || typeof node.scrollIntoView !== "function") return;
+    // Só a lista: `scrollIntoView` também rola os pais, e subia a janela inteira com respostas curtas.
+    const list = listEndRef.current?.parentElement;
+    if (!list) return;
     const last = chat.messages.at(-1);
     if (last?.role !== "assistant") {
-      node.scrollIntoView({ block: "end" });
+      list.scrollTop = list.scrollHeight;
       return;
     }
     // Uma resposta abre no início, uma só vez: com fontes por baixo, o fundo escondia o texto dela.
     if (shownAnswer.current === last.message_id) return;
     shownAnswer.current = last.message_id ?? null;
-    const answers = node.parentElement?.querySelectorAll('[data-testid="chat-message-assistant"]');
-    answers?.[answers.length - 1]?.scrollIntoView?.({ block: "start" });
+    const answers = list.querySelectorAll('[data-testid="chat-message-assistant"]');
+    const start = answers[answers.length - 1]?.getBoundingClientRect().top;
+    if (start !== undefined) list.scrollTop += start - list.getBoundingClientRect().top - ANSWER_TOP_GAP_PX;
   }, [chat.messages]);
 
   const converseEnabled = session ? session.capabilities.converse !== false : false;
