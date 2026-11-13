@@ -393,6 +393,34 @@ def main() -> None:
         selection_runtime.tools.pending_ui = False
         guarded_finish = asyncio.run(NoScreenshotsActions().execute(None, context))
         assert guarded_finish.data["status"] == "FINISH"
+
+        # 06/11: a read-only subtask (select the browser, read, answer with `result` and no
+        # action) must return to HostAgent instead of re-reading until the idle guard aborts.
+        read_runtime = BatchRuntime()
+        read_runtime.state.selected_app_window = object()
+        asyncio.run(RuntimeDispatcher(read_runtime).execute_commands([
+            Command("action", "select_application_window")]))
+        assert read_runtime.tools.pending_ui is True
+        empty_actions = type("Actions", (), {"actions": []})()
+        async def read_answer(self: Any, agent: Any, context: Any) -> Any:
+            return ProcessingResult(success=True, phase=ProcessingPhase.ACTION_EXECUTION,
+                                    data={"status": "FINISH", "action_info": empty_actions})
+        answered = type("Response", (), {"result": "O artigo fala de três pontos."})()
+        def read_context(response: Any) -> Any:
+            return type("Context", (), {
+                "get_local": lambda self, name: response if name == "parsed_response" else None,
+                "global_context": type("Global", (), {
+                    "command_dispatcher": type("Dispatcher", (), {"runtime": read_runtime})()})()})()
+        AppActionExecutionStrategy.execute = read_answer
+        finished = asyncio.run(NoScreenshotsActions().execute(None, read_context(answered)))
+        assert finished.data["status"] == "FINISH" and read_runtime.tools.pending_ui is False
+        # Without an answer, or after an action ran since the selection, the guard still holds.
+        read_runtime.tools.pending_ui = True
+        silent = asyncio.run(NoScreenshotsActions().execute(None, read_context(None)))
+        assert silent.data["status"] == "CONTINUE"
+        read_runtime.actions_executed = getattr(read_runtime, "actions_executed", 0) + 1
+        acted = asyncio.run(NoScreenshotsActions().execute(None, read_context(answered)))
+        assert acted.data["status"] == "CONTINUE" and read_runtime.tools.pending_ui is True
     finally:
         AppActionExecutionStrategy.execute = original_execute
 

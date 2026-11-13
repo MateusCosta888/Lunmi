@@ -784,6 +784,8 @@ class WindowsTools:
         from app.computer.uia import UIAEngine
         self.uia = UIAEngine(state, evidence=self.evidence)
         self.pending_ui = False
+        # actions_executed when the last window was selected; unchanged means nothing ran since.
+        self.selection_actions: int | None = None
         self.refused_before_input = False
         self.cancelled = False
         # Only documents created by this task can be corrected without an overwrite

@@ -43,6 +43,18 @@ def test_focus_is_an_action(text):
     assert allows_actions(text) is True
 
 
+@pytest.mark.parametrize('text', ['ok cria esse txt nos dowlaods', 'cria um pdf com isso', 'guarda isso num docx'])
+def test_a_bare_extension_is_a_file_destination(text):
+    # 06/11: "txt" without a dot plus a typo in downloads was refused as read-only.
+    assert allows_actions(text) is True
+
+
+@pytest.mark.parametrize('text', ['escreve um poema', 'explica o que é um ficheiro txt',
+                                  'faz um json de exemplo'])
+def test_text_in_chat_is_still_not_a_file_request(text):
+    assert allows_actions(text) is False
+
+
 def test_a_bare_source_id_never_reaches_the_chat():
     text = 'São Gigantic e Battleborn.  (Fonte: src\u2011d1c4ffbcdbe3dfe7)'
     assert web_public_text(text) == 'São Gigantic e Battleborn.'

@@ -165,8 +165,11 @@ WEB_SYNTHESIS_PROMPT = (
 WEB_TOOL_NAMES = frozenset({'web.search', 'web.open', 'web.research'})
 WRITE_DOCUMENT_PROMPT = (
     '\nwrite_document(app="notepad", text, mode="new"|"append") writes literal text in Notepad, '
-    'without saving or closing. Generate requested content in text. Use new for a new document, '
-    'append only when asked to add to the existing document; never use it for a multi-step request. '
+    'without saving or closing. mode="new" opens a blank Notepad by itself, so "open Notepad and '
+    'write X" is ONE write_document call: use it instead of launch_application for that. Write the '
+    'complete text yourself from the request and this conversation (a summary of an earlier answer '
+    'needs no new reading). Use append only when asked to add to the existing document. Never use it '
+    'when the request also needs saving, another application or steps after writing. '
 )
 DESKTOP_TOOL_ARGS: dict[str, set[str]] = {
     'write_document': {'app', 'text', 'mode'},
@@ -651,7 +654,8 @@ def allows_actions(instruction: str) -> bool:
     if text_request and explanatory and not file_object:
         return False
     destination = re.search(r'\b(?:ficheiro|arquivo|file|documento|pasta|folder|directory|notepad|'
-                            r'bloco de notas|editor|documentos|downloads|calculadora|calculator)\b'
+                            r'bloco de notas|editor|documentos|downloads|calculadora|calculator|'
+                            r'txt|docx?|pdf|md|csv|json)\b'
                             r'|\.[a-z0-9]{1,8}(?:["\x27 ]|$)', text)
     if text_request and not destination:
         return False

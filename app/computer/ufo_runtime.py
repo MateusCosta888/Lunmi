@@ -227,7 +227,14 @@ class NoScreenshotsActions(AppActionExecutionStrategy):
                 # so return the completed AppAgent subtask to HostAgent rather than inspect dead UIA.
                 last.status = "FINISH"
                 result.data["status"] = "FINISH"
-        if result.data.get("status") == "FINISH" and runtime.tools.pending_ui and not runtime.tools.cancelled:
+        parsed = context.get_local("parsed_response")
+        if (result.data.get("status") == "FINISH" and runtime.tools.pending_ui and not runtime.tools.cancelled
+                and not (action_info and action_info.actions) and getattr(parsed, "result", None)
+                and getattr(runtime.tools, "selection_actions", None) == getattr(runtime, "actions_executed", 0)):
+            # Nothing ran since the window was selected and the agent answered without acting:
+            # the subtask was a read. 06/11: a Vivaldi read looped until the idle guard aborted.
+            runtime.tools.pending_ui = bool(unresolved_evidence(runtime.tools.evidence))
+        elif result.data.get("status") == "FINISH" and runtime.tools.pending_ui and not runtime.tools.cancelled:
             # FINISH is a model decision, not an observation. Keep the official AppAgent
             # loop alive until its last interaction has an independent postcondition.
             result.data["status"] = "CONTINUE"
@@ -945,6 +952,7 @@ class RuntimeDispatcher(BasicCommandDispatcher):
                     # Selecting a document does not prove the delegated subtask (e.g.
                     # writing text) happened. AppAgent must verify before returning.
                     runtime.tools.pending_ui = True
+                    runtime.tools.selection_actions = int(getattr(runtime, "actions_executed", 0))
                 elif (action and isinstance(data, dict) and data.get("verified") is True
                         and not self.read_only(command) and name != "launch_application"):
                     # A proven mutation (exact text read back, page URL, display, window change,
@@ -1488,6 +1496,7 @@ class UFORuntime:
         self.state.selected_app_window = None
         self.state.control_dict = {}
         self.tools.pending_ui = self.tools.cancelled = False
+        self.tools.selection_actions = None
         # Region reads and their failures belong to one task, like every other metric here.
         self.region_expansion_errors.clear()
         self.regions_read.clear()
