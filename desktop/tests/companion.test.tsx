@@ -353,15 +353,15 @@ describe("MiniChat — N3: scroll, erro local, cancel e alvos", () => {
     render(<MiniChat />);
     await screen.findByTestId("mini-chat");
     const list = scrollableList();
-    list.scrollTop = 800;
+    // Start at the bottom: a pending bottom scroll may or may not land first, both give 1000.
+    list.scrollTop = 1000;
     fireEvent.scroll(list);
     list.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 300 } as DOMRect);
     harness.emit({ type: "chat", delta: { session_id: "sess-c", cursor: 1, messages: [{ role: "assistant", text: "nova", message_id: "m1" }] } });
     await waitFor(() => expect(screen.getByText("nova")).toBeTruthy());
-    // Restore only after the scroll: on slow CI it lands a frame after the text.
-    await waitFor(() => expect(list.scrollTop).toBe(1188)); // fundo 1000 + (300 - 100) - 12
     rect.mockRestore();
+    expect(list.scrollTop).toBe(1188); // fundo 1000 + (300 - 100) - 12
   });
 
   it("o erro local é limpo numa nova tentativa", async () => {
